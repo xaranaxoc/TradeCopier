@@ -39,6 +39,12 @@ try:
 except ImportError:
     _COPIER_OK = False
 
+try:
+    import license as lic_mod
+    _LIC_OK = True
+except ImportError:
+    _LIC_OK = False
+
 if getattr(sys, 'frozen', False):
     BASE_DIR = os.path.dirname(sys.executable)
     _BUNDLE_DIR = sys._MEIPASS
@@ -1016,6 +1022,126 @@ class TradesTable(tk.Frame):
             children = self.tree.get_children()
 
 
+# ── ActivationWindow ──────────────────────────────────────────
+
+class ActivationWindow(tk.Toplevel):
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.title("FTH Trade Copier — Активация")
+        self.configure(bg=BG_DEEP)
+        self.resizable(False, False)
+        if os.path.exists(ICON_DEFAULT):
+            self.iconbitmap(ICON_DEFAULT)
+        self.grab_set()
+        self._build()
+        self._center_on_screen()
+
+    def _center_on_screen(self):
+        self.update_idletasks()
+        w = self.winfo_width()
+        h = self.winfo_height()
+        sw = self.winfo_screenwidth()
+        sh = self.winfo_screenheight()
+        self.geometry(f"+{sw // 2 - w // 2}+{sh // 2 - h // 2}")
+
+    def _lbl(self, parent, text, **kw):
+        return tk.Label(parent, text=text, bg=BG_DEEP, fg=FG_LABEL, font=FONT_SM, **kw)
+
+    def _ent(self, parent, var=None, width=28):
+        return tk.Entry(parent, textvariable=var, width=width,
+                        bg=BG_INPUT, fg=FG, insertbackground=FG, relief="flat",
+                        font=FONT, highlightthickness=1, highlightbackground=BORDER,
+                        highlightcolor=ACCENT)
+
+    def _build(self):
+        frm = tk.Frame(self, bg=BG_DEEP, padx=30, pady=20)
+        frm.pack(fill="both", expand=True)
+
+        logo_path = os.path.join(IMG_DIR, "convertico-fth_48x48.png")
+        if os.path.exists(logo_path):
+            try:
+                img = tk.PhotoImage(file=logo_path)
+                lbl_logo = tk.Label(frm, image=img, bg=BG_DEEP)
+                lbl_logo.image = img
+                lbl_logo.grid(row=0, column=0, columnspan=2, pady=(0, 10))
+            except Exception:
+                pass
+
+        tk.Label(frm, text="Активация", bg=BG_DEEP, fg=ACCENT,
+                 font=FONT_TITLE).grid(row=1, column=0, columnspan=2, pady=(0, 15))
+
+        self._lbl(frm, "Telegram ID").grid(row=2, column=0, sticky="w", pady=3)
+        self.var_tg_id = tk.StringVar()
+        self._ent(frm, self.var_tg_id, 22).grid(row=2, column=1, sticky="ew", padx=(8, 0), pady=3)
+
+        btn_code = tk.Button(frm, text="Получить код", command=self._request_code,
+                             bg=ACCENT, fg="white", relief="flat", font=FONT_BOLD,
+                             activebackground=ACCENT_H, cursor="hand2", padx=12, pady=3)
+        btn_code.grid(row=3, column=0, columnspan=2, pady=(8, 4))
+
+        self._lbl(frm, "Код из Telegram").grid(row=4, column=0, sticky="w", pady=3)
+        self.var_code = tk.StringVar()
+        self._ent(frm, self.var_code, 22).grid(row=4, column=1, sticky="ew", padx=(8, 0), pady=3)
+
+        btn_verify = tk.Button(frm, text="Подтвердить", command=self._verify,
+                               bg=GREEN_DIM, fg="white", relief="flat", font=FONT_BOLD,
+                               activebackground=GREEN, cursor="hand2", padx=12, pady=3)
+        btn_verify.grid(row=5, column=0, columnspan=2, pady=(8, 4))
+
+        self.lbl_status = tk.Label(frm, text="", bg=BG_DEEP, fg=FG_DIM, font=FONT_SM,
+                                   wraplength=280)
+        self.lbl_status.grid(row=6, column=0, columnspan=2, pady=(4, 0))
+
+    def _request_code(self):
+        tg = self.var_tg_id.get().strip()
+        if not tg:
+            self.lbl_status.config(text="Введите Telegram ID", fg=RED)
+            return
+        try:
+            tg_id = int(tg)
+        except ValueError:
+            self.lbl_status.config(text="Telegram ID — только цифры", fg=RED)
+            return
+        if not _LIC_OK:
+            self.lbl_status.config(text="Модуль лицензии не найден", fg=RED)
+            return
+        self.lbl_status.config(text="Отправка кода...", fg=FG_DIM)
+        self.update()
+        ok, msg = lic_mod.request_code(tg_id)
+        if ok:
+            self.lbl_status.config(text="Код отправлен в Telegram. Проверьте личные сообщения.", fg=GREEN_DIM)
+        else:
+            self.lbl_status.config(text=f"Ошибка: {msg}", fg=RED)
+
+    def _verify(self):
+        tg = self.var_tg_id.get().strip()
+        code = self.var_code.get().strip()
+        if not tg or not code:
+            self.lbl_status.config(text="Заполните оба поля", fg=RED)
+            return
+        try:
+            tg_id = int(tg)
+        except ValueError:
+            self.lbl_status.config(text="Telegram ID — только цифры", fg=RED)
+            return
+        if not _LIC_OK:
+            self.lbl_status.config(text="Модуль лицензии не найден", fg=RED)
+            return
+        self.lbl_status.config(text="Проверка...", fg=FG_DIM)
+        self.update()
+        ok, result = lic_mod.verify_code(tg_id, code)
+        if ok:
+            self.lbl_status.config(text="Активация успешна!", fg=GREEN_DIM)
+            self.after(500, self.destroy)
+        elif result and result.startswith("device_limit"):
+            max_d = result.split(":")[-1]
+            self.lbl_status.config(
+                text=f"Лимит устройств ({max_d}) превышён.\nИспользуйте /reset в боте для сброса.",
+                fg=RED)
+        else:
+            self.lbl_status.config(text=f"Ошибка: {result}", fg=RED)
+
+
 # ── App ─────────────────────────────────────────────────────
 
 class App(tk.Tk):
@@ -1042,6 +1168,7 @@ class App(tk.Tk):
         self._load_config()
         self._start_tray()
         self._schedule_check()
+        self._schedule_license_check()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
     def _set_logo_cyan(self, cyan: bool):
@@ -1649,6 +1776,31 @@ class App(tk.Tk):
                 self._update_row_info_silent(row, slave)
             self._refresh_dashboard()
         self._check_timer = self.after(3000, self._schedule_check)
+
+    def _schedule_license_check(self):
+        if not _LIC_OK:
+            return
+        lic = lic_mod.load_license()
+        if not lic or not lic.get("token"):
+            self._show_activation()
+            return
+        valid, reason, _ = lic_mod.check_token(lic["token"])
+        if not valid and reason != "connection_error":
+            self._show_activation()
+            return
+        self._lic_timer = self.after(600000, self._schedule_license_check)
+
+    def _show_activation(self):
+        if not _LIC_OK:
+            return
+        dlg = ActivationWindow(self)
+        self.wait_window(dlg)
+        if _LIC_OK:
+            lic = lic_mod.load_license()
+            if not lic or not lic.get("token"):
+                self.destroy()
+                return
+        self._lic_timer = self.after(600000, self._schedule_license_check)
 
     def _update_master_info_silent(self):
         if not _MT5_OK:
