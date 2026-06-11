@@ -47,7 +47,7 @@ except ImportError:
 
 if getattr(sys, 'frozen', False):
     BASE_DIR = os.path.dirname(sys.executable)
-    _BUNDLE_DIR = sys._MEIPASS
+    _BUNDLE_DIR = os.path.dirname(sys.executable)
 else:
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
     _BUNDLE_DIR = BASE_DIR
