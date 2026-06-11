@@ -1032,6 +1032,7 @@ class ActivationWindow(tk.Toplevel):
         self.resizable(False, False)
         if os.path.exists(ICON_DEFAULT):
             self.iconbitmap(ICON_DEFAULT)
+        self.protocol("WM_DELETE_WINDOW", lambda: None)
         self.grab_set()
         self._build()
         self._center_on_screen()
@@ -1047,11 +1048,25 @@ class ActivationWindow(tk.Toplevel):
     def _lbl(self, parent, text, **kw):
         return tk.Label(parent, text=text, bg=BG_DEEP, fg=FG_LABEL, font=FONT_SM, **kw)
 
+    def _paste(self, event=None):
+        try:
+            clip = self.clipboard_get()
+            if clip:
+                widget = self.focus_get()
+                if isinstance(widget, tk.Entry):
+                    widget.insert(tk.INSERT, clip)
+        except Exception:
+            pass
+        return "break"
+
     def _ent(self, parent, var=None, width=28):
-        return tk.Entry(parent, textvariable=var, width=width,
-                        bg=BG_INPUT, fg=FG, insertbackground=FG, relief="flat",
-                        font=FONT, highlightthickness=1, highlightbackground=BORDER,
-                        highlightcolor=ACCENT)
+        e = tk.Entry(parent, textvariable=var, width=width,
+                     bg=BG_INPUT, fg=FG, insertbackground=FG, relief="flat",
+                     font=FONT, highlightthickness=1, highlightbackground=BORDER,
+                     highlightcolor=ACCENT)
+        e.bind("<Control-v>", self._paste)
+        e.bind("<Control-V>", self._paste)
+        return e
 
     def _build(self):
         frm = tk.Frame(self, bg=BG_DEEP, padx=30, pady=20)
@@ -1168,8 +1183,24 @@ class App(tk.Tk):
         self._load_config()
         self._start_tray()
         self._schedule_check()
+        self._bind_paste()
         self._schedule_license_check()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
+
+    def _paste_global(self, event=None):
+        try:
+            clip = self.clipboard_get()
+            if clip:
+                widget = self.focus_get()
+                if isinstance(widget, tk.Entry):
+                    widget.insert(tk.INSERT, clip)
+                    return "break"
+        except Exception:
+            pass
+
+    def _bind_paste(self):
+        self.bind_all("<Control-v>", self._paste_global)
+        self.bind_all("<Control-V>", self._paste_global)
 
     def _set_logo_cyan(self, cyan: bool):
         if not hasattr(self, '_logo_label'):
