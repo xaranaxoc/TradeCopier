@@ -1,18 +1,12 @@
 import os
 import json
-import threading
 import requests
 
 APP_DATA_DIR = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "MT5CopyTrader")
 LICENSE_FILE = os.path.join(APP_DATA_DIR, "license.json")
 
 API_URL = "http://2.26.142.85:8000"
-API_SECRET = "fth_license_secret_key_2026_change_this"
 CHECK_INTERVAL = 600
-
-
-def _headers():
-    return {"Authorization": f"Bearer {API_SECRET}", "Content-Type": "application/json"}
 
 
 def load_license():
@@ -33,8 +27,8 @@ def save_license(data):
 
 def request_code(tg_id: int):
     try:
-        r = requests.post(f"{API_URL}/request_code",
-                          json={"tg_id": tg_id}, headers=_headers(), timeout=10)
+        r = requests.post(f"{API_URL}/activate/request",
+                          json={"tg_id": tg_id}, timeout=10)
         if r.status_code == 200:
             return True, r.json().get("message", "code_sent")
         try:
@@ -48,9 +42,8 @@ def request_code(tg_id: int):
 
 def verify_code(tg_id: int, code: str):
     try:
-        r = requests.post(f"{API_URL}/verify",
-                          json={"tg_id": tg_id, "code": code},
-                          headers=_headers(), timeout=10)
+        r = requests.post(f"{API_URL}/activate/confirm",
+                          json={"tg_id": tg_id, "code": code}, timeout=10)
         data = r.json()
         if r.status_code == 200 and data.get("ok"):
             save_license({"tg_id": tg_id, "token": data["token"]})
@@ -68,8 +61,8 @@ def verify_code(tg_id: int, code: str):
 
 def check_token(token: str):
     try:
-        r = requests.post(f"{API_URL}/check",
-                          json={"token": token}, headers=_headers(), timeout=10)
+        r = requests.post(f"{API_URL}/activate/check",
+                          json={"token": token}, timeout=10)
         data = r.json()
         return data.get("valid", False), data.get("reason", ""), data.get("tier", "")
     except requests.RequestException:
