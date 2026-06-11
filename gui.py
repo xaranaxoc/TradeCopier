@@ -45,6 +45,12 @@ try:
 except ImportError:
     _LIC_OK = False
 
+try:
+    import updater as upd_mod
+    _UPD_OK = True
+except ImportError:
+    _UPD_OK = False
+
 if getattr(sys, 'frozen', False):
     BASE_DIR = os.path.dirname(sys.executable)
     _BUNDLE_DIR = os.path.dirname(sys.executable)
@@ -1185,6 +1191,7 @@ class App(tk.Tk):
         self._schedule_check()
         self._bind_paste()
         self._schedule_license_check()
+        self._check_update()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
     def _paste_global(self, event=None):
@@ -1807,6 +1814,45 @@ class App(tk.Tk):
                 self._update_row_info_silent(row, slave)
             self._refresh_dashboard()
         self._check_timer = self.after(3000, self._schedule_check)
+
+    def _check_update(self):
+        if not _UPD_OK:
+            return
+        upd_mod.check_update(callback=self._on_update_available)
+
+    def _on_update_available(self, version, url, changelog):
+        text = f"Доступно обновление: v{version}"
+        if changelog:
+            text += f"\n{changelog}"
+        if messagebox.askyesno("Обновление", text + "\n\nСкачать и установить?"):
+            self._download_update(url)
+
+    def _download_update(self, url):
+        dlg = tk.Toplevel(self)
+        dlg.title("Загрузка обновления")
+        dlg.configure(bg=BG_DEEP)
+        dlg.resizable(False, False)
+        dlg.transient(self)
+        dlg.grab_set()
+        lbl = tk.Label(dlg, text="Загрузка: 0%", bg=BG_DEEP, fg=FG, font=FONT)
+        lbl.pack(padx=30, pady=20)
+        self._update_dlg = dlg
+        self._update_lbl = lbl
+        upd_mod.download_and_install(
+            url,
+            progress_callback=self._update_progress,
+            done_callback=self._update_done,
+        )
+
+    def _update_progress(self, downloaded, total):
+        pct = int(downloaded / total * 100)
+        self._update_lbl.config(text=f"Загрузка: {pct}%")
+
+    def _update_done(self, ok, error):
+        if self._update_dlg and self._update_dlg.winfo_exists():
+            self._update_dlg.destroy()
+        if not ok:
+            messagebox.showerror("Ошибка", f"Не удалось обновить: {error}")
 
     def _schedule_license_check(self):
         if not _LIC_OK:
