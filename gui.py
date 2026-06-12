@@ -1173,22 +1173,16 @@ class SettingsDialog(tk.Toplevel):
         self.resizable(False, False)
         self.transient(parent)
         self.grab_set()
+        if os.path.exists(ICON_DEFAULT):
+            self.iconbitmap(ICON_DEFAULT)
+            self.wm_iconbitmap(ICON_DEFAULT)
         self._app = parent
         self._active = parent._active_profile
 
         frm = tk.Frame(self, bg=BG, padx=16, pady=12)
         frm.pack(fill="both", expand=True)
 
-        header_f = tk.Frame(frm, bg=BG)
-        header_f.pack(fill="x", pady=(0, 8))
-        logo_path = os.path.join(IMG_DIR, "convertico-fth_48x48.png")
-        if os.path.exists(logo_path):
-            try:
-                self._settings_logo = tk.PhotoImage(file=logo_path)
-                tk.Label(header_f, image=self._settings_logo, bg=BG).pack(side="left", padx=(0, 10))
-            except Exception:
-                pass
-        tk.Label(header_f, text="ПРОФИЛИ", bg=BG, fg=FG_DIM, font=FONT_BOLD).pack(side="left")
+        tk.Label(frm, text="ПРОФИЛИ", bg=BG, fg=FG_DIM, font=FONT_BOLD).pack(anchor="w", pady=(0, 6))
 
         tabs_f = tk.Frame(frm, bg=BG)
         tabs_f.pack(fill="x")
