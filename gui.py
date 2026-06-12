@@ -1179,7 +1179,16 @@ class SettingsDialog(tk.Toplevel):
         frm = tk.Frame(self, bg=BG, padx=16, pady=12)
         frm.pack(fill="both", expand=True)
 
-        tk.Label(frm, text="ПРОФИЛИ", bg=BG, fg=FG_DIM, font=FONT_BOLD).pack(anchor="w", pady=(0, 6))
+        header_f = tk.Frame(frm, bg=BG)
+        header_f.pack(fill="x", pady=(0, 8))
+        logo_path = os.path.join(IMG_DIR, "convertico-fth_48x48.png")
+        if os.path.exists(logo_path):
+            try:
+                self._settings_logo = tk.PhotoImage(file=logo_path)
+                tk.Label(header_f, image=self._settings_logo, bg=BG).pack(side="left", padx=(0, 10))
+            except Exception:
+                pass
+        tk.Label(header_f, text="ПРОФИЛИ", bg=BG, fg=FG_DIM, font=FONT_BOLD).pack(side="left")
 
         tabs_f = tk.Frame(frm, bg=BG)
         tabs_f.pack(fill="x")
@@ -1219,11 +1228,11 @@ class SettingsDialog(tk.Toplevel):
             self._app._switch_profile(self._active)
             self.destroy()
 
-        btn_switch = tk.Button(btn_row, text="Переключить", command=switch_profile,
+        btn_switch = tk.Button(btn_row, text="Сохранить", command=switch_profile,
                                bg=ACCENT, fg="white", relief="flat", font=FONT_BOLD,
                                activebackground=ACCENT_H, cursor="hand2", padx=16, pady=4)
         btn_switch.pack(side="left")
-        _bind_tip(btn_switch, "Переключиться на выбранный профиль")
+        _bind_tip(btn_switch, "Сохранить и переключиться на профиль")
 
         def check_updates():
             self.destroy()
