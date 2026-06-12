@@ -2253,6 +2253,18 @@ class App(tk.Tk):
         self._profiles[self._active_profile].update(self._build_profile())
         if "name" not in self._profiles[self._active_profile]:
             self._profiles[self._active_profile]["name"] = f"Профиль {self._active_profile + 1}"
+        profile = self._profiles[self._active_profile]
+        return {
+            "master": profile.get("master", {"path": ""}),
+            "slaves": profile.get("slaves", []),
+            "poll_interval_seconds": 1,
+            "min_lot_mode": self._min_lot_mode,
+        }
+
+    def _build_full_config(self) -> Dict:
+        self._profiles[self._active_profile].update(self._build_profile())
+        if "name" not in self._profiles[self._active_profile]:
+            self._profiles[self._active_profile]["name"] = f"Профиль {self._active_profile + 1}"
         return {
             "active_profile": self._active_profile,
             "profiles": self._profiles,
@@ -2264,7 +2276,7 @@ class App(tk.Tk):
         try:
             os.makedirs(APP_DATA_DIR, exist_ok=True)
             with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-                json.dump(self._build_config(), f, ensure_ascii=False, indent=2)
+                json.dump(self._build_full_config(), f, ensure_ascii=False, indent=2)
         except Exception as e:
             self._log(f"\u26A0\uFE0F Ошибка конфига: {e}", "warn")
 
@@ -2321,6 +2333,9 @@ class App(tk.Tk):
             self._add_slave_row(s)
 
     def _switch_profile(self, idx: int):
+        if self._trader and self._trader.is_running():
+            self._stop()
+            self._log("\u25A0 Копитрейдер остановлен (смена профиля)", "warn")
         self._profiles[self._active_profile].update(self._build_profile())
         self._save_config()
         self._active_profile = idx
