@@ -53,7 +53,7 @@ except ImportError:
 
 if getattr(sys, 'frozen', False):
     BASE_DIR = os.path.dirname(sys.executable)
-    _BUNDLE_DIR = os.path.dirname(sys.executable)
+    _BUNDLE_DIR = getattr(sys, '_MEIPASS', os.path.dirname(sys.executable))
 else:
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
     _BUNDLE_DIR = BASE_DIR
@@ -601,7 +601,7 @@ class SlaveDialog(tk.Toplevel):
             row_frame.destroy()
             self._symbol_rows = [r for r in self._symbol_rows if r["frame"] != row_frame]
 
-        btn_rm = self._btn(row_frame, "\u2715", remove, small=True)
+        btn_rm = self._btn(row_frame, "\u00D7", remove, small=True)
         btn_rm.pack(side="left", padx=(2, 0))
         _bind_tip(btn_rm, "Удалить строку маппинга")
         self._symbol_rows.append({"frame": row_frame, "master": var_master, "slave": var_slave})
@@ -1163,6 +1163,108 @@ class ActivationWindow(tk.Toplevel):
             self.lbl_status.config(text=f"Ошибка: {result}", fg=RED)
 
 
+# ── SettingsDialog ───────────────────────────────────────────
+
+class SettingsDialog(tk.Toplevel):
+    def __init__(self, parent: 'App'):
+        super().__init__(parent)
+        self.title("Настройки")
+        self.configure(bg=BG)
+        self.resizable(False, False)
+        self.transient(parent)
+        self.grab_set()
+        self._app = parent
+        self._active = parent._active_profile
+
+        frm = tk.Frame(self, bg=BG, padx=16, pady=12)
+        frm.pack(fill="both", expand=True)
+
+        tk.Label(frm, text="ПРОФИЛИ", bg=BG, fg=FG_DIM, font=FONT_BOLD).pack(anchor="w", pady=(0, 6))
+
+        tabs_f = tk.Frame(frm, bg=BG)
+        tabs_f.pack(fill="x")
+        self._profile_btns = []
+        self._profile_names = []
+        for i in range(5):
+            name = parent._profiles[i].get("name", f"Профиль {i + 1}")
+            self._profile_names.append(tk.StringVar(value=name))
+            btn = tk.Button(tabs_f, text=f" {name} ", command=lambda idx=i: self._select(idx),
+                            bg=BG_INPUT if i != self._active else ACCENT,
+                            fg="white" if i == self._active else FG_DIM,
+                            relief="flat", font=FONT_SM, cursor="hand2",
+                            activebackground=ACCENT_H, padx=6, pady=3)
+            btn.pack(side="left", padx=2)
+            self._profile_btns.append(btn)
+
+        tk.Frame(frm, bg=DIVIDER, height=1).pack(fill="x", pady=8)
+
+        row_name = tk.Frame(frm, bg=BG)
+        row_name.pack(fill="x", pady=(0, 4))
+        tk.Label(row_name, text="Имя профиля:", bg=BG, fg=FG, font=FONT).pack(side="left")
+        self._ent_name = tk.Entry(row_name, bg=BG_INPUT, fg=FG, insertbackground=FG,
+                                   relief="flat", font=FONT, width=24)
+        self._ent_name.pack(side="left", padx=(8, 0))
+        self._ent_name.insert(0, self._profile_names[self._active].get())
+        self._ent_name.bind("<KeyRelease>", self._on_name_change)
+
+        tk.Frame(frm, bg=DIVIDER, height=1).pack(fill="x", pady=8)
+
+        btn_row = tk.Frame(frm, bg=BG)
+        btn_row.pack(fill="x")
+
+        def switch_profile():
+            new_name = self._ent_name.get().strip()
+            if new_name:
+                self._app._profiles[self._active]["name"] = new_name
+            self._app._switch_profile(self._active)
+            self.destroy()
+
+        btn_switch = tk.Button(btn_row, text="Переключить", command=switch_profile,
+                               bg=ACCENT, fg="white", relief="flat", font=FONT_BOLD,
+                               activebackground=ACCENT_H, cursor="hand2", padx=16, pady=4)
+        btn_switch.pack(side="left")
+        _bind_tip(btn_switch, "Переключиться на выбранный профиль")
+
+        def check_updates():
+            self.destroy()
+            parent._check_update(force=True)
+
+        btn_update = tk.Button(btn_row, text="\U0001F504 Проверить обновления", command=check_updates,
+                               bg=BG_INPUT, fg=FG_DIM, relief="flat", font=FONT,
+                               activebackground=BG_ROW_HOVER, cursor="hand2", padx=10, pady=4)
+        btn_update.pack(side="right")
+        _bind_tip(btn_update, "Проверить наличие новой версии")
+
+        btn_close = tk.Button(btn_row, text="Закрыть", command=self.destroy,
+                              bg=BG_INPUT, fg=FG_DIM, relief="flat", font=FONT,
+                              activebackground=BG_ROW_HOVER, cursor="hand2", padx=10, pady=4)
+        btn_close.pack(side="right", padx=6)
+
+        self.update_idletasks()
+        w = self.winfo_reqwidth()
+        h = self.winfo_reqheight()
+        x = parent.winfo_x() + (parent.winfo_width() - w) // 2
+        y = parent.winfo_y() + (parent.winfo_height() - h) // 2
+        self.geometry(f"+{x}+{y}")
+
+    def _select(self, idx):
+        old_name = self._ent_name.get().strip()
+        if old_name:
+            self._app._profiles[self._active]["name"] = old_name
+            self._profile_btns[self._active].config(text=f" {old_name} ")
+        self._active = idx
+        self._ent_name.delete(0, "end")
+        self._ent_name.insert(0, self._app._profiles[idx].get("name", f"Профиль {idx + 1}"))
+        for i, btn in enumerate(self._profile_btns):
+            btn.config(bg=ACCENT if i == idx else BG_INPUT,
+                       fg="white" if i == idx else FG_DIM)
+
+    def _on_name_change(self, event=None):
+        name = self._ent_name.get().strip()
+        if name:
+            self._profile_btns[self._active].config(text=f" {name} ")
+
+
 # ── App ─────────────────────────────────────────────────────
 
 class App(tk.Tk):
@@ -1184,6 +1286,8 @@ class App(tk.Tk):
         self._session_stats = {"copied": 0, "failed": 0}
         self._min_lot_mode = False
         self._tray_icon = None
+        self._active_profile = 0
+        self._profiles: List[Dict] = []
 
         self._build_ui()
         self._load_config()
@@ -1313,6 +1417,13 @@ class App(tk.Tk):
         self.btn_info.pack(side="right", padx=(8, 0))
         _bind_tip(self.btn_info, "Режим подсказок")
 
+        btn_settings = tk.Button(hdr_right, text="\u2699", command=self._open_settings,
+                                   bg=BG_INPUT, fg=FG_DIM, relief="flat", font=("Segoe UI", 10, "bold"),
+                                   activebackground=BG_ROW_HOVER, activeforeground=ACCENT,
+                                   cursor="hand2", padx=8, pady=1, highlightthickness=0)
+        btn_settings.pack(side="right", padx=(4, 0))
+        _bind_tip(btn_settings, "Настройки приложения")
+
         block_term = tk.Frame(hdr_right, bg=BG_HEADER)
         block_term.pack(side="right", padx=(12, 0))
         tk.Label(block_term, text="ТЕРМИНАЛЫ", bg=BG_HEADER, fg=FG_DIM,
@@ -1426,9 +1537,17 @@ class App(tk.Tk):
         tbl_header.pack(fill="x", padx=14, pady=(4, 0))
         tk.Label(tbl_header, text="SLAVE ACCOUNTS", bg=BG_DEEP, fg=FG_DIM,
                  font=FONT_BOLD).pack(side="left")
+        self.lbl_slave_count = tk.Label(tbl_header, text="0/10", bg=BG_DEEP, fg=FG_DIM,
+                 font=FONT_BOLD)
+        self.lbl_slave_count.pack(side="left", padx=(8, 0))
 
-        self._table_frame = tk.Frame(self, bg=BG_DEEP)
-        self._table_frame.pack(fill="both", expand=True, padx=14, pady=2)
+        self._paned = tk.PanedWindow(self, orient="vertical", bg=BG_DEEP,
+                                     sashwidth=4, sashrelief="flat",
+                                     opaqueresize=True)
+        self._paned.pack(fill="both", expand=True, padx=14, pady=2)
+
+        self._table_frame = tk.Frame(self._paned, bg=BG_DEEP)
+        self._paned.add(self._table_frame, minsize=80, height=200)
 
         for idx, _, min_w, weight, _ in COL_SPEC:
             self._table_frame.columnconfigure(idx, minsize=min_w, weight=weight)
@@ -1461,8 +1580,11 @@ class App(tk.Tk):
         style.map("TNotebook.Tab", background=[("selected", BG_ROW)],
                   foreground=[("selected", FG)])
 
-        self.notebook = ttk.Notebook(self, style="TNotebook")
-        self.notebook.pack(fill="both", expand=True, padx=14, pady=(4, 10))
+        nb_frame = tk.Frame(self._paned, bg=BG_DEEP)
+        self._paned.add(nb_frame, minsize=60, height=180)
+
+        self.notebook = ttk.Notebook(nb_frame, style="TNotebook")
+        self.notebook.pack(fill="both", expand=True)
 
         trades_tab = tk.Frame(self.notebook, bg=BG)
         self.notebook.add(trades_tab, text="  Сделки  ")
@@ -1501,6 +1623,9 @@ class App(tk.Tk):
         stats_f.pack(fill="x", padx=14, pady=(0, 2))
         self.lbl_stats = tk.Label(stats_f, text="", bg=BG_DEEP, fg=FG_DIM, font=FONT_SM)
         self.lbl_stats.pack(side="left")
+        if _UPD_OK:
+            tk.Label(stats_f, text=f"v{upd_mod.VERSION}", bg=BG_DEEP, fg=FG_MUTED,
+                     font=FONT_SM).pack(side="right")
 
     # ── Info toggle ─────────────────────────────────────────
 
@@ -1644,7 +1769,15 @@ class App(tk.Tk):
 
     # ── Слейвы ──────────────────────────────────────────────
 
+    MAX_SLAVES = 10
+
+    def _update_slave_count(self):
+        self.lbl_slave_count.config(text=f"{len(self._slaves)}/{self.MAX_SLAVES}")
+
     def _add_slave(self):
+        if len(self._slaves) >= self.MAX_SLAVES:
+            messagebox.showwarning("Лимит", f"Максимум {self.MAX_SLAVES} слейв-аккаунтов на профиль", parent=self)
+            return
         dlg = SlaveDialog(self)
         self.wait_window(dlg)
         if dlg.result:
@@ -1657,6 +1790,7 @@ class App(tk.Tk):
                 data["daily_loss_limit"] = 0
             self._slaves.append(data)
             self._add_slave_row(data)
+            self._update_slave_count()
             self._save_config()
 
     def _add_slave_row(self, data: Dict):
@@ -1687,6 +1821,7 @@ class App(tk.Tk):
         if messagebox.askyesno("Удалить", f"Удалить \u00AB{data.get('name', '?')}\u00BB?", parent=self):
             self._slaves.remove(data)
             self._rebuild_rows()
+            self._update_slave_count()
             self._save_config()
 
     def _rebuild_rows(self):
@@ -1696,6 +1831,7 @@ class App(tk.Tk):
         self._next_row = 1
         for s in self._slaves:
             self._add_slave_row(s)
+        self._update_slave_count()
 
     def _toggle_slave(self, data: Dict):
         self._save_config()
@@ -1815,10 +1951,15 @@ class App(tk.Tk):
             self._refresh_dashboard()
         self._check_timer = self.after(3000, self._schedule_check)
 
-    def _check_update(self):
+    def _check_update(self, force=False):
         if not _UPD_OK:
+            if force:
+                messagebox.showinfo("Обновления", "Модуль обновлений недоступен")
             return
-        upd_mod.check_update(callback=self._on_update_available)
+        upd_mod.check_update(callback=self._on_update_available, no_update=lambda: self._on_no_update() if force else None)
+
+    def _on_no_update(self):
+        messagebox.showinfo("Обновления", f"У вас последняя версия (v{upd_mod.VERSION})")
 
     def _on_update_available(self, version, changelog):
         text = f"Доступна новая версия: v{version}"
@@ -2089,7 +2230,7 @@ class App(tk.Tk):
 
     # ── Конфиг ──────────────────────────────────────────────
 
-    def _build_config(self) -> Dict:
+    def _build_profile(self) -> Dict:
         return {
             "master": {"path": self.var_master_path.get().strip()},
             "slaves": [
@@ -2106,6 +2247,15 @@ class App(tk.Tk):
                 }
                 for s in self._slaves
             ],
+        }
+
+    def _build_config(self) -> Dict:
+        self._profiles[self._active_profile].update(self._build_profile())
+        if "name" not in self._profiles[self._active_profile]:
+            self._profiles[self._active_profile]["name"] = f"Профиль {self._active_profile + 1}"
+        return {
+            "active_profile": self._active_profile,
+            "profiles": self._profiles,
             "poll_interval_seconds": 1,
             "min_lot_mode": self._min_lot_mode,
         }
@@ -2119,16 +2269,46 @@ class App(tk.Tk):
             self._log(f"\u26A0\uFE0F Ошибка конфига: {e}", "warn")
 
     def _load_config(self):
+        self._profiles = []
+        for i in range(5):
+            self._profiles.append({"name": f"Профиль {i + 1}", "master": {"path": ""}, "slaves": []})
+        self._active_profile = 0
+
         if not os.path.exists(CONFIG_FILE):
+            self._update_slave_count()
             return
         try:
             with open(CONFIG_FILE, "r", encoding="utf-8") as f:
                 cfg = json.load(f)
         except Exception:
+            self._update_slave_count()
             return
-        self.var_master_path.set(cfg.get("master", {}).get("path", ""))
+
+        if "profiles" in cfg:
+            for i, p in enumerate(cfg["profiles"]):
+                if i < 5:
+                    self._profiles[i] = p
+            self._active_profile = cfg.get("active_profile", 0)
+        else:
+            self._profiles[0] = {
+                "name": "Профиль 1",
+                "master": cfg.get("master", {"path": ""}),
+                "slaves": cfg.get("slaves", []),
+            }
+
         self._min_lot_mode = cfg.get("min_lot_mode", False)
-        for s in cfg.get("slaves", []):
+        self._load_active_profile()
+        self._update_slave_count()
+
+    def _load_active_profile(self):
+        p = self._profiles[self._active_profile]
+        self.var_master_path.set(p.get("master", {}).get("path", ""))
+        self._slaves.clear()
+        for r in self._rows:
+            r.destroy()
+        self._rows.clear()
+        self._next_row = 1
+        for s in p.get("slaves", []):
             if "id" not in s:
                 s["id"] = str(uuid.uuid4())[:8]
             if "max_drawdown" not in s:
@@ -2139,6 +2319,18 @@ class App(tk.Tk):
                 s["daily_loss_limit"] = 0
             self._slaves.append(s)
             self._add_slave_row(s)
+
+    def _switch_profile(self, idx: int):
+        self._profiles[self._active_profile].update(self._build_profile())
+        self._save_config()
+        self._active_profile = idx
+        self._load_active_profile()
+        self._update_slave_count()
+        self._save_config()
+        self._log(f"\U0001F4CB Профиль: {self._profiles[idx].get('name', f'Профиль {idx + 1}')}", "info")
+
+    def _open_settings(self):
+        SettingsDialog(self)
 
     def _on_close(self):
         if self._trader and self._trader.is_running():

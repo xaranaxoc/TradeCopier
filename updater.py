@@ -5,7 +5,7 @@ API_URL = "http://2.26.142.85:8000"
 VERSION = "1.1.0"
 
 
-def check_update(callback=None):
+def check_update(callback=None, no_update=None):
     def _worker():
         try:
             r = requests.get(f"{API_URL}/version", timeout=10)
@@ -15,6 +15,9 @@ def check_update(callback=None):
             if _compare(remote_ver, VERSION) > 0:
                 if callback:
                     callback(remote_ver, changelog)
+            else:
+                if no_update:
+                    no_update()
         except Exception:
             pass
 
