@@ -600,6 +600,13 @@ class CopyTrader:
         try:
             with open(self.config_file, "r", encoding="utf-8") as f:
                 cfg = json.load(f)
+            if "profiles" in cfg:
+                idx = cfg.get("active_profile", 0)
+                profiles = cfg.get("profiles", [])
+                if idx < len(profiles):
+                    p = profiles[idx]
+                    cfg["master"] = p.get("master", {})
+                    cfg["slaves"] = p.get("slaves", [])
             with self._lock:
                 old_master = self.config.get("master", {}).get("path", "")
                 self.config = cfg
