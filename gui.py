@@ -1273,7 +1273,7 @@ class SettingsDialog(tk.Toplevel):
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("FTH Trade Copier")
+        self.title(f"FTH Trade Copier v{upd_mod.VERSION}" if _UPD_OK else "FTH Trade Copier")
         self.configure(bg=BG_DEEP)
         self.resizable(True, True)
         self.minsize(1100, 720)
