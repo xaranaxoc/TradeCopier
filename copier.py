@@ -4,6 +4,7 @@ MT5 Local Copy Trader — логика копирования сделок
 
 import os
 import json
+import time
 import threading
 import ctypes
 from ctypes import wintypes
@@ -106,11 +107,21 @@ def save_state(state_file: str, state: Dict) -> None:
         pass
 
 
+_RATE_CACHE: Dict[str, tuple] = {}
+_RATE_CACHE_TTL = 30.0
+
+
 def _get_currency_rate(from_curr: str, to_curr: str) -> float:
     if mt5 is None or not from_curr or not to_curr:
         return 1.0
     if from_curr == to_curr:
         return 1.0
+    key = f"{from_curr}_{to_curr}"
+    now = time.time()
+    if key in _RATE_CACHE:
+        val, ts = _RATE_CACHE[key]
+        if now - ts < _RATE_CACHE_TTL:
+            return val
     candidates = [from_curr + to_curr, to_curr + from_curr]
     for pair in candidates:
         info = mt5.symbol_info(pair)
@@ -120,8 +131,11 @@ def _get_currency_rate(from_curr: str, to_curr: str) -> float:
             if tick and tick.bid > 0:
                 mid = (tick.bid + tick.ask) / 2
                 if pair == to_curr + from_curr:
-                    return 1.0 / mid
-                return mid
+                    val = 1.0 / mid
+                else:
+                    val = mid
+                _RATE_CACHE[key] = (val, now)
+                return val
     all_symbols = mt5.symbols_get()
     if all_symbols:
         from_upper = from_curr.upper()
@@ -133,24 +147,29 @@ def _get_currency_rate(from_curr: str, to_curr: str) -> float:
                 tick = mt5.symbol_info_tick(s.name)
                 if tick and tick.bid > 0:
                     mid = (tick.bid + tick.ask) / 2
+                    _RATE_CACHE[key] = (mid, now)
                     return mid
             if name_upper.startswith(to_upper) and from_upper in name_upper[len(to_upper):]:
                 mt5.symbol_select(s.name, True)
                 tick = mt5.symbol_info_tick(s.name)
                 if tick and tick.bid > 0:
                     mid = (tick.bid + tick.ask) / 2
-                    return 1.0 / mid
+                    val = 1.0 / mid
+                    _RATE_CACHE[key] = (val, now)
+                    return val
     if from_curr != "USD" and to_curr != "USD":
         r1 = _get_currency_rate(from_curr, "USD")
         r2 = _get_currency_rate("USD", to_curr)
         if r1 > 0 and r2 > 0:
-            return r1 * r2
+            val = r1 * r2
+            _RATE_CACHE[key] = (val, now)
+            return val
     return 1.0
 
 
 def calculate_lot(symbol_info, sl_distance: float,
                    risk_type: str, risk_value: float,
-                   balance: float) -> float:
+                   balance: float, deposit_curr: str = "") -> float:
     if sl_distance <= 0:
         return 0.0
 
@@ -160,11 +179,6 @@ def calculate_lot(symbol_info, sl_distance: float,
     tick_value = 0.0
     rate = 1.0
     profit_curr = getattr(symbol_info, 'currency_profit', '') or ''
-    deposit_curr = ''
-    if mt5 is not None:
-        acc = mt5.account_info()
-        if acc:
-            deposit_curr = acc.currency or ''
 
     if contract_size > 0 and tick_size > 0:
         raw_tick_value = contract_size * tick_size
@@ -228,7 +242,14 @@ def get_filling_mode(symbol_info) -> int:
     return mt5.ORDER_FILLING_RETURN
 
 
+_FILLING_CACHE: Dict[str, int] = {}
+
+
 def try_send_order(request: Dict, log_fn=None) -> object:
+    symbol = request.get("symbol", "")
+    cached_filling = _FILLING_CACHE.get(symbol)
+    if cached_filling is not None:
+        request["type_filling"] = cached_filling
     result = mt5.order_send(request)
     if result is not None and result.retcode == 10030:
         original_filling = request.get("type_filling", 0)
@@ -255,8 +276,12 @@ def try_send_order(request: Dict, log_fn=None) -> object:
                     f"retcode={result.retcode if result else -1}"
                 )
             if result is not None and result.retcode != 10030:
+                if symbol:
+                    _FILLING_CACHE[symbol] = alt_filling
                 return result
         request["type_filling"] = original_filling
+    if result is not None and result.retcode != 10030 and symbol:
+        _FILLING_CACHE[symbol] = request.get("type_filling", 0)
     return result
 
 
@@ -330,6 +355,11 @@ class CopyTrader:
         self._drawdown_paused: Dict[str, bool] = {}
         self._trades_paused: Dict[str, bool] = {}
         self._daily_loss_paused: Dict[str, bool] = {}
+        self._config_mtime: float = 0.0
+        self._state_dirty: bool = False
+        self._rate_cache: Dict[str, tuple] = {}
+        self._filling_cache: Dict[str, int] = {}
+        self._symbol_cache: Dict[str, Optional[str]] = {}
 
         self.state = load_state(state_file)
 
@@ -598,6 +628,10 @@ class CopyTrader:
         if not self.config_file:
             return
         try:
+            mtime = os.path.getmtime(self.config_file)
+            if mtime == self._config_mtime:
+                return
+            self._config_mtime = mtime
             with open(self.config_file, "r", encoding="utf-8") as f:
                 cfg = json.load(f)
             if "profiles" in cfg:
@@ -626,6 +660,7 @@ class CopyTrader:
             daily.clear()
             daily["_date"] = today_str
         daily[sid] = daily.get(sid, 0) + 1
+        self._state_dirty = True
 
     # ── Основной цикл ────────────────────────────────────────
 
@@ -636,7 +671,7 @@ class CopyTrader:
                 self._cycle()
             except Exception as e:
                 self._log(f"❌ Критическая ошибка цикла: {e}")
-            self._stop_event.wait(self.config.get("poll_interval_seconds", 1))
+            self._stop_event.wait(self.config.get("poll_interval_seconds", 0.2))
 
     def _cycle(self):
         if mt5 is None:
@@ -652,14 +687,9 @@ class CopyTrader:
             self._status("master", "🔴 Путь не задан")
             return
 
-        if not is_terminal_running(master_path):
-            self._status("master", "🔴 Терминал не запущен")
-            return
-
         ok = mt5.initialize(path=master_path)
         if not ok:
-            err = mt5.last_error()
-            self._status("master", f"🔴 Ошибка подключения ({err[0]})")
+            self._status("master", "🔴 Терминал не подключен")
             return
 
         try:
@@ -691,7 +721,9 @@ class CopyTrader:
                 except Exception as e:
                     self._log(f"❌ [{sid}] Ошибка: {e}")
 
-            save_state(self.state_file, self.state)
+            if self._state_dirty:
+                save_state(self.state_file, self.state)
+                self._state_dirty = False
 
     # ── Обработка одного слейва (подключение + проверки) ─────
 
@@ -705,14 +737,9 @@ class CopyTrader:
             self._status(sname, "🔴 Путь не задан")
             return
 
-        if not is_terminal_running(slave_path):
-            self._status(sname, "🔴 Не запущен")
-            return
-
         ok = mt5.initialize(path=slave_path)
         if not ok:
-            err = mt5.last_error()
-            self._status(sname, f"🔴 Ошибка ({err[0]})")
+            self._status(sname, "🔴 Не подключен")
             return
 
         try:
@@ -729,6 +756,7 @@ class CopyTrader:
 
             balance = acc.balance
             equity = acc.equity
+            self._deposit_curr = acc.currency or ''
 
             # ── Защита по просадке ────────────────────────────────
             max_dd = slave.get("max_drawdown", 0)
@@ -828,6 +856,7 @@ class CopyTrader:
                                  master_positions, balance)
             self._sync_orders(slave, sid, sname, symbol_map,
                               master_orders, master_positions, balance)
+            self._state_dirty = True
         finally:
             mt5.shutdown()
 
@@ -877,6 +906,9 @@ class CopyTrader:
 
         state_pos: Dict = self.state["positions"]
 
+        all_slave_positions = mt5.positions_get() or []
+        slave_pos_by_ticket = {p.ticket: p for p in all_slave_positions}
+
         # Новые позиции (есть у мастера, нет в state для этого слейва)
         for ticket_str, pos in master_pos_map.items():
             already_copied = ticket_str in state_pos and sid in state_pos[ticket_str]
@@ -890,10 +922,7 @@ class CopyTrader:
                 if slave_ticket is None:
                     slave_ticket_old = self.state["orders"][ticket_str].get(sid)
                     if slave_ticket_old:
-                        slave_pos_list = mt5.positions_get(ticket=slave_ticket_old)
-                        if not slave_pos_list:
-                            slave_ticket_old = None
-                        else:
+                        if slave_ticket_old in slave_pos_by_ticket:
                             slave_ticket = slave_ticket_old
                 if slave_ticket:
                     if ticket_str not in state_pos:
@@ -927,16 +956,18 @@ class CopyTrader:
                 state_pos.pop(ticket_str, None)
 
         # ── SL/TP модификация на существующих позициях ─────────────
+        sym_info_cache: Dict[str, Any] = {}
         for ticket_str, master_pos in master_pos_map.items():
             slave_ticket = state_pos.get(ticket_str, {}).get(sid)
             if not slave_ticket:
                 continue
-            slave_positions = mt5.positions_get(ticket=slave_ticket)
-            if not slave_positions:
+            slave_pos = slave_pos_by_ticket.get(slave_ticket)
+            if not slave_pos:
                 continue
-            slave_pos = slave_positions[0]
 
-            sym_info = mt5.symbol_info(slave_pos.symbol)
+            if slave_pos.symbol not in sym_info_cache:
+                sym_info_cache[slave_pos.symbol] = mt5.symbol_info(slave_pos.symbol)
+            sym_info = sym_info_cache[slave_pos.symbol]
             if not sym_info:
                 continue
             digits = sym_info.digits
@@ -1110,7 +1141,8 @@ class CopyTrader:
             sl_distance = price * sl_pct
             risk_type = slave.get("risk_type", "percent")
             risk_value = slave.get("risk_value", 1.0)
-            lot = calculate_lot(sym_info, sl_distance, risk_type, risk_value, balance)
+            lot = calculate_lot(sym_info, sl_distance, risk_type, risk_value, balance,
+                                getattr(self, '_deposit_curr', ''))
             profit_curr = getattr(sym_info, 'currency_profit', '') or ''
             raw_tv = (sym_info.trade_contract_size or 0) * (sym_info.trade_tick_size or 0)
             self._log(
@@ -1354,7 +1386,8 @@ class CopyTrader:
                 sym_info, sl_distance,
                 slave.get("risk_type", "percent"),
                 slave.get("risk_value", 1.0),
-                balance
+                balance,
+                getattr(self, '_deposit_curr', '')
             )
             if lot <= 0:
                 lot = slave.get("default_lot", 0.01)
