@@ -360,10 +360,6 @@ class CopyTrader:
         self._rate_cache: Dict[str, tuple] = {}
         self._filling_cache: Dict[str, int] = {}
         self._symbol_cache: Dict[str, Optional[str]] = {}
-        self._last_master_key: str = ""
-        self._last_master_positions = []
-        self._last_master_orders = []
-        self._last_full_sync: float = 0.0
 
         self.state = load_state(state_file)
 
@@ -686,6 +682,7 @@ class CopyTrader:
         master_cfg = self.config.get("master", {})
         master_path = master_cfg.get("path", "")
 
+        # ── Подключение к мастеру ────────────────────────────
         if not master_path:
             self._status("master", "🔴 Путь не задан")
             return
@@ -695,35 +692,24 @@ class CopyTrader:
             self._status("master", "🔴 Терминал не подключен")
             return
 
-        acc = mt5.account_info()
-        if acc is None:
+        try:
+            acc = mt5.account_info()
+            if acc is None:
+                self._status("master", "🔴 Нет данных аккаунта")
+                return
+            self._status("master", f"🟢 #{acc.login} ${acc.balance:.2f}",
+                         acc.balance, acc.equity)
+
+            ti = mt5.terminal_info()
+            if ti and not ti.trade_allowed:
+                self._log("⚠️ Мастер: Алготрейдинг ВЫКЛ — чтение работает, но для торговли на слейвах тоже включите")
+
+            master_positions = mt5.positions_get() or []
+            master_orders = mt5.orders_get() or []
+        finally:
             mt5.shutdown()
-            self._status("master", "🔴 Нет данных аккаунта")
-            return
-        self._status("master", f"🟢 #{acc.login} ${acc.balance:.2f}",
-                     acc.balance, acc.equity)
 
-        ti = mt5.terminal_info()
-        if ti and not ti.trade_allowed:
-            self._log("⚠️ Мастер: Алготрейдинг ВЫКЛ — чтение работает, но для торговли на слейвах тоже включите")
-
-        master_positions = mt5.positions_get() or []
-        master_orders = mt5.orders_get() or []
-        mt5.shutdown()
-
-        master_key = ";".join(
-            [f"{p.ticket}:{p.volume}" for p in master_positions] +
-            [f"o{o.ticket}:{o.type}" for o in master_orders]
-        )
-        now = time.time()
-        force_sync = (now - self._last_full_sync) >= 5.0
-        if master_key == self._last_master_key and not force_sync:
-            return
-        self._last_master_key = master_key
-        self._last_master_positions = master_positions
-        self._last_master_orders = master_orders
-        self._last_full_sync = now
-
+        # ── Обработка каждого слейва ─────────────────────────
         with self._lock:
             slaves = self.config.get("slaves", [])
             for slave in slaves:
