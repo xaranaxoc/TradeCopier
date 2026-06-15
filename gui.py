@@ -1038,10 +1038,24 @@ class ActivationWindow(tk.Toplevel):
         self.resizable(False, False)
         if os.path.exists(ICON_DEFAULT):
             self.iconbitmap(ICON_DEFAULT)
-        self.protocol("WM_DELETE_WINDOW", self.destroy)
+        self._activated = False
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
         self.grab_set()
         self._build()
         self._center_on_screen()
+
+    def _on_close(self):
+        # Закрытие окна активации без успешной активации = выход из всей программы.
+        if self._activated:
+            self.destroy()
+            return
+        app = self.master
+        self.destroy()
+        try:
+            app._real_quit()  # graceful: стоп трейдера, стоп tray, сохранение конфига
+        except Exception:
+            pass
+        os._exit(0)  # страховка: гарантированно завершить процесс
 
     def _center_on_screen(self):
         self.update_idletasks()
@@ -1160,6 +1174,7 @@ class ActivationWindow(tk.Toplevel):
         ok, result = lic_mod.verify_code(tg_id, code)
         if ok:
             self.lbl_status.config(text="Активация успешна!", fg=GREEN_DIM)
+            self._activated = True  # успешная активация закрывает только окно, не прогу
             self.after(500, self.destroy)
         elif result and result.startswith("device_limit"):
             max_d = result.split(":")[-1]
