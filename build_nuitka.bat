@@ -5,12 +5,24 @@ echo   FTH Trade Copier — Nuitka Build
 echo ============================================
 echo.
 
-set PYTHON=C:\Users\bu4ukeec\AppData\Local\Programs\Python\Python314\python.exe
+REM --- Поиск Python: сначала привычный путь, иначе python из PATH ---
+set "PYTHON=C:\Users\bu4ukeec\AppData\Local\Programs\Python\Python314\python.exe"
+if not exist "%PYTHON%" set "PYTHON=python"
+"%PYTHON%" --version >nul 2>&1
+if %errorlevel% neq 0 (
+    echo ОШИБКА: Python не найден. Укажите путь к python.exe в переменной PYTHON
+    echo в начале build_nuitka.bat либо добавьте Python в PATH.
+    pause
+    exit /b 1
+)
+echo Использую Python:
+"%PYTHON%" --version
+echo.
 
 echo [1/2] Установка зависимостей...
-%PYTHON% -m pip install nuitka ordered-set zstandard customtkinter MetaTrader5 psutil pystray Pillow requests
+"%PYTHON%" -m pip install -r requirements.txt nuitka ordered-set zstandard pystray
 if %errorlevel% neq 0 (
-    echo ОШИБКА: не удалось установить зависимости
+    echo ОШИБКА: не удалось установить зависимости (см. текст ошибки выше)
     pause
     exit /b 1
 )
@@ -19,7 +31,7 @@ echo.
 echo [2/2] Компиляция Nuitka (5-15 мин, первый раз дольше — скачает MinGW)...
 echo.
 
-%PYTHON% -m nuitka ^
+"%PYTHON%" -m nuitka ^
     --standalone ^
     --onefile ^
     --windows-console-mode=disable ^
