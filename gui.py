@@ -1733,8 +1733,12 @@ class App(tk.Tk):
         card.pack(fill="x", pady=(0, 12))
         card.pack_propagate(False)
 
-        strip = ctk.CTkFrame(card, width=3, corner_radius=2, fg_color=ACCENT)
-        strip.place(relx=0, rely=0.18, relheight=0.64, x=8)
+        # Phase 5: цветную полоску храним, чтобы анимировать пульс при run.
+        self._master_strip = ctk.CTkFrame(card, width=3, corner_radius=2,
+                                            fg_color=ACCENT)
+        self._master_strip.place(relx=0, rely=0.18, relheight=0.64, x=8)
+        self._master_strip_pulse = False
+        self._master_strip_phase = 0
 
         body = ctk.CTkFrame(card, fg_color="transparent")
         body.pack(fill="both", expand=True, padx=18, pady=10)
@@ -1814,12 +1818,17 @@ class App(tk.Tk):
         lbl.pack(anchor="e", pady=(2, 0))
         return lbl
 
-    # ── KPI ROW ──────────────────────────────────────────────
+    # ── KPI ROW (Phase 5) ────────────────────────────────────
     def _build_kpi_row_new(self, parent, sans_reg, sans_bold):
         row = ctk.CTkFrame(parent, fg_color="transparent")
         row.pack(fill="x", pady=(0, 14))
 
         self._kpi_labels = {}
+        self._kpi_delta = {}
+        self._kpi_spark_canvas = {}
+        self._kpi_history = {}
+        self._kpi_cards = {}
+        self._kpi_prev_value = {}
         cards_data = [
             ("kpi_bal",  "Master Balance", "—", FG,     ACCENT),
             ("kpi_eq",   "Total Equity",   "—", FG,     ACCENT),
@@ -1827,24 +1836,158 @@ class App(tk.Tk):
             ("kpi_conn", "Connected",      "—", FG_DIM, ACCENT),
         ]
         for i, (key, title, value, color, strip_color) in enumerate(cards_data):
-            card = _make_card(row, height=78)
+            card = _make_card(row, height=90)
             card.pack(side="left", fill="x", expand=True,
                        padx=(0 if i == 0 else 10, 0))
             card.pack_propagate(False)
+            self._kpi_cards[key] = card
 
             strip = ctk.CTkFrame(card, width=3, corner_radius=2,
                                   fg_color=strip_color)
-            strip.place(relx=0, rely=0.18, relheight=0.64, x=8)
+            strip.place(relx=0, rely=0.16, relheight=0.68, x=8)
 
             inner = ctk.CTkFrame(card, fg_color="transparent")
             inner.pack(fill="both", expand=True, padx=18, pady=10)
 
             tk.Label(inner, text=title.upper(), bg=CARD_BG, fg=FG_DIM,
                       font=(sans_reg, 9), anchor="w").pack(fill="x")
-            lbl = tk.Label(inner, text=value, bg=CARD_BG, fg=color,
+
+            value_row = tk.Frame(inner, bg=CARD_BG)
+            value_row.pack(fill="x", pady=(2, 0))
+            lbl = tk.Label(value_row, text=value, bg=CARD_BG, fg=color,
                             font=(sans_bold, 18), anchor="w")
-            lbl.pack(fill="x", pady=(2, 0))
+            lbl.pack(side="left")
             self._kpi_labels[key] = lbl
+
+            delta = tk.Label(value_row, text="", bg=CARD_BG, fg=FG_DIM,
+                              font=(sans_bold, 10), anchor="w")
+            delta.pack(side="left", padx=(8, 0), pady=(6, 0))
+            self._kpi_delta[key] = delta
+
+            # Sparkline снизу справа карточки.
+            sc = tk.Canvas(card, width=78, height=20, bg=CARD_BG,
+                           highlightthickness=0, bd=0)
+            sc.place(relx=1.0, rely=1.0, anchor="se", x=-12, y=-10)
+            self._kpi_spark_canvas[key] = sc
+            self._kpi_history[key] = []
+
+    def _kpi_push(self, key: str, value: float, value_text: str,
+                  color: Optional[str] = None) -> None:
+        """Phase 5: централизованное обновление одной KPI-карточки.
+
+        Обновляет значение, считает дельту относительно прошлой пуш-точки,
+        перерисовывает sparkline, мигает фоном при изменении.
+        """
+        if key not in self._kpi_labels:
+            return
+        prev = self._kpi_prev_value.get(key)
+        # значение
+        if color is not None:
+            self._kpi_labels[key].config(text=value_text, fg=color)
+        else:
+            self._kpi_labels[key].config(text=value_text)
+        # дельта
+        delta_lbl = self._kpi_delta.get(key)
+        if delta_lbl is not None:
+            if prev is not None and prev != 0:
+                pct = (value - prev) / abs(prev) * 100
+                if abs(pct) < 0.005:
+                    delta_lbl.config(text="", fg=FG_DIM)
+                else:
+                    arrow = "\u25B2" if pct > 0 else "\u25BC"
+                    col = GREEN if pct > 0 else RED
+                    delta_lbl.config(text=f"{arrow} {abs(pct):.2f}%", fg=col)
+            else:
+                delta_lbl.config(text="")
+        # история
+        hist = self._kpi_history.get(key)
+        if hist is not None:
+            hist.append(value)
+            if len(hist) > 60:
+                del hist[0:len(hist) - 60]
+            self._kpi_redraw_spark(key)
+        # value flash на изменении
+        if prev is not None and prev != value:
+            self._kpi_flash(key)
+        self._kpi_prev_value[key] = value
+
+    def _kpi_redraw_spark(self, key: str) -> None:
+        sc = self._kpi_spark_canvas.get(key)
+        hist = self._kpi_history.get(key) or []
+        if sc is None or len(hist) < 2:
+            return
+        try:
+            sc.delete("all")
+        except Exception:
+            return
+        w = int(sc.cget("width"))
+        h = int(sc.cget("height"))
+        lo = min(hist)
+        hi = max(hist)
+        span = hi - lo if hi - lo > 1e-9 else 1.0
+        n = len(hist)
+        step = w / max(1, n - 1)
+        pts = []
+        for i, v in enumerate(hist):
+            x = i * step
+            y = h - 2 - (v - lo) / span * (h - 4)
+            pts.extend([x, y])
+        # тренд
+        trend_color = ACCENT
+        if hist[-1] > hist[0]:
+            trend_color = GREEN
+        elif hist[-1] < hist[0]:
+            trend_color = RED
+        try:
+            sc.create_line(*pts, fill=trend_color, width=1.5, smooth=True)
+            # точка-курсор справа
+            sc.create_oval(pts[-2] - 2, pts[-1] - 2,
+                            pts[-2] + 2, pts[-1] + 2,
+                            fill=trend_color, outline="")
+        except Exception:
+            pass
+
+    def _kpi_flash(self, key: str) -> None:
+        card = self._kpi_cards.get(key)
+        if card is None:
+            return
+        try:
+            card.configure(fg_color=BG_INPUT)
+            self.after(160, lambda: card.configure(fg_color=CARD_BG))
+        except Exception:
+            pass
+
+    # Phase 5: пульсация цветной полоски master-карточки.
+    _MASTER_PULSE_COLORS = ("#00B4D8", "#00D2F2", "#33E2FF",
+                             "#00D2F2", "#00B4D8", "#0094B5")
+
+    def _set_master_pulse(self, on: bool) -> None:
+        self._master_strip_pulse = bool(on)
+        if not hasattr(self, "_master_strip"):
+            return
+        if on:
+            self._master_strip_phase = 0
+            self._tick_master_pulse()
+        else:
+            try:
+                self._master_strip.configure(fg_color=ACCENT)
+            except Exception:
+                pass
+
+    def _tick_master_pulse(self) -> None:
+        if not self._master_strip_pulse:
+            return
+        try:
+            colors = self._MASTER_PULSE_COLORS
+            c = colors[self._master_strip_phase % len(colors)]
+            self._master_strip.configure(fg_color=c)
+            self._master_strip_phase += 1
+        except Exception:
+            return
+        try:
+            self.after(280, self._tick_master_pulse)
+        except Exception:
+            pass
 
     # ── SLAVES SECTION ───────────────────────────────────────
     def _build_slaves_section_new(self, parent, sans_reg, sans_bold):
@@ -2586,7 +2729,8 @@ class App(tk.Tk):
             bal = float(bal_text.replace("$", "").replace(",", "")) if bal_text and bal_text != "\u2014" else 0
         except Exception:
             bal = 0
-        self._kpi_labels["kpi_bal"].config(text=f"${bal:,.2f}" if bal > 0 else "\u2014")
+        self._kpi_push("kpi_bal", bal,
+                        f"${bal:,.2f}" if bal > 0 else "\u2014")
 
         total_eq = bal
         for row in self._rows:
@@ -2597,7 +2741,8 @@ class App(tk.Tk):
                     total_eq += eq
             except Exception:
                 pass
-        self._kpi_labels["kpi_eq"].config(text=f"${total_eq:,.2f}" if total_eq > 0 else "\u2014")
+        self._kpi_push("kpi_eq", total_eq,
+                        f"${total_eq:,.2f}" if total_eq > 0 else "\u2014")
 
         net_pnl = 0.0
         for row in self._rows:
@@ -2610,12 +2755,13 @@ class App(tk.Tk):
                 pass
         pnl_color = GREEN if net_pnl >= 0 else RED
         pnl_sign = "+" if net_pnl >= 0 else ""
-        self._kpi_labels["kpi_pnl"].config(text=f"{pnl_sign}${net_pnl:,.2f}" if net_pnl != 0 else "\u2014",
-                                            fg=pnl_color if net_pnl != 0 else FG_DIM)
+        self._kpi_push("kpi_pnl", net_pnl,
+                        f"{pnl_sign}${net_pnl:,.2f}" if net_pnl != 0 else "\u2014",
+                        color=pnl_color if net_pnl != 0 else FG_DIM)
 
         connected = sum(1 for row in self._rows if row.var_enabled.get())
         total = len(self._rows)
-        self._kpi_labels["kpi_conn"].config(text=f"{connected}/{total}")
+        self._kpi_push("kpi_conn", float(connected), f"{connected}/{total}")
 
     def _start(self):
         master_path = self.var_master_path.get().strip()
@@ -2652,6 +2798,8 @@ class App(tk.Tk):
         self._log("\u2705 Копитрейдер запущен", "ok")
         if hasattr(self, "toasts"):
             self.toasts.show("Копитрейдер запущен", "ok")
+        # Phase 5: запускаем пульс цветной полоски master-карточки.
+        self._set_master_pulse(True)
 
     def _stop(self):
         if self._trader:
@@ -2669,6 +2817,7 @@ class App(tk.Tk):
         self._log("\u25A0 Копитрейдер остановлен", "warn")
         if hasattr(self, "toasts"):
             self.toasts.show("Копитрейдер остановлен", "info")
+        self._set_master_pulse(False)
         self._schedule_check()
 
     # ── Колбэки ─────────────────────────────────────────────
