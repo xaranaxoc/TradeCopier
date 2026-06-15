@@ -19,6 +19,8 @@ def make_button(parent, text, command=None, kind="neutral", width=0, height=None
     """kind: accent | danger | neutral | ghost."""
     if kind == "accent":
         fg, hover, txt = T.ACCENT, T.ACCENT_H, "#04141A"
+    elif kind == "success":
+        fg, hover, txt = T.GREEN_DIM, T.GREEN, "#04140A"
     elif kind == "danger":
         fg, hover, txt = T.RED_DIM, T.RED, "#FFFFFF"
     elif kind == "ghost":

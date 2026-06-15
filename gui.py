@@ -1116,18 +1116,16 @@ class ActivationWindow(tk.Toplevel):
         self.var_tg_id = tk.StringVar()
         self._ent(frm, self.var_tg_id, 22).grid(row=2, column=1, sticky="ew", padx=(8, 0), pady=3)
 
-        btn_code = tk.Button(frm, text="Получить код", command=self._request_code,
-                             bg=ACCENT, fg="white", relief="flat", font=FONT_BOLD,
-                             activebackground=ACCENT_H, cursor="hand2", padx=12, pady=3)
+        btn_code = kit.make_button(frm, "Получить код", command=self._request_code,
+                                   kind="accent", width=170)
         btn_code.grid(row=3, column=0, columnspan=2, pady=(8, 4))
 
         self._lbl(frm, "Код из Telegram").grid(row=4, column=0, sticky="w", pady=3)
         self.var_code = tk.StringVar()
         self._ent(frm, self.var_code, 22).grid(row=4, column=1, sticky="ew", padx=(8, 0), pady=3)
 
-        btn_verify = tk.Button(frm, text="Подтвердить", command=self._verify,
-                               bg=GREEN_DIM, fg="white", relief="flat", font=FONT_BOLD,
-                               activebackground=GREEN, cursor="hand2", padx=12, pady=3)
+        btn_verify = kit.make_button(frm, "Подтвердить", command=self._verify,
+                                     kind="success", width=170)
         btn_verify.grid(row=5, column=0, columnspan=2, pady=(8, 4))
 
         self.lbl_status = tk.Label(frm, text="", bg=BG_DEEP, fg=FG_DIM, font=FONT_SM,
@@ -1213,11 +1211,10 @@ class SettingsDialog(tk.Toplevel):
         for i in range(5):
             name = parent._profiles[i].get("name", f"Профиль {i + 1}")
             self._profile_names.append(tk.StringVar(value=name))
-            btn = tk.Button(tabs_f, text=f" {name} ", command=lambda idx=i: self._select(idx),
-                            bg=BG_INPUT if i != self._active else ACCENT,
-                            fg="white" if i == self._active else FG_DIM,
-                            relief="flat", font=FONT_SM, cursor="hand2",
-                            activebackground=ACCENT_H, padx=6, pady=3)
+            btn = kit.make_button(tabs_f, f" {name} ",
+                                  command=lambda idx=i: self._select(idx),
+                                  kind="accent" if i == self._active else "neutral",
+                                  width=64, height=28, font_size=11)
             btn.pack(side="left", padx=2)
             self._profile_btns.append(btn)
 
@@ -1244,9 +1241,8 @@ class SettingsDialog(tk.Toplevel):
             self._app._switch_profile(self._active)
             self.destroy()
 
-        btn_switch = tk.Button(btn_row, text="Сохранить", command=switch_profile,
-                               bg=ACCENT, fg="white", relief="flat", font=FONT_BOLD,
-                               activebackground=ACCENT_H, cursor="hand2", padx=16, pady=4)
+        btn_switch = kit.make_button(btn_row, "Сохранить", command=switch_profile,
+                                     kind="accent", width=110)
         btn_switch.pack(side="left")
         _bind_tip(btn_switch, "Сохранить и переключиться на профиль")
 
@@ -1254,15 +1250,13 @@ class SettingsDialog(tk.Toplevel):
             self.destroy()
             parent._check_update(force=True)
 
-        btn_update = tk.Button(btn_row, text="\U0001F504 Проверить обновления", command=check_updates,
-                               bg=BG_INPUT, fg=FG_DIM, relief="flat", font=FONT,
-                               activebackground=BG_ROW_HOVER, cursor="hand2", padx=10, pady=4)
+        btn_update = kit.make_button(btn_row, "\U0001F504 Проверить обновления",
+                                     command=check_updates, kind="neutral", width=190)
         btn_update.pack(side="right")
         _bind_tip(btn_update, "Проверить наличие новой версии")
 
-        btn_close = tk.Button(btn_row, text="Закрыть", command=self.destroy,
-                              bg=BG_INPUT, fg=FG_DIM, relief="flat", font=FONT,
-                              activebackground=BG_ROW_HOVER, cursor="hand2", padx=10, pady=4)
+        btn_close = kit.make_button(btn_row, "Закрыть", command=self.destroy,
+                                    kind="neutral", width=96)
         btn_close.pack(side="right", padx=6)
 
         self.update_idletasks()
@@ -1276,18 +1270,20 @@ class SettingsDialog(tk.Toplevel):
         old_name = self._ent_name.get().strip()
         if old_name:
             self._app._profiles[self._active]["name"] = old_name
-            self._profile_btns[self._active].config(text=f" {old_name} ")
+            self._profile_btns[self._active].configure(text=f" {old_name} ")
         self._active = idx
         self._ent_name.delete(0, "end")
         self._ent_name.insert(0, self._app._profiles[idx].get("name", f"Профиль {idx + 1}"))
         for i, btn in enumerate(self._profile_btns):
-            btn.config(bg=ACCENT if i == idx else BG_INPUT,
-                       fg="white" if i == idx else FG_DIM)
+            if i == idx:
+                btn.configure(fg_color=ACCENT, hover_color=ACCENT_H, text_color="#04141A")
+            else:
+                btn.configure(fg_color=BG_INPUT, hover_color=BG_ROW_HOVER, text_color=FG_LABEL)
 
     def _on_name_change(self, event=None):
         name = self._ent_name.get().strip()
         if name:
-            self._profile_btns[self._active].config(text=f" {name} ")
+            self._profile_btns[self._active].configure(text=f" {name} ")
 
 
 # ── App ─────────────────────────────────────────────────────
