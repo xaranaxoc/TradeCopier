@@ -159,24 +159,47 @@ class PillButton(ctk.CTkButton):
     `btn.config(state="disabled")` продолжал работать.
     """
 
+    # Phase 3b: добавлены вариант `subtle`, focus-ring и loading-state.
     def __init__(self, master, text, command=None, variant="ghost",
-                 icon=None, width=None, **kw):
+                 icon=None, width=None, focus_ring=True, **kw):
         if variant == "primary":
             fg, hover, txt = ACCENT, ACCENT_H, "#FFFFFF"
         elif variant == "danger":
             fg, hover, txt = RED_DIM, RED, "#FFFFFF"
+        elif variant == "subtle":
+            fg, hover, txt = "transparent", BG_INPUT, FG_DIM
         else:
             fg, hover, txt = BG_INPUT, CARD_BG_HOVER, FG_LABEL
         label = f"{icon}  {text}" if icon else text
+        self._variant = variant
+        self._stored_text = label
         kwargs = dict(
             master=master, text=label, command=command,
             fg_color=fg, hover_color=hover, text_color=txt,
             corner_radius=CORNER_MD, height=32,
+            border_width=0, border_color=ACCENT_DIM,
         )
         if width is not None:
             kwargs["width"] = width
         kwargs.update(kw)
         super().__init__(**kwargs)
+
+        if focus_ring:
+            self.bind("<FocusIn>",  lambda _e: self.configure(border_width=2),
+                      add="+")
+            self.bind("<FocusOut>", lambda _e: self.configure(border_width=0),
+                      add="+")
+
+    def set_loading(self, loading: bool, loading_text: str = "…"):
+        """Включает «загружается»: блокирует кнопку и временно меняет текст."""
+        if loading:
+            try:
+                self._stored_text = self.cget("text")
+            except Exception:
+                pass
+            self.configure(text=loading_text, state="disabled")
+        else:
+            self.configure(text=self._stored_text, state="normal")
 
     def config(self, **kw):  # type: ignore[override]
         if "bg" in kw:
@@ -187,19 +210,39 @@ class PillButton(ctk.CTkButton):
 
 
 class IconButton(ctk.CTkButton):
-    """Квадратная иконочная кнопка."""
+    """Квадратная иконочная кнопка.
 
-    def __init__(self, master, glyph, command=None, color=FG_DIM,
-                 hover_color=None, size=34, **kw):
-        super().__init__(
-            master, text=glyph, command=command,
+    Phase 3b: если передан ``icon`` (Phosphor codepoint), кнопка рисует
+    его шрифтом Phosphor — чёткие, единообразные иконки вместо случайных
+    Unicode-символов. Параметр ``glyph`` оставлен для обратной
+    совместимости (обычная Unicode-строка, текущий шрифт).
+    """
+
+    def __init__(self, master, glyph=None, command=None, color=FG_DIM,
+                 hover_color=None, size=34, icon=None, **kw):
+        sym = icon if icon is not None else (glyph or "")
+        font = kw.pop("font", None)
+        if font is None and icon is not None:
+            icon_family = theme.pick_font(theme.ICON_PREFS)
+            font = (icon_family, max(12, int(size * 0.5)))
+        kwargs = dict(
+            master=master, text=sym, command=command,
             width=size, height=size,
             fg_color=BG_INPUT,
             hover_color=hover_color or CARD_BG_HOVER,
             text_color=color,
             corner_radius=CORNER_MD,
-            **kw,
+            border_width=0, border_color=ACCENT_DIM,
         )
+        if font is not None:
+            kwargs["font"] = font
+        kwargs.update(kw)
+        super().__init__(**kwargs)
+
+        self.bind("<FocusIn>",  lambda _e: self.configure(border_width=2),
+                  add="+")
+        self.bind("<FocusOut>", lambda _e: self.configure(border_width=0),
+                  add="+")
 
 
 def _make_card(parent, **kw):
@@ -1583,11 +1626,13 @@ class App(tk.Tk):
         right = ctk.CTkFrame(hdr, fg_color="transparent")
         right.pack(side="right", padx=14, pady=10)
 
-        self.btn_info = IconButton(right, "i", command=self._toggle_info)
+        self.btn_info = IconButton(right, icon=theme.ICON_INFO,
+                                     command=self._toggle_info)
         self.btn_info.pack(side="right", padx=(8, 0))
         _bind_tip(self.btn_info, "Режим подсказок")
 
-        btn_settings = IconButton(right, "⚙", command=self._open_settings)
+        btn_settings = IconButton(right, icon=theme.ICON_GEAR,
+                                   command=self._open_settings)
         btn_settings.pack(side="right", padx=(8, 0))
         _bind_tip(btn_settings, "Настройки приложения")
 
@@ -1659,14 +1704,24 @@ class App(tk.Tk):
 
         actions = ctk.CTkFrame(body, fg_color="transparent")
         actions.pack(side="left", padx=(14, 0))
-        IconButton(actions, "📈", color=ACCENT,
-                    command=self._open_master_terminal,
-                    size=30).pack(side="left", padx=2)
-        IconButton(actions, "✖", color=RED_DIM,
-                    command=self._close_all_master,
-                    size=30).pack(side="left", padx=2)
-        IconButton(actions, "⚠", color=YELLOW,
-                    command=self._test_master, size=30).pack(side="left", padx=2)
+        btn_open_master = IconButton(actions, icon=theme.ICON_CHART,
+                                       color=ACCENT,
+                                       command=self._open_master_terminal,
+                                       size=30)
+        btn_open_master.pack(side="left", padx=2)
+        _bind_tip(btn_open_master, "Открыть терминал мастера")
+        btn_close_master = IconButton(actions, icon=theme.ICON_X,
+                                        color=RED_DIM,
+                                        command=self._close_all_master,
+                                        size=30)
+        btn_close_master.pack(side="left", padx=2)
+        _bind_tip(btn_close_master, "Закрыть все сделки мастера")
+        btn_test_master = IconButton(actions, icon=theme.ICON_WARNING,
+                                       color=YELLOW,
+                                       command=self._test_master,
+                                       size=30)
+        btn_test_master.pack(side="left", padx=2)
+        _bind_tip(btn_test_master, "Тест мастера")
 
         # 4 ячейки статов master'а в сетке 4×1: фиксированный шаг между
         # колонками, чтобы длинные балансы не сдвигали соседей.
