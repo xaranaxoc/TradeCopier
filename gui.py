@@ -14,9 +14,49 @@ from datetime import datetime, timedelta
 from tkinter import ttk, filedialog, messagebox
 from typing import Dict, List, Optional
 
-import customtkinter as ctk
-import theme as T
-import ui_kit as kit
+
+def _diag(msg, err=False):
+    """Безопасный вывод в консоль. В собранном --windowed EXE потоки
+    stdout/stderr = None, поэтому пишем только при наличии потока и
+    глушим любые ошибки записи (иначе старт падал бы молча)."""
+    stream = sys.stderr if err else sys.stdout
+    try:
+        if stream is not None:
+            print(msg, file=stream, flush=True)
+    except Exception:
+        pass
+
+
+try:
+    import customtkinter as ctk
+    import theme as T
+    import ui_kit as kit
+except Exception as _imp_exc:  # зависимости интерфейса не установлены
+    import traceback as _traceback
+    _detail = (
+        f"{type(_imp_exc).__name__}: {_imp_exc}\n\n"
+        "Не установлены зависимости интерфейса (customtkinter и др.),\n"
+        "которые появились после редизайна.\n\n"
+        "В папке проекта выполните:\n"
+        "    pip install -r requirements.txt\n"
+        "или хотя бы:\n"
+        "    pip install customtkinter"
+    )
+    _diag("=" * 64, err=True)
+    _diag("[FTH Trade Copier] СБОЙ ИМПОРТА ЗАВИСИМОСТЕЙ", err=True)
+    _diag(_detail, err=True)
+    _diag(_traceback.format_exc(), err=True)
+    _diag("=" * 64, err=True)
+    try:
+        import tkinter as _tk
+        from tkinter import messagebox as _mb
+        _root = _tk.Tk()
+        _root.withdraw()
+        _mb.showerror("FTH Trade Copier — не хватает зависимостей", _detail)
+        _root.destroy()
+    except Exception:
+        pass
+    sys.exit(1)
 
 try:
     import MetaTrader5 as mt5
@@ -2428,6 +2468,8 @@ def _log_crash():
     """Записать трейсбек упавшего запуска в crash.log (рядом с конфигом)."""
     import traceback
     tb = traceback.format_exc()
+    # Дублируем в консоль, чтобы терминал не оставался пустым.
+    _diag(tb, err=True)
     try:
         os.makedirs(APP_DATA_DIR, exist_ok=True)
         path = os.path.join(APP_DATA_DIR, "crash.log")
@@ -2439,36 +2481,59 @@ def _log_crash():
         return None
 
 
+def _alert(kind, title, message):
+    """Показать диалог даже без активного Tk-root.
+
+    В __main__ ещё нет корневого окна, а messagebox без root может молча
+    упасть — тогда процесс завершался «в пустой терминал». Создаём
+    скрытый root явно.
+    """
+    try:
+        root = tk.Tk()
+        root.withdraw()
+        getattr(messagebox, kind)(title, message)
+        root.destroy()
+    except Exception:
+        pass
+
+
 if __name__ == "__main__":
-    mutex = ctypes.windll.kernel32.CreateMutexW(None, False, _MUTEX_NAME)
-    already_exists = ctypes.windll.kernel32.GetLastError() == 183
-    if already_exists:
-        if not _activate_existing():
-            # Мьютекс занят, но окно найти не удалось — висит зависший
-            # экземпляр. Подсказываем пользователю, а не выходим молча.
-            try:
-                messagebox.showwarning(
-                    "FTH Trade Copier",
+    _diag(f"[FTH Trade Copier] Запуск… (Python {sys.version.split()[0]})")
+    try:
+        # Одиночный экземпляр можно отключить переменной окружения, если
+        # завис прежний процесс и держит мьютекс.
+        _single = os.environ.get("FTH_NO_SINGLE_INSTANCE", "") not in ("1", "true", "True")
+        if _single:
+            ctypes.windll.kernel32.CreateMutexW(None, False, _MUTEX_NAME)
+            already_exists = ctypes.windll.kernel32.GetLastError() == 183
+            if already_exists:
+                _diag("[FTH] Найден уже запущенный экземпляр (mutex занят).")
+                if _activate_existing():
+                    _diag("[FTH] Активировал существующее окно. Выход.")
+                    sys.exit(0)
+                # Мьютекс занят, но живого окна нет — завис прежний процесс.
+                _diag("[FTH] Окно прежнего экземпляра не найдено — вероятно, "
+                      "висит зависший процесс FTHTradeCopier.")
+                _alert(
+                    "showwarning", "FTH Trade Copier",
                     "Программа уже запущена, но её окно не найдено.\n\n"
                     "Закройте процесс FTHTradeCopier в Диспетчере задач "
-                    "(вкладка «Подробности»), затем запустите снова.",
+                    "(вкладка «Подробности»), затем запустите снова.\n\n"
+                    "Либо запустите с переменной окружения "
+                    "FTH_NO_SINGLE_INSTANCE=1, чтобы пропустить эту проверку.",
                 )
-            except Exception:
-                pass
-        sys.exit(0)
-    try:
+                sys.exit(0)
         app = App()
+        _diag("[FTH] Окно создано, запускаю интерфейс.")
         app.mainloop()
+        _diag("[FTH] Завершение.")
     except Exception as exc:
-        # Раньше при исключении в App()/mainloop процесс мог «зависнуть»
-        # (живой фоновый поток) без единого окна. Теперь — лог + диалог.
+        # При исключении в App()/mainloop процесс мог «зависнуть» без окна.
+        # Теперь — трейсбек в консоль + crash.log + диалог.
         path = _log_crash()
-        try:
-            extra = f"\n\nЛог: {path}" if path else ""
-            messagebox.showerror(
-                "FTH Trade Copier — ошибка запуска",
-                f"Не удалось запустить программу:\n\n{exc}{extra}",
-            )
-        except Exception:
-            pass
+        extra = f"\n\nЛог: {path}" if path else ""
+        _alert(
+            "showerror", "FTH Trade Copier — ошибка запуска",
+            f"Не удалось запустить программу:\n\n{exc}{extra}",
+        )
         raise
