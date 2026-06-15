@@ -2408,5 +2408,18 @@ if __name__ == "__main__":
     if already_exists:
         _activate_existing()
         sys.exit(0)
-    app = App()
+
+    # `--new-ui` переключает на модернизированный интерфейс на CustomTkinter
+    # (gui_new.AppCtk). Старый интерфейс остаётся дефолтом, чтобы откатить
+    # можно было одним флагом.
+    if "--new-ui" in sys.argv:
+        try:
+            from gui_new import AppCtk
+            app = AppCtk()
+        except Exception as exc:
+            print(f"[--new-ui] не удалось запустить новый UI: {exc}", file=sys.stderr)
+            print("[--new-ui] откатываюсь на классический UI", file=sys.stderr)
+            app = App()
+    else:
+        app = App()
     app.mainloop()
