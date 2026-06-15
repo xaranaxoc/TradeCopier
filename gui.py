@@ -1038,7 +1038,7 @@ class ActivationWindow(tk.Toplevel):
         self.resizable(False, False)
         if os.path.exists(ICON_DEFAULT):
             self.iconbitmap(ICON_DEFAULT)
-        self.protocol("WM_DELETE_WINDOW", lambda: None)
+        self.protocol("WM_DELETE_WINDOW", self.destroy)
         self.grab_set()
         self._build()
         self._center_on_screen()
@@ -1065,6 +1065,12 @@ class ActivationWindow(tk.Toplevel):
             pass
         return "break"
 
+    def _on_ctrl_key(self, event=None):
+        # Срабатывает на любой раскладке: ловим физическую клавишу V по keycode,
+        # т.к. при русской раскладке keysym = Cyrillic_em ("м"), а не "v".
+        if event is not None and event.keycode == 86:  # V на Windows
+            return self._paste(event)
+
     def _ent(self, parent, var=None, width=28):
         e = tk.Entry(parent, textvariable=var, width=width,
                      bg=BG_INPUT, fg=FG, insertbackground=FG, relief="flat",
@@ -1072,6 +1078,7 @@ class ActivationWindow(tk.Toplevel):
                      highlightcolor=ACCENT)
         e.bind("<Control-v>", self._paste)
         e.bind("<Control-V>", self._paste)
+        e.bind("<Control-KeyPress>", self._on_ctrl_key)
         return e
 
     def _build(self):
