@@ -5,6 +5,7 @@ MT5 Local Copy Trader — GUI (tkinter + CustomTkinter)
 import os
 import sys
 import json
+import time
 import uuid
 import subprocess
 import threading
@@ -210,6 +211,49 @@ def _make_card(parent, **kw):
     )
     defaults.update(kw)
     return ctk.CTkFrame(parent, **defaults)
+
+
+class StatusPill(ctk.CTkFrame):
+    """Маленькая овальная плюшка `● TEXT` для статусов в шапке.
+
+    Состояния: idle / running / stopped / warn / error.
+    Цвет точки и подписи меняется через set_state().
+    """
+
+    _COLORS = {
+        "idle":    (FG_DIM, FG_LABEL),
+        "running": (GREEN,  FG),
+        "stopped": (FG_DIM, FG_LABEL),
+        "warn":    (YELLOW, FG),
+        "error":   (RED,    FG),
+    }
+
+    def __init__(self, master, text="—", state="idle"):
+        super().__init__(
+            master, fg_color=BG_INPUT, corner_radius=12,
+            border_width=1, border_color=SOFT_BORDER, height=26,
+        )
+        self._dot_color, self._text_color = self._COLORS[state]
+        self._dot = tk.Canvas(self, width=8, height=8, bg=BG_INPUT,
+                              highlightthickness=0, bd=0)
+        self._dot.pack(side="left", padx=(12, 6), pady=8)
+        self._dot_id = self._dot.create_oval(
+            0, 0, 8, 8, fill=self._dot_color, outline="",
+        )
+        self._lbl = tk.Label(
+            self, text=text, bg=BG_INPUT, fg=self._text_color,
+            font=(theme.pick_font(theme.SANS_BOLD_PREFS), 10, "bold"),
+        )
+        self._lbl.pack(side="left", padx=(0, 14))
+
+    def set_state(self, state, text=None):
+        if state not in self._COLORS:
+            state = "idle"
+        dot, txt = self._COLORS[state]
+        self._dot.itemconfig(self._dot_id, fill=dot)
+        self._lbl.config(fg=txt)
+        if text is not None:
+            self._lbl.config(text=text)
 
 
 # ── Persistence: trades ─────────────────────────────────────
@@ -1419,7 +1463,10 @@ class App(tk.Tk):
         self.title(f"FTH Trade Copier v{upd_mod.VERSION}" if _UPD_OK else "FTH Trade Copier")
         self.configure(bg=BG_DEEP)
         self.resizable(True, True)
-        self.minsize(1100, 720)
+        # Phase 2: minsize смягчён под более скромные ноуты.
+        self.minsize(1024, 680)
+        # Геометрия выберется в _build_ui (либо из config.json, либо 70%
+        # экрана с зажимом). Здесь — временное значение до отрисовки.
         self.geometry("1140x760")
         if os.path.exists(ICON_DEFAULT):
             self.iconbitmap(ICON_DEFAULT)
@@ -1462,7 +1509,7 @@ class App(tk.Tk):
     def _set_logo_cyan(self, cyan: bool):
         if not hasattr(self, '_logo_label'):
             return
-        name = "convertico-fth-cyan_48x48" if cyan else "convertico-fth_48x48"
+        name = "convertico-fth-cyan_32x32" if cyan else "convertico-fth_32x32"
         path = os.path.join(IMG_DIR, f"{name}.png")
         if os.path.exists(path):
             try:
@@ -1558,14 +1605,15 @@ class App(tk.Tk):
 
     # ── HEADER ────────────────────────────────────────────────
     def _build_header_new(self, sans_reg, sans_bold, sans_black):
-        hdr = ctk.CTkFrame(self, fg_color=BG_HEADER, corner_radius=0, height=76)
+        # Phase 2: компактнее (76→64px) + StatusPill в центре.
+        hdr = ctk.CTkFrame(self, fg_color=BG_HEADER, corner_radius=0, height=64)
         hdr.pack(fill="x")
         hdr.pack_propagate(False)
 
         left = ctk.CTkFrame(hdr, fg_color="transparent")
-        left.pack(side="left", padx=20, pady=14)
+        left.pack(side="left", padx=18, pady=10)
 
-        logo_path = os.path.join(IMG_DIR, "convertico-fth_48x48.png")
+        logo_path = os.path.join(IMG_DIR, "convertico-fth_32x32.png")
         if os.path.exists(logo_path):
             try:
                 self._logo_img = tk.PhotoImage(file=logo_path)
@@ -1581,14 +1629,20 @@ class App(tk.Tk):
         title_box.pack(side="left")
         version_suffix = f"  v{upd_mod.VERSION}" if _UPD_OK else ""
         ctk.CTkLabel(title_box, text=f"FTH Trade Copier{version_suffix}",
-                     text_color=FG, font=(sans_bold, 17),
+                     text_color=FG, font=(sans_bold, 15),
                      anchor="w").pack(anchor="w")
         ctk.CTkLabel(title_box, text="MT5 · Local copy engine",
-                     text_color=FG_DIM, font=(sans_reg, 11),
+                     text_color=FG_DIM, font=(sans_reg, 10),
                      anchor="w").pack(anchor="w")
 
+        # Центр: статус-плюшка
+        center = ctk.CTkFrame(hdr, fg_color="transparent")
+        center.place(relx=0.5, rely=0.5, anchor="center")
+        self.status_pill = StatusPill(center, text="Остановлено", state="stopped")
+        self.status_pill.pack()
+
         right = ctk.CTkFrame(hdr, fg_color="transparent")
-        right.pack(side="right", padx=16, pady=14)
+        right.pack(side="right", padx=14, pady=10)
 
         self.btn_info = IconButton(right, "i", command=self._toggle_info)
         self.btn_info.pack(side="right", padx=(8, 0))
@@ -1675,22 +1729,31 @@ class App(tk.Tk):
         IconButton(actions, "⚠", color=YELLOW,
                     command=self._test_master, size=30).pack(side="left", padx=2)
 
+        # 4 ячейки статов master'а в сетке 4×1: фиксированный шаг между
+        # колонками, чтобы длинные балансы не сдвигали соседей.
         right = ctk.CTkFrame(body, fg_color="transparent")
         right.pack(side="right", fill="y")
+        for i in range(4):
+            right.columnconfigure(i, minsize=92, weight=0, uniform="master_stats")
 
         self.lbl_master_login = self._stat_cell(right, "ЛОГИН", "—", FG_DIM,
-                                                  sans_reg, sans_bold)
+                                                  sans_reg, sans_bold, col=0)
         self.lbl_master_bal = self._stat_cell(right, "БАЛАНС", "—", FG,
-                                                sans_reg, sans_bold)
+                                                sans_reg, sans_bold, col=1)
         self.lbl_master_eq = self._stat_cell(right, "ЭКВИТИ", "—", FG_DIM,
-                                               sans_reg, sans_bold)
+                                               sans_reg, sans_bold, col=2)
         self.lbl_master_pnl = self._stat_cell(right, "P&L", "—", FG_DIM,
-                                                sans_reg, sans_bold)
+                                                sans_reg, sans_bold, col=3)
 
-    def _stat_cell(self, parent, label, value, color, sans_reg, sans_bold):
+    def _stat_cell(self, parent, label, value, color, sans_reg, sans_bold,
+                   col=None):
         # tk.Label, потому что App._refresh_master_panel зовёт .config(text=..., fg=...).
         wrap = ctk.CTkFrame(parent, fg_color="transparent")
-        wrap.pack(side="left", padx=12)
+        if col is None:
+            wrap.pack(side="left", padx=12)
+        else:
+            wrap.grid(row=0, column=col, padx=(0, 14) if col < 3 else 0,
+                      sticky="e")
         tk.Label(wrap, text=label, bg=CARD_BG, fg=FG_DIM,
                   font=(sans_reg, 9)).pack(anchor="e")
         lbl = tk.Label(wrap, text=value, bg=CARD_BG, fg=color,
@@ -1772,15 +1835,20 @@ class App(tk.Tk):
             style.theme_use("clam")
         except Exception:
             pass
-        style.configure("CTkNotebook.TNotebook", background=BG_DEEP,
+        # Phase 2: «underline»-индикатор вместо заливки.
+        # Выбранная вкладка имеет CARD_BG-фон (сливается с панелью) и
+        # ACCENT-цвет текста — это даёт впечатление линии-подчёркивания.
+        style.configure("CTkNotebook.TNotebook", background=CARD_BG,
                         borderwidth=0)
         style.configure("CTkNotebook.TNotebook.Tab",
-                        background=BG_INPUT, foreground=FG_DIM,
-                        padding=[16, 6], font=(sans_bold, 9),
+                        background=BG_DEEP, foreground=FG_DIM,
+                        padding=[18, 8], font=(sans_bold, 10),
                         borderwidth=0)
         style.map("CTkNotebook.TNotebook.Tab",
-                   background=[("selected", ACCENT)],
-                   foreground=[("selected", "white")])
+                   background=[("selected", CARD_BG),
+                               ("active", BG_INPUT)],
+                   foreground=[("selected", ACCENT),
+                               ("active", FG)])
 
         nb_card = _make_card(parent)
         nb_card.pack(fill="both", expand=False, pady=(0, 0))
@@ -1824,16 +1892,44 @@ class App(tk.Tk):
 
     # ── FOOTER ───────────────────────────────────────────────
     def _build_footer_stats_new(self, sans_reg):
-        bar = ctk.CTkFrame(self, fg_color=BG_DEEP, height=24)
+        bar = ctk.CTkFrame(self, fg_color=BG_DEEP, height=26)
         bar.pack(fill="x", padx=18, pady=(2, 6))
 
         self.lbl_stats = tk.Label(bar, text="", bg=BG_DEEP, fg=FG_DIM,
                                     font=(sans_reg, 10))
         self.lbl_stats.pack(side="left")
+
+        # Uptime — справа, рядом с версией.
         if _UPD_OK:
             ctk.CTkLabel(bar, text=f"v{upd_mod.VERSION}",
                           text_color=FG_MUTED,
                           font=(sans_reg, 10)).pack(side="right")
+
+        self._uptime_start = time.time()
+        self.lbl_uptime = tk.Label(bar, text="uptime 00:00",
+                                    bg=BG_DEEP, fg=FG_MUTED,
+                                    font=(sans_reg, 10))
+        self.lbl_uptime.pack(side="right", padx=(0, 14))
+        self._tick_uptime()
+
+    def _tick_uptime(self):
+        try:
+            elapsed = int(time.time() - getattr(self, "_uptime_start",
+                                                time.time()))
+            h, rem = divmod(elapsed, 3600)
+            m, s = divmod(rem, 60)
+            if h:
+                txt = f"uptime {h:d}:{m:02d}:{s:02d}"
+            else:
+                txt = f"uptime {m:02d}:{s:02d}"
+            if hasattr(self, "lbl_uptime"):
+                self.lbl_uptime.config(text=txt)
+        except Exception:
+            pass
+        try:
+            self.after(1000, self._tick_uptime)
+        except Exception:
+            pass
 
     # ── Info toggle ──────────────────────────────────────────
     def _toggle_info(self):
@@ -2327,6 +2423,8 @@ class App(tk.Tk):
             self.wm_iconbitmap(ICON_CYAN)
         self._set_logo_cyan(True)
         self._update_tray_icon(True)
+        if hasattr(self, "status_pill"):
+            self.status_pill.set_state("running", "Копирование активно")
         self._session_stats = {"copied": 0, "failed": 0}
         self._log("\u2705 Копитрейдер запущен", "ok")
 
@@ -2341,6 +2439,8 @@ class App(tk.Tk):
             self.wm_iconbitmap(ICON_DEFAULT)
         self._set_logo_cyan(False)
         self._update_tray_icon(False)
+        if hasattr(self, "status_pill"):
+            self.status_pill.set_state("stopped", "Остановлено")
         self._log("\u25A0 Копитрейдер остановлен", "warn")
         self._schedule_check()
 
@@ -2477,7 +2577,23 @@ class App(tk.Tk):
             "profiles": self._profiles,
             "poll_interval_seconds": 1,
             "min_lot_mode": self._min_lot_mode,
+            "window": self._window_state_dict(),
         }
+
+    def _window_state_dict(self) -> Dict:
+        """Снимок геометрии/состояния окна для сохранения в config.json."""
+        try:
+            maximized = bool(self.state() == "zoomed")
+        except Exception:
+            maximized = False
+        try:
+            geom = self.geometry() if not maximized else None
+        except Exception:
+            geom = None
+        out = {"maximized": maximized}
+        if geom:
+            out["geometry"] = geom
+        return out
 
     def _save_config(self):
         try:
@@ -2493,13 +2609,18 @@ class App(tk.Tk):
             self._profiles.append({"name": f"Профиль {i + 1}", "master": {"path": ""}, "slaves": []})
         self._active_profile = 0
 
-        if not os.path.exists(CONFIG_FILE):
-            self._update_slave_count()
-            return
-        try:
-            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-                cfg = json.load(f)
-        except Exception:
+        cfg = None
+        if os.path.exists(CONFIG_FILE):
+            try:
+                with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+                    cfg = json.load(f)
+            except Exception:
+                cfg = None
+
+        # Сначала окно — чтобы первый кадр уже был в нужном размере.
+        self._apply_window_state(cfg.get("window") if isinstance(cfg, dict) else None)
+
+        if not isinstance(cfg, dict):
             self._update_slave_count()
             return
 
@@ -2518,6 +2639,39 @@ class App(tk.Tk):
         self._min_lot_mode = cfg.get("min_lot_mode", False)
         self._load_active_profile()
         self._update_slave_count()
+
+    # ── Геометрия окна (Phase 2) ─────────────────────────────
+    def _apply_window_state(self, win_cfg):
+        """Применить сохранённую геометрию или подобрать 70% от экрана."""
+        if isinstance(win_cfg, dict) and isinstance(win_cfg.get("geometry"), str):
+            try:
+                self.geometry(win_cfg["geometry"])
+            except Exception:
+                self._apply_default_geometry()
+            if win_cfg.get("maximized"):
+                try:
+                    # Windows / Linux: 'zoomed' разворачивает на весь экран.
+                    self.state("zoomed")
+                except Exception:
+                    pass
+            return
+        self._apply_default_geometry()
+
+    def _apply_default_geometry(self):
+        """70% экрана, зажато на [1100×720 — 1680×1000], центрировано."""
+        try:
+            sw = self.winfo_screenwidth()
+            sh = self.winfo_screenheight()
+        except Exception:
+            sw, sh = 1600, 900
+        w = max(1100, min(1680, int(sw * 0.70)))
+        h = max(720,  min(1000, int(sh * 0.70)))
+        x = max(0, (sw - w) // 2)
+        y = max(0, (sh - h) // 2)
+        try:
+            self.geometry(f"{w}x{h}+{x}+{y}")
+        except Exception:
+            self.geometry(f"{w}x{h}")
 
     def _load_active_profile(self):
         p = self._profiles[self._active_profile]
