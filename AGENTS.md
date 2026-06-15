@@ -5,6 +5,22 @@ humans working in this repository. Merge with task-specific instructions as need
 
 ---
 
+## 0a. UI Polish workflow — single branch, commit per phase
+
+The `feat/ui-polish` branch carries the multi-phase UI redesign that builds on
+top of `feat/ctk-redesign`. Rules for this series specifically:
+
+- **One branch, many commits.** Don't open a separate PR for every phase —
+  push commits to `feat/ui-polish` and roll everything into one final PR
+  when the series ends (or open one when ready to review).
+- **One phase = one focused commit.** Each phase has a clear scope (design
+  tokens, layout/DPI, components, tables, KPI polish, settings). The commit
+  message names the phase, e.g. `feat(ui): phase 1 — design tokens + Inter + DPI`.
+- **Don't touch business logic.** Only render layer and styling.
+- **Bundled assets live in `img/fonts/`** (Inter, Phosphor, etc.) with a
+  `LICENSES.md` next to them.
+- **Each phase keeps the app launchable.** Run a smoke pass before committing.
+
 ## 0. Commit Discipline — Checkpoint Every Step
 
 **Commit after every step so you always have a checkpoint to roll back to.**

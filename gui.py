@@ -16,9 +16,14 @@ from typing import Dict, List, Optional
 
 import customtkinter as ctk
 
+import theme
+
 # ── CTk globals (тёмная тема + синий акцент) ─────────────────────
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("dark-blue")
+
+# Регистрируем встроенные шрифты (Inter, Phosphor) до создания окон.
+theme.register_bundled_fonts()
 
 try:
     import MetaTrader5 as mt5
@@ -76,33 +81,38 @@ ICON_DEFAULT = os.path.join(IMG_DIR, "convertico-fth.ico")
 ICON_CYAN = os.path.join(IMG_DIR, "convertico-fth-cyan.ico")
 
 # ── Цветовая палитра (neon cyan) ───────────────────────────
-BG_DEEP = "#080810"
-BG = "#0C0C14"
-BG_ROW = "#111119"
-BG_ROW_HOVER = "#171722"
-BG_INPUT = "#191924"
-BG_HEADER = "#0E0E18"
-FG = "#E4E4EE"
-FG_DIM = "#6A6A80"
-FG_LABEL = "#8888A0"
-FG_MUTED = "#3A3A50"
-ACCENT = "#00B4D8"
-ACCENT_H = "#00D0F0"
-ACCENT_DIM = "#006E88"
-CYAN_GLOW = "#002933"
-GREEN = "#00E676"
-GREEN_DIM = "#00B85E"
-GREEN_GLOW = "#003318"
-RED = "#FF3D57"
-RED_DIM = "#CC3044"
-RED_GLOW = "#330D14"
-YELLOW = "#FFB020"
-YELLOW_DIM = "#CC8D1A"
-BORDER = "#1C1C2C"
-BORDER_LIGHT = "#252538"
-DIVIDER = "#111120"
+# Источник правды — theme.py. Имена ниже оставлены как алиасы,
+# чтобы существующий код продолжал работать без правок.
+BG_DEEP       = theme.SURFACE_0
+BG            = theme.SURFACE_1
+BG_ROW        = theme.SURFACE_ROW
+BG_ROW_HOVER  = theme.SURFACE_ROW_HOVER
+BG_INPUT      = theme.SURFACE_INPUT
+BG_HEADER     = theme.SURFACE_HEADER
+FG            = theme.TEXT_PRIMARY
+FG_DIM        = theme.TEXT_TERTIARY
+FG_LABEL      = theme.TEXT_SECONDARY
+FG_MUTED      = theme.TEXT_DISABLED
+ACCENT        = theme.ACCENT
+ACCENT_H      = theme.ACCENT_HOVER
+ACCENT_DIM    = theme.ACCENT_DIM
+CYAN_GLOW     = theme.ACCENT_GLOW
+GREEN         = theme.STATUS_OK
+GREEN_DIM     = theme.STATUS_OK_DIM
+GREEN_GLOW    = theme.STATUS_OK_GLOW
+RED           = theme.STATUS_ERR
+RED_DIM       = theme.STATUS_ERR_DIM
+RED_GLOW      = theme.STATUS_ERR_GLOW
+YELLOW        = theme.STATUS_WARN
+YELLOW_DIM    = theme.STATUS_WARN_DIM
+BORDER        = theme.BORDER_DEFAULT
+BORDER_LIGHT  = theme.BORDER_STRONG
+DIVIDER       = theme.DIVIDER
 
 # ── Шрифты ──────────────────────────────────────────────────
+# Конкретные семейства подбираются в App._build_ui через
+# theme.resolve_font_families() — там уже учтены встроенные
+# Inter / Segoe UI / fallbacks.
 FONT_TITLE = ("Segoe UI", 15, "bold")
 FONT_VAL = ("Segoe UI", 11)
 FONT_VAL_BOLD = ("Segoe UI", 11, "bold")
@@ -116,33 +126,27 @@ FONT_XS = ("Segoe UI", 7)
 
 
 # ── CTk-стилистика: радиусы / карточки / pill-кнопки ────────────
-CORNER_LG = 14
-CORNER_MD = 10
-CORNER_SM = 8
+CORNER_LG = theme.RADIUS_CARD
+CORNER_MD = theme.RADIUS_CTRL
+CORNER_SM = 8  # input fields — между chip и control
 
-CARD_BG       = "#11111C"
-CARD_BG_HOVER = "#181826"
-SOFT_BORDER   = "#1F1F30"
+CARD_BG       = theme.SURFACE_2
+CARD_BG_HOVER = theme.SURFACE_3
+SOFT_BORDER   = theme.BORDER_SOFT
 
 
 def _pick_font(prefs, fallback="TkDefaultFont"):
-    """Возвращает первый доступный шрифт из списка предпочтений."""
-    try:
-        available = set(tkfont.families())
-    except Exception:
-        return prefs[0] if prefs else fallback
-    for name in prefs:
-        if name in available:
-            return name
-    return fallback
+    """Совместимость со старым API — делегирует в theme.pick_font."""
+    return theme.pick_font(prefs, fallback)
 
 
 def _resolve_fonts():
-    """Автоподбор sans-шрифтов (Windows production → Segoe UI)."""
-    sans_reg = _pick_font(["Segoe UI", "Inter", "Roboto", "DejaVu Sans", "Arial"])
-    sans_bold = _pick_font(["Segoe UI Semibold", "Inter Semi Bold",
-                             "Roboto Medium", "DejaVu Sans", "Arial"])
-    sans_black = _pick_font(["Segoe UI Black", "Inter Black", "Arial Black"])
+    """Подбор sans-семейств. Inter (встроен) → Segoe UI → fallbacks.
+
+    Возвращает (sans_reg, sans_bold, sans_black) — старая сигнатура,
+    которой ждёт остальной gui.py.
+    """
+    sans_reg, sans_bold, sans_black, _mono, _icon = theme.resolve_font_families()
     return sans_reg, sans_bold, sans_black
 
 
@@ -1405,6 +1409,13 @@ class App(tk.Tk):
             # останутся в старом виде.
             pass
         super().__init__()
+        # DPI scaling — Hi-DPI/4K-мониторы перестанут выглядеть «крохотно».
+        # Применяем ДО первого geometry(), чтобы окно сразу было нужного
+        # размера в физических пикселях.
+        try:
+            theme.apply_dpi_scaling(self, ctk)
+        except Exception:
+            pass
         self.title(f"FTH Trade Copier v{upd_mod.VERSION}" if _UPD_OK else "FTH Trade Copier")
         self.configure(bg=BG_DEEP)
         self.resizable(True, True)
