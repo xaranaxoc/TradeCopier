@@ -1,7 +1,7 @@
 @echo off
 chcp 65001 >nul
 echo ============================================
-echo   FTH Trade Copier — Сборка EXE
+echo   FTH Trade Copier — Сборка EXE (PyInstaller)
 echo ============================================
 echo.
 
@@ -19,7 +19,7 @@ echo Использую Python:
 "%PYTHON%" --version
 echo.
 
-echo [1/3] Установка зависимостей...
+echo [1/2] Установка зависимостей...
 "%PYTHON%" -m pip install -r requirements.txt pyinstaller
 if %errorlevel% neq 0 (
     echo ОШИБКА: не удалось установить зависимости (см. текст ошибки выше)
@@ -28,9 +28,8 @@ if %errorlevel% neq 0 (
 )
 
 echo.
-echo [2/3] Сборка EXE (может занять 1-2 минуты)...
-"%PYTHON%" -m PyInstaller --onefile --windowed --name FTHTradeCopier --icon=img/convertico-fth.ico --add-data "img;img" --add-data "fth_theme.json;." --collect-all customtkinter --collect-all MetaTrader5 --collect-all numpy --hidden-import customtkinter --hidden-import theme --hidden-import ui_kit --hidden-import copier --hidden-import license --hidden-import updater --hidden-import psutil --hidden-import tkinter --hidden-import tkinter.ttk --hidden-import tkinter.filedialog --hidden-import tkinter.messagebox --hidden-import pystray --hidden-import pystray._win32 --hidden-import six gui.py
-
+echo [2/2] Сборка EXE по FTHTradeCopier.spec (1-2 минуты)...
+"%PYTHON%" -m PyInstaller --noconfirm FTHTradeCopier.spec
 if %errorlevel% neq 0 (
     echo ОШИБКА: сборка не удалась
     pause
@@ -38,9 +37,8 @@ if %errorlevel% neq 0 (
 )
 
 echo.
-echo [3/3] Готово!
 echo ============================================
-echo   Файл: dist\FTHTradeCopier.exe
+echo   Готово! Файл: dist\FTHTradeCopier.exe
 echo   Скопируйте его куда угодно и запускайте
 echo ============================================
 echo.
