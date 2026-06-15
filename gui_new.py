@@ -146,7 +146,25 @@ def _make_card(parent, **kw):
 # ─────────────────────────────────────────────────────────────────
 
 class AppCtk(App):
-    """Новый UI поверх той же логики, что и App."""
+    """Новый UI поверх той же логики, что и App.
+
+    При импорте автоматически устанавливает CTk-стилизованные диалоги
+    через `dialogs_ctk.install()` (monkey-patch на gui.SlaveDialog и др.),
+    чтобы методы базового `App._add_slave / _open_settings / _show_activation`
+    использовали новые диалоги без дополнительных оверрайдов.
+    """
+
+    def __init__(self):
+        # Подменяем ссылки на диалоги ДО построения UI, чтобы любая
+        # ранняя активация / setup использовала уже новый стиль.
+        try:
+            from dialogs_ctk import install as _install_ctk_dialogs
+            _install_ctk_dialogs()
+        except Exception:
+            # если что-то пошло не так — остаются старые tk-диалоги,
+            # главное окно всё равно построится.
+            pass
+        super().__init__()
 
     # ── переопределяем единственный entry-point построения UI ────
     def _build_ui(self):
