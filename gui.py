@@ -2106,6 +2106,10 @@ class App(ctk.CTk):
         self._kpi_labels["kpi_conn"].config(text=f"{connected}/{total}")
 
     def _start(self):
+        # Защита от повторного запуска: иначе каждое нажатие создаёт новый
+        # CopyTrader и поток, а старый продолжает копировать → дубли сделок.
+        if self._trader and self._trader.is_running():
+            return
         master_path = self.var_master_path.get().strip()
         if not master_path:
             messagebox.showwarning("Ошибка", "Укажите путь мастера", parent=self)
@@ -2127,8 +2131,8 @@ class App(ctk.CTk):
             config_file=CONFIG_FILE,
         )
         self._trader.start()
-        self.btn_start.config(state="disabled")
-        self.btn_stop.config(state="normal")
+        self.btn_start.configure(state="disabled")
+        self.btn_stop.configure(state="normal")
         if os.path.exists(ICON_CYAN):
             self.iconbitmap(ICON_CYAN)
             self.wm_iconbitmap(ICON_CYAN)
@@ -2141,8 +2145,8 @@ class App(ctk.CTk):
         if self._trader:
             self._trader.stop()
             self._trader = None
-        self.btn_start.config(state="normal")
-        self.btn_stop.config(state="disabled")
+        self.btn_start.configure(state="normal")
+        self.btn_stop.configure(state="disabled")
         if os.path.exists(ICON_DEFAULT):
             self.iconbitmap(ICON_DEFAULT)
             self.wm_iconbitmap(ICON_DEFAULT)
