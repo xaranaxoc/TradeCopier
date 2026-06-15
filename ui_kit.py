@@ -14,7 +14,8 @@ import theme as T
 
 # ── Кнопки ──────────────────────────────────────────────────
 
-def make_button(parent, text, command=None, kind="neutral", width=0, **kw):
+def make_button(parent, text, command=None, kind="neutral", width=0, height=None,
+                font_size=12, **kw):
     """kind: accent | danger | neutral | ghost."""
     if kind == "accent":
         fg, hover, txt = T.ACCENT, T.ACCENT_H, "#04141A"
@@ -27,8 +28,8 @@ def make_button(parent, text, command=None, kind="neutral", width=0, **kw):
     return ctk.CTkButton(
         parent, text=text, command=command,
         fg_color=fg, hover_color=hover, text_color=txt,
-        corner_radius=T.RADIUS_BTN, height=T.BTN_HEIGHT,
-        width=width or 0, font=ctk.CTkFont(T.FONT_FAMILY, 12, "bold"),
+        corner_radius=T.RADIUS_BTN, height=height or T.BTN_HEIGHT,
+        width=width or 0, font=ctk.CTkFont(T.FONT_FAMILY, font_size, "bold"),
         border_width=0, **kw,
     )
 

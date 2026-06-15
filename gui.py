@@ -271,13 +271,8 @@ class SymbolPickerDialog(tk.Toplevel):
         self._btn(btn_frame, "Отмена", self.destroy).pack(side="left")
 
     def _btn(self, parent, text, cmd, accent=False):
-        bg = ACCENT if accent else BG_INPUT
-        fg = "white" if accent else FG_DIM
-        abg = ACCENT_H if accent else BG_ROW_HOVER
-        return tk.Button(parent, text=text, command=cmd, bg=bg, fg=fg, relief="flat",
-                         font=FONT_BOLD if accent else FONT,
-                         activebackground=abg, activeforeground=fg,
-                         cursor="hand2", padx=12, pady=2)
+        kind = "accent" if accent else "neutral"
+        return kit.make_button(parent, text, command=cmd, kind=kind, width=96)
 
     def _filter(self):
         query = self.var_search.get().strip().upper()
@@ -338,13 +333,12 @@ class SlaveDialog(tk.Toplevel):
                         highlightcolor=ACCENT, **kw)
 
     def _btn(self, parent, text, cmd, accent=False, small=False):
-        bg = ACCENT if accent else BG_INPUT
-        fg = "white" if accent else FG_DIM
-        abg = ACCENT_H if accent else BG_ROW_HOVER
-        f = (FONT_BOLD if accent else FONT_SM) if not small else FONT_XS
-        return tk.Button(parent, text=text, command=cmd, bg=bg, fg=fg, relief="flat",
-                         font=f, activebackground=abg, activeforeground=fg,
-                         cursor="hand2", padx=10, pady=2)
+        kind = "accent" if accent else "neutral"
+        if small:
+            w = max(28, len(text) * 8 + 14)
+            return kit.make_button(parent, text, command=cmd, kind=kind,
+                                   width=w, height=26, font_size=11)
+        return kit.make_button(parent, text, command=cmd, kind=kind, width=104)
 
     def _build(self, data: Dict):
         pad = {"padx": 12, "pady": 3}
