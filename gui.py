@@ -1330,8 +1330,8 @@ class SettingsDialog(tk.Toplevel):
 
 class App(ctk.CTk):
     def __init__(self):
-        kit.apply_theme()
         super().__init__()
+        kit.apply_theme()
         self.title(f"FTH Trade Copier v{upd_mod.VERSION}" if _UPD_OK else "FTH Trade Copier")
         self.configure(fg_color=BG_DEEP)
         self.resizable(True, True)
@@ -1354,7 +1354,7 @@ class App(ctk.CTk):
         self._build_ui()
         self._load_config()
         self._start_tray()
-        self._schedule_check()
+        self.after(500, self._schedule_check)
         self._bind_paste()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         # Проверки лицензии/обновлений делаем ПОСЛЕ показа окна, чтобы
