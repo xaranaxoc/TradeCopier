@@ -1,5 +1,5 @@
 """
-MT5 Local Copy Trader — GUI (tkinter)
+MT5 Local Copy Trader — GUI (tkinter + CustomTkinter)
 """
 
 import os
@@ -11,8 +11,14 @@ import threading
 import ctypes
 import tkinter as tk
 from datetime import datetime, timedelta
-from tkinter import ttk, filedialog, messagebox
+from tkinter import ttk, filedialog, messagebox, font as tkfont
 from typing import Dict, List, Optional
+
+import customtkinter as ctk
+
+# ── CTk globals (тёмная тема + синий акцент) ─────────────────────
+ctk.set_appearance_mode("dark")
+ctk.set_default_color_theme("dark-blue")
 
 try:
     import MetaTrader5 as mt5
@@ -107,6 +113,100 @@ FONT = ("Segoe UI", 9)
 FONT_BOLD = ("Segoe UI", 9, "bold")
 FONT_SM = ("Segoe UI", 8)
 FONT_XS = ("Segoe UI", 7)
+
+
+# ── CTk-стилистика: радиусы / карточки / pill-кнопки ────────────
+CORNER_LG = 14
+CORNER_MD = 10
+CORNER_SM = 8
+
+CARD_BG       = "#11111C"
+CARD_BG_HOVER = "#181826"
+SOFT_BORDER   = "#1F1F30"
+
+
+def _pick_font(prefs, fallback="TkDefaultFont"):
+    """Возвращает первый доступный шрифт из списка предпочтений."""
+    try:
+        available = set(tkfont.families())
+    except Exception:
+        return prefs[0] if prefs else fallback
+    for name in prefs:
+        if name in available:
+            return name
+    return fallback
+
+
+def _resolve_fonts():
+    """Автоподбор sans-шрифтов (Windows production → Segoe UI)."""
+    sans_reg = _pick_font(["Segoe UI", "Inter", "Roboto", "DejaVu Sans", "Arial"])
+    sans_bold = _pick_font(["Segoe UI Semibold", "Inter Semi Bold",
+                             "Roboto Medium", "DejaVu Sans", "Arial"])
+    sans_black = _pick_font(["Segoe UI Black", "Inter Black", "Arial Black"])
+    return sans_reg, sans_bold, sans_black
+
+
+class PillButton(ctk.CTkButton):
+    """Скруглённая pill-кнопка с тремя вариантами (primary/danger/ghost).
+
+    Имеет shim `.config(...)`, чтобы старый код вида
+    `btn.config(state="disabled")` продолжал работать.
+    """
+
+    def __init__(self, master, text, command=None, variant="ghost",
+                 icon=None, width=None, **kw):
+        if variant == "primary":
+            fg, hover, txt = ACCENT, ACCENT_H, "#FFFFFF"
+        elif variant == "danger":
+            fg, hover, txt = RED_DIM, RED, "#FFFFFF"
+        else:
+            fg, hover, txt = BG_INPUT, CARD_BG_HOVER, FG_LABEL
+        label = f"{icon}  {text}" if icon else text
+        kwargs = dict(
+            master=master, text=label, command=command,
+            fg_color=fg, hover_color=hover, text_color=txt,
+            corner_radius=CORNER_MD, height=32,
+        )
+        if width is not None:
+            kwargs["width"] = width
+        kwargs.update(kw)
+        super().__init__(**kwargs)
+
+    def config(self, **kw):  # type: ignore[override]
+        if "bg" in kw:
+            kw["fg_color"] = kw.pop("bg")
+        if "fg" in kw:
+            kw["text_color"] = kw.pop("fg")
+        self.configure(**kw)
+
+
+class IconButton(ctk.CTkButton):
+    """Квадратная иконочная кнопка."""
+
+    def __init__(self, master, glyph, command=None, color=FG_DIM,
+                 hover_color=None, size=34, **kw):
+        super().__init__(
+            master, text=glyph, command=command,
+            width=size, height=size,
+            fg_color=BG_INPUT,
+            hover_color=hover_color or CARD_BG_HOVER,
+            text_color=color,
+            corner_radius=CORNER_MD,
+            **kw,
+        )
+
+
+def _make_card(parent, **kw):
+    """Скруглённая карточка с тонкой границей — базовый «контейнер»."""
+    defaults = dict(
+        corner_radius=CORNER_LG,
+        fg_color=CARD_BG,
+        border_width=1,
+        border_color=SOFT_BORDER,
+    )
+    defaults.update(kw)
+    return ctk.CTkFrame(parent, **defaults)
+
 
 # ── Persistence: trades ─────────────────────────────────────
 
@@ -1294,6 +1394,16 @@ class SettingsDialog(tk.Toplevel):
 
 class App(tk.Tk):
     def __init__(self):
+        # CTk-стилизованные диалоги: подменяем gui.SlaveDialog и др. ДО
+        # super().__init__, чтобы любая ранняя активация (например, окно
+        # лицензии при первом запуске) сразу шла в новом стиле.
+        try:
+            from dialogs_ctk import install as _install_ctk_dialogs
+            _install_ctk_dialogs()
+        except Exception:
+            # не критично — приложение всё равно стартует, просто диалоги
+            # останутся в старом виде.
+            pass
         super().__init__()
         self.title(f"FTH Trade Copier v{upd_mod.VERSION}" if _UPD_OK else "FTH Trade Copier")
         self.configure(bg=BG_DEEP)
@@ -1400,221 +1510,279 @@ class App(tk.Tk):
                 pass
 
     def _make_btn(self, parent, text, cmd, accent=False, danger=False):
+        """Pill-кнопка для master-row и других внутренних мест."""
         if accent:
-            bg, fg, abg = ACCENT, "white", ACCENT_H
+            variant = "primary"
         elif danger:
-            bg, fg, abg = RED_DIM, "white", RED
+            variant = "danger"
         else:
-            bg, fg, abg = BG_INPUT, FG_LABEL, BG_ROW_HOVER
-        return tk.Button(parent, text=text, command=cmd, bg=bg, fg=fg, relief="flat",
-                         font=FONT_BOLD if accent else FONT,
-                         activebackground=abg, activeforeground=fg,
-                         cursor="hand2", padx=10, pady=3, highlightthickness=0, bd=0)
+            variant = "ghost"
+        return PillButton(parent, text=text, command=cmd, variant=variant)
 
     def _build_ui(self):
-        # ── Header bar ───────────────────────────────────────
-        hdr = tk.Frame(self, bg=BG_HEADER)
-        hdr.pack(fill="x", padx=0, pady=0)
+        # CTk-стиль главного окна.
+        self.configure(bg=BG_DEEP)
+        try:
+            ctk.set_appearance_mode("dark")
+        except Exception:
+            pass
 
-        hdr_left = tk.Frame(hdr, bg=BG_HEADER)
-        hdr_left.pack(side="left", padx=14, pady=(10, 8))
+        sans_reg, sans_bold, sans_black = _resolve_fonts()
+        self._sans_reg = sans_reg
+        self._sans_bold = sans_bold
+        self._sans_black = sans_black
+
+        # Верхняя шапка
+        self._build_header_new(sans_reg, sans_bold, sans_black)
+
+        # Тело
+        body = ctk.CTkFrame(self, fg_color="transparent")
+        body.pack(fill="both", expand=True, padx=16, pady=(10, 4))
+
+        self._build_master_panel_new(body, sans_reg, sans_bold)
+        self._build_kpi_row_new(body, sans_reg, sans_bold)
+        self._build_slaves_section_new(body, sans_reg, sans_bold)
+        self._build_bottom_notebook_new(body, sans_reg, sans_bold)
+        self._build_footer_stats_new(sans_reg)
+
+    # ── HEADER ────────────────────────────────────────────────
+    def _build_header_new(self, sans_reg, sans_bold, sans_black):
+        hdr = ctk.CTkFrame(self, fg_color=BG_HEADER, corner_radius=0, height=76)
+        hdr.pack(fill="x")
+        hdr.pack_propagate(False)
+
+        left = ctk.CTkFrame(hdr, fg_color="transparent")
+        left.pack(side="left", padx=20, pady=14)
 
         logo_path = os.path.join(IMG_DIR, "convertico-fth_48x48.png")
         if os.path.exists(logo_path):
             try:
                 self._logo_img = tk.PhotoImage(file=logo_path)
-                self._logo_label = tk.Label(hdr_left, image=self._logo_img, bg=BG_HEADER)
-                self._logo_label.pack(side="left", padx=(0, 8))
+                self._logo_label = ctk.CTkLabel(left, image=self._logo_img,
+                                                 text="")
+                self._logo_label.pack(side="left", padx=(0, 12))
             except Exception:
-                pass
-        tk.Label(hdr_left, text="Trade Copier", bg=BG_HEADER, fg=FG,
-                 font=FONT_TITLE).pack(side="left")
-        tk.Label(hdr_left, text="  MT5", bg=BG_HEADER, fg=ACCENT,
-                 font=("Segoe UI", 12)).pack(side="left", anchor="s")
+                self._logo_label = None
+        else:
+            self._logo_label = None
 
-        hdr_right = tk.Frame(hdr, bg=BG_HEADER)
-        hdr_right.pack(side="right", padx=14, pady=(10, 8))
+        title_box = ctk.CTkFrame(left, fg_color="transparent")
+        title_box.pack(side="left")
+        version_suffix = f"  v{upd_mod.VERSION}" if _UPD_OK else ""
+        ctk.CTkLabel(title_box, text=f"FTH Trade Copier{version_suffix}",
+                     text_color=FG, font=(sans_bold, 17),
+                     anchor="w").pack(anchor="w")
+        ctk.CTkLabel(title_box, text="MT5 · Local copy engine",
+                     text_color=FG_DIM, font=(sans_reg, 11),
+                     anchor="w").pack(anchor="w")
 
-        self.btn_info = tk.Button(hdr_right, text="i", command=self._toggle_info,
-                                   bg=BG_INPUT, fg=FG_DIM, relief="flat", font=("Segoe UI", 10, "bold"),
-                                   activebackground=BG_ROW_HOVER, activeforeground=ACCENT,
-                                   cursor="hand2", padx=8, pady=1, highlightthickness=0)
+        right = ctk.CTkFrame(hdr, fg_color="transparent")
+        right.pack(side="right", padx=16, pady=14)
+
+        self.btn_info = IconButton(right, "i", command=self._toggle_info)
         self.btn_info.pack(side="right", padx=(8, 0))
         _bind_tip(self.btn_info, "Режим подсказок")
 
-        btn_settings = tk.Button(hdr_right, text="\u2699", command=self._open_settings,
-                                   bg=BG_INPUT, fg=FG_DIM, relief="flat", font=("Segoe UI", 10, "bold"),
-                                   activebackground=BG_ROW_HOVER, activeforeground=ACCENT,
-                                   cursor="hand2", padx=8, pady=1, highlightthickness=0)
-        btn_settings.pack(side="right", padx=(4, 0))
+        btn_settings = IconButton(right, "⚙", command=self._open_settings)
+        btn_settings.pack(side="right", padx=(8, 0))
         _bind_tip(btn_settings, "Настройки приложения")
 
-        block_term = tk.Frame(hdr_right, bg=BG_HEADER)
-        block_term.pack(side="right", padx=(12, 0))
-        tk.Label(block_term, text="ТЕРМИНАЛЫ", bg=BG_HEADER, fg=FG_DIM,
-                 font=FONT_XS).pack(side="left", padx=(0, 4))
-        btn_launch = self._make_btn(block_term, "\u25B6 Запустить", self._launch_all, accent=True)
-        btn_launch.pack(side="left", padx=2)
+        engine = self._header_group(right, "КОПИТРЕЙДЕР", sans_bold)
+        engine.pack(side="right", padx=(14, 0))
+        self.btn_start = PillButton(engine.row, "Старт", icon="▶",
+                                     variant="primary", command=self._start)
+        self.btn_start.pack(side="left", padx=4)
+        _bind_tip(self.btn_start, "Запустить копирование сделок")
+        self.btn_stop = PillButton(engine.row, "Стоп", icon="■",
+                                    variant="danger", command=self._stop)
+        self.btn_stop.pack(side="left", padx=4)
+        _bind_tip(self.btn_stop, "Остановить копирование")
+        self.btn_stop.configure(state="disabled")
+
+        terms = self._header_group(right, "ТЕРМИНАЛЫ", sans_bold)
+        terms.pack(side="right", padx=(14, 0))
+        btn_launch = PillButton(terms.row, "Запустить", icon="▶",
+                                 variant="primary", command=self._launch_all)
+        btn_launch.pack(side="left", padx=4)
         _bind_tip(btn_launch, "Запустить все терминалы (свёрнутые)")
-        btn_shutdown = self._make_btn(block_term, "\u25A0 Закрыть", self._shutdown_all, danger=True)
-        btn_shutdown.pack(side="left", padx=2)
+        btn_shutdown = PillButton(terms.row, "Закрыть", icon="■",
+                                   variant="danger", command=self._shutdown_all)
+        btn_shutdown.pack(side="left", padx=4)
         _bind_tip(btn_shutdown, "Завершить процессы всех терминалов")
 
-        block_ct = tk.Frame(hdr_right, bg=BG_HEADER)
-        block_ct.pack(side="right", padx=(12, 0))
-        tk.Label(block_ct, text="КОПИТРЕЙДЕР", bg=BG_HEADER, fg=FG_DIM,
-                 font=FONT_XS).pack(side="left", padx=(0, 4))
-        self.btn_start = self._make_btn(block_ct, "\u25B6  Старт", self._start, accent=True)
-        self.btn_start.pack(side="left", padx=2)
-        _bind_tip(self.btn_start, "Запустить копирование сделок")
-        self.btn_stop = self._make_btn(block_ct, "\u25A0  Стоп", self._stop, danger=True)
-        self.btn_stop.pack(side="left", padx=2)
-        _bind_tip(self.btn_stop, "Остановить копирование")
-        self.btn_stop.config(state="disabled")
+    def _header_group(self, parent, title, sans_bold):
+        wrap = ctk.CTkFrame(parent, fg_color="transparent")
+        ctk.CTkLabel(wrap, text=title, text_color=FG_DIM,
+                     font=(sans_bold, 8)).pack(anchor="w", padx=4)
+        row = ctk.CTkFrame(wrap, fg_color="transparent")
+        row.pack(fill="x")
+        wrap.row = row  # type: ignore[attr-defined]
+        return wrap
 
-        # ── Мастер ──────────────────────────────────────────
-        tk.Frame(self, bg=DIVIDER, height=1).pack(fill="x", padx=14, pady=(6, 0))
+    # ── MASTER PANEL ─────────────────────────────────────────
+    def _build_master_panel_new(self, parent, sans_reg, sans_bold):
+        card = _make_card(parent, height=72)
+        card.pack(fill="x", pady=(0, 12))
+        card.pack_propagate(False)
 
-        master_outer = tk.Frame(self, bg=BG_ROW, highlightbackground=BORDER,
-                                 highlightthickness=1)
-        master_outer.pack(fill="x", padx=14, pady=1)
+        strip = ctk.CTkFrame(card, width=3, corner_radius=2, fg_color=ACCENT)
+        strip.place(relx=0, rely=0.18, relheight=0.64, x=8)
 
-        master_strip = tk.Frame(master_outer, bg=ACCENT, width=3)
-        master_strip.place(x=0, y=0, relheight=1.0)
+        body = ctk.CTkFrame(card, fg_color="transparent")
+        body.pack(fill="both", expand=True, padx=18, pady=10)
 
-        master_f = tk.Frame(master_outer, bg=BG_ROW)
-        master_f.pack(fill="x", padx=(6, 8), pady=6)
+        left = ctk.CTkFrame(body, fg_color="transparent")
+        left.pack(side="left", fill="y")
+        ctk.CTkLabel(left, text="MASTER", text_color=ACCENT,
+                     font=(sans_bold, 10)).pack(anchor="w")
 
-        tk.Label(master_f, text="МАСТЕР", bg=BG_ROW, fg=ACCENT, font=FONT_BOLD).grid(row=0, column=0, padx=(4, 8))
+        path_row = ctk.CTkFrame(left, fg_color="transparent")
+        path_row.pack(anchor="w", pady=(4, 0))
 
         self.var_master_path = tk.StringVar()
-        tk.Entry(master_f, textvariable=self.var_master_path, width=36,
-                 bg=BG_INPUT, fg=FG, insertbackground=FG, relief="flat",
-                 font=FONT_SM, highlightthickness=1,
-                 highlightbackground=BORDER, highlightcolor=ACCENT).grid(row=0, column=1, padx=4, sticky="ew")
-        btn_browse_m = self._make_btn(master_f, "...", self._browse_master)
-        btn_browse_m.grid(row=0, column=2, padx=2)
+        self._ent_master = ctk.CTkEntry(
+            path_row, textvariable=self.var_master_path,
+            width=320, height=28,
+            fg_color=BG_INPUT, border_color=SOFT_BORDER, text_color=FG,
+            corner_radius=CORNER_SM, font=(sans_reg, 10),
+        )
+        self._ent_master.pack(side="left")
+
+        btn_browse_m = PillButton(path_row, "...", width=42,
+                                    command=self._browse_master)
+        btn_browse_m.pack(side="left", padx=(6, 0))
         _bind_tip(btn_browse_m, "Выбрать путь к terminal64.exe мастера")
 
-        btn_open_m = tk.Button(master_f, text="\U0001F4C8", command=self._open_master_terminal,
-                  bg=BG_ROW, fg=ACCENT, relief="flat", font=FONT_SM,
-                  activebackground=BG_ROW_HOVER, activeforeground=ACCENT_H,
-                  cursor="hand2", width=2, highlightthickness=0)
-        btn_open_m.grid(row=0, column=3, padx=(8, 4))
-        _bind_tip(btn_open_m, "Открыть терминал мастера")
+        actions = ctk.CTkFrame(body, fg_color="transparent")
+        actions.pack(side="left", padx=(14, 0))
+        IconButton(actions, "📈", color=ACCENT,
+                    command=self._open_master_terminal,
+                    size=30).pack(side="left", padx=2)
+        IconButton(actions, "✖", color=RED_DIM,
+                    command=self._close_all_master,
+                    size=30).pack(side="left", padx=2)
+        IconButton(actions, "⚠", color=YELLOW,
+                    command=self._test_master, size=30).pack(side="left", padx=2)
 
-        btn_close_master = tk.Button(master_f, text="\u2716", command=self._close_all_master,
-                  bg=BG_ROW, fg=RED_DIM, relief="flat", font=FONT_SM,
-                  activebackground=BG_ROW_HOVER, activeforeground=RED,
-                  cursor="hand2", width=2, highlightthickness=0)
-        btn_close_master.grid(row=0, column=4, padx=2)
-        _bind_tip(btn_close_master, "Закрыть все позиции мастера")
+        right = ctk.CTkFrame(body, fg_color="transparent")
+        right.pack(side="right", fill="y")
 
-        btn_test_master = tk.Button(master_f, text="\u26A0", command=self._test_master,
-                  bg=BG_ROW, fg=YELLOW, relief="flat", font=FONT_SM,
-                  activebackground=BG_ROW_HOVER, activeforeground=YELLOW,
-                  cursor="hand2", width=2, highlightthickness=0)
-        btn_test_master.grid(row=0, column=5, padx=2)
-        _bind_tip(btn_test_master, "Тест: BUY 0.01 лот на мастере")
+        self.lbl_master_login = self._stat_cell(right, "ЛОГИН", "—", FG_DIM,
+                                                  sans_reg, sans_bold)
+        self.lbl_master_bal = self._stat_cell(right, "БАЛАНС", "—", FG,
+                                                sans_reg, sans_bold)
+        self.lbl_master_eq = self._stat_cell(right, "ЭКВИТИ", "—", FG_DIM,
+                                               sans_reg, sans_bold)
+        self.lbl_master_pnl = self._stat_cell(right, "P&L", "—", FG_DIM,
+                                                sans_reg, sans_bold)
 
-        self.lbl_master_login = tk.Label(master_f, text="\u2014", bg=BG_ROW, fg=FG_DIM,
-                                          font=FONT_MONO_SM, anchor="w")
-        self.lbl_master_login.grid(row=0, column=6, padx=6, sticky="ew")
+    def _stat_cell(self, parent, label, value, color, sans_reg, sans_bold):
+        # tk.Label, потому что App._refresh_master_panel зовёт .config(text=..., fg=...).
+        wrap = ctk.CTkFrame(parent, fg_color="transparent")
+        wrap.pack(side="left", padx=12)
+        tk.Label(wrap, text=label, bg=CARD_BG, fg=FG_DIM,
+                  font=(sans_reg, 9)).pack(anchor="e")
+        lbl = tk.Label(wrap, text=value, bg=CARD_BG, fg=color,
+                        font=(sans_bold, 13))
+        lbl.pack(anchor="e", pady=(2, 0))
+        return lbl
 
-        self.lbl_master_bal = tk.Label(master_f, text="\u2014", bg=BG_ROW, fg=FG,
-                                        font=FONT_VAL_BOLD, anchor="e")
-        self.lbl_master_bal.grid(row=0, column=7, padx=4, sticky="ew")
+    # ── KPI ROW ──────────────────────────────────────────────
+    def _build_kpi_row_new(self, parent, sans_reg, sans_bold):
+        row = ctk.CTkFrame(parent, fg_color="transparent")
+        row.pack(fill="x", pady=(0, 14))
 
-        self.lbl_master_eq = tk.Label(master_f, text="\u2014", bg=BG_ROW, fg=FG_DIM,
-                                       font=FONT_MONO_SM, anchor="e")
-        self.lbl_master_eq.grid(row=0, column=8, padx=4, sticky="ew")
-
-        self.lbl_master_pnl = tk.Label(master_f, text="\u2014", bg=BG_ROW, fg=FG_DIM,
-                                        font=FONT_VAL, anchor="e")
-        self.lbl_master_pnl.grid(row=0, column=9, padx=4, sticky="ew")
-
-        master_f.columnconfigure(1, weight=1)
-
-        # ── Dashboard KPI ───────────────────────────────────
-        dash = tk.Frame(self, bg=BG_DEEP)
-        dash.pack(fill="x", padx=14, pady=6)
-
+        self._kpi_labels = {}
         cards_data = [
-            ("kpi_bal", "Master Balance", "\u2014", FG),
-            ("kpi_eq", "Total Equity", "\u2014", FG),
-            ("kpi_pnl", "Net P&L", "\u2014", FG_DIM),
-            ("kpi_conn", "Connected", "\u2014", FG_DIM),
+            ("kpi_bal",  "Master Balance", "—", FG,     ACCENT),
+            ("kpi_eq",   "Total Equity",   "—", FG,     ACCENT),
+            ("kpi_pnl",  "Net P&L",        "—", FG_DIM, GREEN),
+            ("kpi_conn", "Connected",      "—", FG_DIM, ACCENT),
         ]
-        self._kpi_labels: Dict[str, tk.Label] = {}
-        for i, (key, title, default, color) in enumerate(cards_data):
-            card = tk.Frame(dash, bg=BG_ROW, highlightbackground=BORDER,
-                            highlightthickness=1, padx=14, pady=8)
-            card.pack(side="left", fill="x", expand=True, padx=(0 if i == 0 else 6, 0))
-            tk.Label(card, text=title, bg=BG_ROW, fg=FG_DIM, font=FONT_SM).pack(anchor="w")
-            lbl = tk.Label(card, text=default, bg=BG_ROW, fg=color, font=FONT_VAL_BOLD)
-            lbl.pack(anchor="w")
+        for i, (key, title, value, color, strip_color) in enumerate(cards_data):
+            card = _make_card(row, height=78)
+            card.pack(side="left", fill="x", expand=True,
+                       padx=(0 if i == 0 else 10, 0))
+            card.pack_propagate(False)
+
+            strip = ctk.CTkFrame(card, width=3, corner_radius=2,
+                                  fg_color=strip_color)
+            strip.place(relx=0, rely=0.18, relheight=0.64, x=8)
+
+            inner = ctk.CTkFrame(card, fg_color="transparent")
+            inner.pack(fill="both", expand=True, padx=18, pady=10)
+
+            tk.Label(inner, text=title.upper(), bg=CARD_BG, fg=FG_DIM,
+                      font=(sans_reg, 9), anchor="w").pack(fill="x")
+            lbl = tk.Label(inner, text=value, bg=CARD_BG, fg=color,
+                            font=(sans_bold, 18), anchor="w")
+            lbl.pack(fill="x", pady=(2, 0))
             self._kpi_labels[key] = lbl
 
-        self._refresh_dashboard()
+    # ── SLAVES SECTION ───────────────────────────────────────
+    def _build_slaves_section_new(self, parent, sans_reg, sans_bold):
+        header = ctk.CTkFrame(parent, fg_color="transparent")
+        header.pack(fill="x", pady=(0, 6))
 
-        # ── Таблица аккаунтов ────────────────────────────────
-        tbl_header = tk.Frame(self, bg=BG_DEEP)
-        tbl_header.pack(fill="x", padx=14, pady=(4, 0))
-        tk.Label(tbl_header, text="SLAVE ACCOUNTS", bg=BG_DEEP, fg=FG_DIM,
-                 font=FONT_BOLD).pack(side="left")
-        self.lbl_slave_count = tk.Label(tbl_header, text="0/10", bg=BG_DEEP, fg=FG_DIM,
-                 font=FONT_BOLD)
-        self.lbl_slave_count.pack(side="left", padx=(8, 0))
+        ctk.CTkLabel(header, text="SLAVE ACCOUNTS", text_color=FG_LABEL,
+                     font=(sans_bold, 11)).pack(side="left")
+        self.lbl_slave_count = tk.Label(header, text="0/10",
+                                          bg=BG_DEEP, fg=FG_DIM,
+                                          font=(sans_bold, 10))
+        self.lbl_slave_count.pack(side="left", padx=(10, 0))
 
-        self._paned = tk.PanedWindow(self, orient="vertical", bg=BG_DEEP,
-                                     sashwidth=4, sashrelief="flat",
-                                     opaqueresize=True)
-        self._paned.pack(fill="both", expand=True, padx=14, pady=2)
+        PillButton(header, "✖ Закрыть сделки", variant="danger",
+                    command=self._close_all_open).pack(side="right", padx=(8, 0))
+        PillButton(header, "+ Аккаунт", variant="primary",
+                    command=self._add_slave).pack(side="right")
 
-        self._table_frame = tk.Frame(self._paned, bg=BG_DEEP)
-        self._paned.add(self._table_frame, minsize=80, height=200)
+        table_card = _make_card(parent)
+        table_card.pack(fill="both", expand=True, pady=(0, 12))
+
+        self._table_frame = tk.Frame(table_card, bg=CARD_BG)
+        self._table_frame.pack(fill="both", expand=True, padx=14, pady=10)
 
         for idx, _, min_w, weight, _ in COL_SPEC:
             self._table_frame.columnconfigure(idx, minsize=min_w, weight=weight)
 
         for idx, text, _, _, anchor in COL_SPEC:
-            lbl_h = tk.Label(self._table_frame, text=text, bg=BG_DEEP, fg=FG_DIM,
-                     font=FONT_XS, anchor=anchor)
-            lbl_h.grid(row=0, column=idx, padx=2, pady=(2, 0), sticky="ew")
-
-        self.tbl_btns = tk.Frame(self._table_frame, bg=BG_DEEP)
-        self.tbl_btns.grid(row=0, column=11, sticky="ew", padx=2, pady=(2, 0))
-
-        btn_add = self._make_btn(self.tbl_btns, "+ Аккаунт", self._add_slave,
-                       accent=True)
-        btn_add.pack(side="left")
-        _bind_tip(btn_add, "Добавить новый слейв-аккаунт")
-        btn_close_all = self._make_btn(self.tbl_btns, "\u2716 Закрыть сделки", self._close_all_open,
-                       danger=True)
-        btn_close_all.pack(side="right", padx=6)
-        _bind_tip(btn_close_all, "Закрыть все позиции на мастере и слейвах")
+            tk.Label(self._table_frame, text=text, bg=CARD_BG, fg=FG_DIM,
+                      font=(sans_bold, 8), anchor=anchor).grid(
+                row=0, column=idx, padx=2, pady=(0, 6), sticky="ew")
 
         self._next_row = 1
+        # stub для совместимости с возможными внешними обращениями
+        self.tbl_btns = tk.Frame(self._table_frame, bg=CARD_BG)
 
-        # ── Notebook ────────────────────────────────────────
+    # ── BOTTOM NOTEBOOK ──────────────────────────────────────
+    def _build_bottom_notebook_new(self, parent, sans_reg, sans_bold):
         style = ttk.Style()
-        style.theme_use("clam")
-        style.configure("TNotebook", background=BG_DEEP, borderwidth=0)
-        style.configure("TNotebook.Tab", background=BG_INPUT, foreground=FG_DIM,
-                        padding=[12, 3], font=FONT_SM, borderwidth=0)
-        style.map("TNotebook.Tab", background=[("selected", BG_ROW)],
-                  foreground=[("selected", FG)])
+        try:
+            style.theme_use("clam")
+        except Exception:
+            pass
+        style.configure("CTkNotebook.TNotebook", background=BG_DEEP,
+                        borderwidth=0)
+        style.configure("CTkNotebook.TNotebook.Tab",
+                        background=BG_INPUT, foreground=FG_DIM,
+                        padding=[16, 6], font=(sans_bold, 9),
+                        borderwidth=0)
+        style.map("CTkNotebook.TNotebook.Tab",
+                   background=[("selected", ACCENT)],
+                   foreground=[("selected", "white")])
 
-        nb_frame = tk.Frame(self._paned, bg=BG_DEEP)
-        self._paned.add(nb_frame, minsize=60, height=180)
+        nb_card = _make_card(parent)
+        nb_card.pack(fill="both", expand=False, pady=(0, 0))
 
-        self.notebook = ttk.Notebook(nb_frame, style="TNotebook")
-        self.notebook.pack(fill="both", expand=True)
+        self.notebook = ttk.Notebook(nb_card, style="CTkNotebook.TNotebook",
+                                       height=200)
+        self.notebook.pack(fill="both", expand=True, padx=10, pady=10)
 
-        trades_tab = tk.Frame(self.notebook, bg=BG)
+        trades_tab = tk.Frame(self.notebook, bg=CARD_BG)
         self.notebook.add(trades_tab, text="  Сделки  ")
         self.trades_table = TradesTable(trades_tab)
-        self.trades_table.pack(fill="both", expand=True, padx=1, pady=1)
+        self.trades_table.configure(bg=CARD_BG)
+        self.trades_table.pack(fill="both", expand=True, padx=2, pady=2)
 
         for t in _load_trades():
             tag = "ok" if t.get("success") else "err"
@@ -1622,44 +1790,47 @@ class App(tk.Tk):
                 time_str=t.get("time", ""), slave=t.get("slave", ""),
                 symbol=t.get("symbol", ""), direction=t.get("direction", ""),
                 lot=t.get("lot", 0.0), master_ticket=t.get("master_ticket", ""),
-                slave_ticket=t.get("slave_ticket", ""), status=t.get("status", ""),
-                tag=tag)
+                slave_ticket=t.get("slave_ticket", ""),
+                status=t.get("status", ""), tag=tag)
 
-        log_tab = tk.Frame(self.notebook, bg=BG)
+        log_tab = tk.Frame(self.notebook, bg=CARD_BG)
         self.notebook.add(log_tab, text="  Лог  ")
-        log_inner = tk.Frame(log_tab, bg=BG)
-        log_inner.pack(fill="both", expand=True, padx=1, pady=1)
-
-        self.log_text = tk.Text(log_inner, bg=BG_ROW, fg=FG, font=FONT_MONO_SM,
-                                relief="flat", state="disabled", wrap="word",
-                                highlightthickness=0)
-        log_sb = ttk.Scrollbar(log_inner, orient="vertical", command=self.log_text.yview)
+        log_inner = tk.Frame(log_tab, bg=CARD_BG)
+        log_inner.pack(fill="both", expand=True, padx=2, pady=2)
+        self.log_text = tk.Text(log_inner, bg=BG, fg=FG, font=FONT_MONO_SM,
+                                  relief="flat", state="disabled", wrap="word",
+                                  highlightthickness=0, borderwidth=0)
+        log_sb = ttk.Scrollbar(log_inner, orient="vertical",
+                                 command=self.log_text.yview)
         self.log_text.configure(yscrollcommand=log_sb.set)
         log_sb.pack(side="right", fill="y")
-        self.log_text.pack(side="left", fill="both", expand=True)
-
+        self.log_text.pack(side="left", fill="both", expand=True, padx=(8, 0),
+                            pady=8)
         self.log_text.tag_config("ok", foreground=GREEN)
         self.log_text.tag_config("err", foreground=RED)
         self.log_text.tag_config("warn", foreground=YELLOW)
         self.log_text.tag_config("info", foreground=FG_DIM)
 
-        # Статистика
-        stats_f = tk.Frame(self, bg=BG_DEEP)
-        stats_f.pack(fill="x", padx=14, pady=(0, 2))
-        self.lbl_stats = tk.Label(stats_f, text="", bg=BG_DEEP, fg=FG_DIM, font=FONT_SM)
+    # ── FOOTER ───────────────────────────────────────────────
+    def _build_footer_stats_new(self, sans_reg):
+        bar = ctk.CTkFrame(self, fg_color=BG_DEEP, height=24)
+        bar.pack(fill="x", padx=18, pady=(2, 6))
+
+        self.lbl_stats = tk.Label(bar, text="", bg=BG_DEEP, fg=FG_DIM,
+                                    font=(sans_reg, 10))
         self.lbl_stats.pack(side="left")
         if _UPD_OK:
-            tk.Label(stats_f, text=f"v{upd_mod.VERSION}", bg=BG_DEEP, fg=FG_MUTED,
-                     font=FONT_SM).pack(side="right")
+            ctk.CTkLabel(bar, text=f"v{upd_mod.VERSION}",
+                          text_color=FG_MUTED,
+                          font=(sans_reg, 10)).pack(side="right")
 
-    # ── Info toggle ─────────────────────────────────────────
-
+    # ── Info toggle ──────────────────────────────────────────
     def _toggle_info(self):
         _Tip.enabled = not _Tip.enabled
         if _Tip.enabled:
-            self.btn_info.configure(bg=ACCENT, fg="white")
+            self.btn_info.configure(fg_color=ACCENT, text_color="#FFFFFF")
         else:
-            self.btn_info.configure(bg=BG_INPUT, fg=FG_DIM)
+            self.btn_info.configure(fg_color=BG_INPUT, text_color=FG_DIM)
             _Tip.hide()
 
     # ── Мастер ──────────────────────────────────────────────
@@ -2408,5 +2579,6 @@ if __name__ == "__main__":
     if already_exists:
         _activate_existing()
         sys.exit(0)
+
     app = App()
     app.mainloop()
