@@ -1595,23 +1595,24 @@ class App(ctk.CTk):
 
         self._next_row = 1
 
-        # ── Notebook ────────────────────────────────────────
-        style = ttk.Style()
-        style.theme_use("clam")
-        style.configure("TNotebook", background=BG_DEEP, borderwidth=0)
-        style.configure("TNotebook.Tab", background=BG_INPUT, foreground=FG_DIM,
-                        padding=[12, 3], font=FONT_SM, borderwidth=0)
-        style.map("TNotebook.Tab", background=[("selected", BG_ROW)],
-                  foreground=[("selected", FG)])
-
+        # ── Notebook (CustomTkinter CTkTabview) ─────────────
         nb_frame = tk.Frame(self._paned, bg=BG_DEEP)
         self._paned.add(nb_frame, minsize=60, height=180)
 
-        self.notebook = ttk.Notebook(nb_frame, style="TNotebook")
+        self.notebook = ctk.CTkTabview(
+            nb_frame, fg_color=BG, corner_radius=T.RADIUS_CARD,
+            segmented_button_fg_color=BG_INPUT,
+            segmented_button_selected_color=ACCENT,
+            segmented_button_selected_hover_color=ACCENT_H,
+            segmented_button_unselected_color=BG_INPUT,
+            segmented_button_unselected_hover_color=BG_ROW_HOVER,
+            text_color="#04141A", text_color_disabled=FG_DIM,
+            anchor="w")
         self.notebook.pack(fill="both", expand=True)
 
-        trades_tab = tk.Frame(self.notebook, bg=BG)
-        self.notebook.add(trades_tab, text="  Сделки  ")
+        self.notebook.add("Сделки")
+        self.notebook.add("Лог")
+        trades_tab = self.notebook.tab("Сделки")
         self.trades_table = TradesTable(trades_tab)
         self.trades_table.pack(fill="both", expand=True, padx=1, pady=1)
 
@@ -1624,8 +1625,7 @@ class App(ctk.CTk):
                 slave_ticket=t.get("slave_ticket", ""), status=t.get("status", ""),
                 tag=tag)
 
-        log_tab = tk.Frame(self.notebook, bg=BG)
-        self.notebook.add(log_tab, text="  Лог  ")
+        log_tab = self.notebook.tab("Лог")
         log_inner = tk.Frame(log_tab, bg=BG)
         log_inner.pack(fill="both", expand=True, padx=1, pady=1)
 
@@ -2190,7 +2190,7 @@ class App(ctk.CTk):
         self.lbl_stats.config(
             text=f"\u2705 {self._session_stats['copied']}  \u274C {self._session_stats['failed']}")
         _save_trade(info)
-        self.notebook.select(0)
+        self.notebook.set("Сделки")
 
     def _update_status(self, terminal_id: str, status: str,
                        balance: float = 0, equity: float = 0,
