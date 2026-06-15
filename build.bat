@@ -8,7 +8,7 @@ echo.
 set PYTHON=C:\Users\bu4ukeec\AppData\Local\Programs\Python\Python314\python.exe
 
 echo [1/3] Установка зависимостей...
-%PYTHON% -m pip install pyinstaller MetaTrader5 psutil
+%PYTHON% -m pip install pyinstaller customtkinter MetaTrader5 psutil
 if %errorlevel% neq 0 (
     echo ОШИБКА: не удалось установить зависимости
     pause
@@ -17,7 +17,7 @@ if %errorlevel% neq 0 (
 
 echo.
 echo [2/3] Сборка EXE (может занять 1-2 минуты)...
-%PYTHON% -m PyInstaller --onefile --windowed --name FTHTradeCopier --icon=img/convertico-fth.ico --add-data "img;img" --collect-all MetaTrader5 --collect-all numpy --hidden-import copier --hidden-import license --hidden-import updater --hidden-import psutil --hidden-import tkinter --hidden-import tkinter.ttk --hidden-import tkinter.filedialog --hidden-import tkinter.messagebox --hidden-import pystray --hidden-import pystray._win32 --hidden-import six gui.py
+%PYTHON% -m PyInstaller --onefile --windowed --name FTHTradeCopier --icon=img/convertico-fth.ico --add-data "img;img" --add-data "fth_theme.json;." --collect-all customtkinter --collect-all MetaTrader5 --collect-all numpy --hidden-import customtkinter --hidden-import theme --hidden-import ui_kit --hidden-import copier --hidden-import license --hidden-import updater --hidden-import psutil --hidden-import tkinter --hidden-import tkinter.ttk --hidden-import tkinter.filedialog --hidden-import tkinter.messagebox --hidden-import pystray --hidden-import pystray._win32 --hidden-import six gui.py
 
 if %errorlevel% neq 0 (
     echo ОШИБКА: сборка не удалась

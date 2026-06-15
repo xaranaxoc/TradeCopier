@@ -8,7 +8,7 @@ echo.
 set PYTHON=C:\Users\bu4ukeec\AppData\Local\Programs\Python\Python314\python.exe
 
 echo [1/2] Установка зависимостей...
-%PYTHON% -m pip install nuitka ordered-set zstandard MetaTrader5 psutil pystray Pillow requests
+%PYTHON% -m pip install nuitka ordered-set zstandard customtkinter MetaTrader5 psutil pystray Pillow requests
 if %errorlevel% neq 0 (
     echo ОШИБКА: не удалось установить зависимости
     pause
@@ -26,8 +26,13 @@ echo.
     --windows-icon-from-ico=img/convertico-fth.ico ^
     --output-filename=FTHTradeCopier.exe ^
     --include-data-dir=img=img ^
+    --include-data-files=fth_theme.json=fth_theme.json ^
     --enable-plugin=tk-inter ^
     --enable-plugin=numpy ^
+    --include-package=customtkinter ^
+    --include-package-data=customtkinter ^
+    --include-module=theme ^
+    --include-module=ui_kit ^
     --include-module=copier ^
     --include-module=license ^
     --include-module=psutil ^
