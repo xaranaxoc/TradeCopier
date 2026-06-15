@@ -85,6 +85,10 @@ ICON_CYAN = os.path.join(IMG_DIR, "convertico-fth-cyan.ico")
 # ── Цветовая палитра (neon cyan) ───────────────────────────
 # Источник правды — theme.py. Имена ниже оставлены как алиасы,
 # чтобы существующий код продолжал работать без правок.
+# Phase 6: применяем сохранённый accent-пресет до того, как забиндим
+# module-level алиасы — иначе виджеты унаследуют дефолтный cyan.
+_USER_PREFS = theme.apply_preferences_from_file(CONFIG_FILE)
+
 BG_DEEP       = theme.SURFACE_0
 BG            = theme.SURFACE_1
 BG_ROW        = theme.SURFACE_ROW
@@ -99,6 +103,7 @@ ACCENT        = theme.ACCENT
 ACCENT_H      = theme.ACCENT_HOVER
 ACCENT_DIM    = theme.ACCENT_DIM
 CYAN_GLOW     = theme.ACCENT_GLOW
+ACCENT_GLOW   = theme.ACCENT_GLOW
 GREEN         = theme.STATUS_OK
 GREEN_DIM     = theme.STATUS_OK_DIM
 GREEN_GLOW    = theme.STATUS_OK_GLOW
@@ -1496,7 +1501,15 @@ class App(tk.Tk):
         # Применяем ДО первого geometry(), чтобы окно сразу было нужного
         # размера в физических пикселях.
         try:
-            theme.apply_dpi_scaling(self, ctk)
+            scale = theme.apply_dpi_scaling(self, ctk)
+            # Phase 6: дополнительный пользовательский множитель.
+            user_mul = theme.get_user_scale_factor(_USER_PREFS)
+            if abs(user_mul - 1.0) > 1e-3:
+                try:
+                    ctk.set_widget_scaling(scale * user_mul)
+                    ctk.set_window_scaling(scale * user_mul)
+                except Exception:
+                    pass
         except Exception:
             pass
         self.title(f"FTH Trade Copier v{upd_mod.VERSION}" if _UPD_OK else "FTH Trade Copier")
@@ -1572,7 +1585,8 @@ class App(tk.Tk):
                 pystray.MenuItem("Показать", self._tray_show, default=True),
                 pystray.MenuItem("Стоп + Выход", self._tray_exit),
             )
-            self._tray_icon = pystray.Icon("FTHTradeCopier", pil_img, "FTH Trade Copier", menu)
+            self._tray_icon = pystray.Icon("FTHTradeCopier", pil_img,
+                                             self._tray_tooltip(), menu)
             self._tray_thread = threading.Thread(target=self._tray_icon.run, daemon=True)
             self._tray_thread.start()
         except Exception:
@@ -1638,11 +1652,16 @@ class App(tk.Tk):
         body = ctk.CTkFrame(self, fg_color="transparent")
         body.pack(fill="both", expand=True, padx=16, pady=(10, 4))
 
+        # Phase 6: onboarding banner — показывается, если ни мастер,
+        # ни слейвы ещё не настроены.
+        self._build_onboarding_banner(body, sans_reg, sans_bold)
         self._build_master_panel_new(body, sans_reg, sans_bold)
         self._build_kpi_row_new(body, sans_reg, sans_bold)
         self._build_slaves_section_new(body, sans_reg, sans_bold)
         self._build_bottom_notebook_new(body, sans_reg, sans_bold)
         self._build_footer_stats_new(sans_reg)
+        # Покажем или скроем баннер уже после загрузки конфига.
+        self.after(50, self._update_onboarding_banner)
 
     # ── HEADER ────────────────────────────────────────────────
     def _build_header_new(self, sans_reg, sans_bold, sans_black):
@@ -1818,6 +1837,65 @@ class App(tk.Tk):
         lbl.pack(anchor="e", pady=(2, 0))
         return lbl
 
+    # ── ONBOARDING BANNER (Phase 6) ──────────────────────────
+    def _build_onboarding_banner(self, parent, sans_reg, sans_bold):
+        """Лёгкая карточка приветствия для первого запуска."""
+        self._onboarding = _make_card(parent, height=86)
+        self._onboarding.pack(fill="x", pady=(0, 10))
+        self._onboarding.pack_propagate(False)
+        # cyan-полоска слева (как у master-карточки) для целостности.
+        strip = ctk.CTkFrame(self._onboarding, width=3, corner_radius=2,
+                              fg_color=ACCENT)
+        strip.place(relx=0, rely=0.18, relheight=0.64, x=8)
+
+        inner = ctk.CTkFrame(self._onboarding, fg_color="transparent")
+        inner.pack(fill="both", expand=True, padx=18, pady=10)
+
+        icon_family = theme.pick_font(theme.ICON_PREFS)
+        icon_box = ctk.CTkFrame(inner, width=44, height=44,
+                                  corner_radius=22, fg_color=ACCENT_GLOW)
+        icon_box.pack(side="left", padx=(0, 14))
+        icon_box.pack_propagate(False)
+        tk.Label(icon_box, text=theme.ICON_PLAY, bg=ACCENT_GLOW,
+                  fg=ACCENT, font=(icon_family, 18)).pack(expand=True)
+
+        text_col = ctk.CTkFrame(inner, fg_color="transparent")
+        text_col.pack(side="left", fill="both", expand=True)
+        tk.Label(text_col, text="Готовы запустить копитрейдер?",
+                  bg=CARD_BG, fg=FG, font=(sans_bold, 13),
+                  anchor="w").pack(fill="x")
+        tk.Label(text_col,
+                  text="1. Укажите путь к terminal64.exe мастера.   "
+                       "2. Добавьте хотя бы один слейв.   "
+                       "3. Нажмите «Старт» в шапке.",
+                  bg=CARD_BG, fg=FG_DIM, font=(sans_reg, 10),
+                  anchor="w").pack(fill="x", pady=(2, 0))
+
+        btn_row = ctk.CTkFrame(inner, fg_color="transparent")
+        btn_row.pack(side="right")
+        PillButton(btn_row, "Выбрать мастера", variant="primary",
+                    icon=theme.ICON_FOLDER,
+                    command=self._browse_master).pack(side="left",
+                                                       padx=(0, 6))
+        PillButton(btn_row, "Добавить слейв", variant="ghost",
+                    icon="+", command=self._add_slave).pack(side="left")
+
+    def _update_onboarding_banner(self) -> None:
+        if not hasattr(self, "_onboarding") or self._onboarding is None:
+            return
+        try:
+            has_master = bool(self.var_master_path.get().strip())
+            has_slaves = bool(self._slaves)
+            if has_master or has_slaves:
+                self._onboarding.pack_forget()
+            else:
+                self._onboarding.pack(
+                    fill="x", pady=(0, 10), before=self._master_strip.master
+                    if hasattr(self, "_master_strip") else None,
+                )
+        except Exception:
+            pass
+
     # ── KPI ROW (Phase 5) ────────────────────────────────────
     def _build_kpi_row_new(self, parent, sans_reg, sans_bold):
         row = ctk.CTkFrame(parent, fg_color="transparent")
@@ -1944,6 +2022,36 @@ class App(tk.Tk):
             sc.create_oval(pts[-2] - 2, pts[-1] - 2,
                             pts[-2] + 2, pts[-1] + 2,
                             fill=trend_color, outline="")
+        except Exception:
+            pass
+
+    # Phase 6: расширенный tray-tooltip.
+    def _tray_tooltip(self) -> str:
+        try:
+            ver = upd_mod.VERSION if _UPD_OK else ""
+        except Exception:
+            ver = ""
+        running = bool(self._trader and self._trader.is_running())
+        state = "🟢 копирование" if running else "⏸ остановлено"
+        master = "—"
+        try:
+            p = self.var_master_path.get().strip()
+            if p:
+                master = os.path.splitext(os.path.basename(
+                    os.path.dirname(p)))[0] or "MT5"
+        except Exception:
+            pass
+        slaves = sum(1 for s in self._slaves if s.get("enabled", True))
+        total = len(self._slaves)
+        head = f"FTH Trade Copier v{ver}" if ver else "FTH Trade Copier"
+        return (f"{head}\n{state}\nМастер: {master}\n"
+                f"Слейвов активно: {slaves}/{total}")
+
+    def _refresh_tray_tooltip(self) -> None:
+        if not self._tray_icon:
+            return
+        try:
+            self._tray_icon.title = self._tray_tooltip()
         except Exception:
             pass
 
@@ -2284,6 +2392,7 @@ class App(tk.Tk):
         if path:
             self.var_master_path.set(path.replace("/", "\\"))
             self._save_config()
+            self._update_onboarding_banner()
 
     def _open_master_terminal(self):
         path = self.var_master_path.get().strip()
@@ -2461,6 +2570,7 @@ class App(tk.Tk):
             self._add_slave_row(data)
             self._update_slave_count()
             self._save_config()
+            self._update_onboarding_banner()
 
     def _add_slave_row(self, data: Dict):
         row = AccountRow(self._table_frame, self._next_row, data,
@@ -2800,6 +2910,7 @@ class App(tk.Tk):
             self.toasts.show("Копитрейдер запущен", "ok")
         # Phase 5: запускаем пульс цветной полоски master-карточки.
         self._set_master_pulse(True)
+        self._refresh_tray_tooltip()
 
     def _stop(self):
         if self._trader:
@@ -2818,6 +2929,7 @@ class App(tk.Tk):
         if hasattr(self, "toasts"):
             self.toasts.show("Копитрейдер остановлен", "info")
         self._set_master_pulse(False)
+        self._refresh_tray_tooltip()
         self._schedule_check()
 
     # ── Колбэки ─────────────────────────────────────────────

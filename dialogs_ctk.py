@@ -193,7 +193,7 @@ class SlaveDialogCtk(gui.SlaveDialog):
 # ────────────────────────────────────────────────────────────────────
 
 class SettingsDialogCtk(tk.Toplevel):
-    """Настройки + профили — CTk-стиль."""
+    """Настройки + профили — CTk-стиль (Phase 6: tabview + Appearance + About)."""
 
     def __init__(self, parent: "gui.App"):
         super().__init__(parent)
@@ -206,10 +206,28 @@ class SettingsDialogCtk(tk.Toplevel):
         self._app = parent
         self._active = parent._active_profile
 
-        _dialog_header(self, "Настройки", "Профили и обновления")
+        _dialog_header(self, "Настройки",
+                        "Профили · внешний вид · обновления")
 
-        body = ctk.CTkFrame(self, fg_color="transparent")
-        body.pack(fill="both", expand=True, padx=18, pady=14)
+        # Phase 6: вкладки.
+        self._tabs = ctk.CTkTabview(
+            self, fg_color=BG_DEEP, segmented_button_fg_color=BG_INPUT,
+            segmented_button_selected_color=ACCENT,
+            segmented_button_selected_hover_color=ACCENT_H,
+            segmented_button_unselected_color=BG_INPUT,
+            segmented_button_unselected_hover_color=BG_ROW_HOVER,
+            text_color=FG, text_color_disabled=FG_DIM,
+            corner_radius=CORNER_MD,
+            width=560, height=380,
+        )
+        self._tabs.pack(fill="both", expand=True, padx=18, pady=(8, 8))
+        tab_profiles = self._tabs.add("Профили")
+        tab_appear   = self._tabs.add("Внешний вид")
+        tab_about    = self._tabs.add("О приложении")
+
+        # ── вкладка «Профили» (старое содержимое) ──
+        body = ctk.CTkFrame(tab_profiles, fg_color="transparent")
+        body.pack(fill="both", expand=True, padx=4, pady=4)
 
         tk.Label(body, text="ПРОФИЛИ", bg=BG_DEEP, fg=FG_LABEL,
                   font=("Segoe UI", 9, "bold")).pack(anchor="w",
@@ -278,6 +296,12 @@ class SettingsDialogCtk(tk.Toplevel):
                                  command=self.destroy)
         btn_close.pack(side="right", padx=6)
 
+        # ── вкладка «Внешний вид» ────────────────────────────────
+        self._build_appearance_tab(tab_appear)
+
+        # ── вкладка «О приложении» ───────────────────────────────
+        self._build_about_tab(tab_about)
+
         self.update_idletasks()
         w = self.winfo_reqwidth()
         h = self.winfo_reqheight()
@@ -287,6 +311,232 @@ class SettingsDialogCtk(tk.Toplevel):
             self.geometry(f"+{x}+{y}")
         except Exception:
             pass
+
+    # ── Phase 6: Appearance ─────────────────────────────────
+    def _build_appearance_tab(self, tab):
+        body = ctk.CTkFrame(tab, fg_color="transparent")
+        body.pack(fill="both", expand=True, padx=4, pady=4)
+
+        # текущие prefs
+        prefs = self._read_prefs()
+        self._accent_var = tk.StringVar(value=prefs.get("accent", "cyan"))
+        self._fontscale_var = tk.DoubleVar(
+            value=float(prefs.get("font_scale", 1.0)))
+        self._density_var = tk.StringVar(
+            value=prefs.get("density", "normal"))
+
+        # ─ Accent ─
+        tk.Label(body, text="ЦВЕТ АКЦЕНТА", bg=BG_DEEP, fg=FG_LABEL,
+                  font=("Segoe UI", 9, "bold")).pack(anchor="w",
+                                                       pady=(0, 6))
+        chips_row = ctk.CTkFrame(body, fg_color="transparent")
+        chips_row.pack(fill="x", pady=(0, 6))
+        import theme as _theme  # noqa: WPS433
+        self._accent_chips = {}
+        for key, label in (("cyan", "Cyan"), ("teal", "Teal"),
+                            ("violet", "Violet"), ("amber", "Amber")):
+            preset = _theme.ACCENT_PRESETS.get(key, {})
+            color = preset.get("ACCENT", ACCENT)
+            chip = ctk.CTkButton(
+                chips_row, text=label, command=lambda k=key: self._pick_accent(k),
+                fg_color=color, hover_color=color,
+                text_color="white", corner_radius=CORNER_SM,
+                height=28, width=80,
+                border_width=2,
+                border_color=(ACCENT if key == self._accent_var.get()
+                              else BG_INPUT),
+                font=("Segoe UI", 10, "bold"),
+            )
+            chip.pack(side="left", padx=(0, 6))
+            self._accent_chips[key] = chip
+
+        tk.Label(body,
+                  text="Cyan — дефолт. Изменение применится после "
+                       "перезапуска приложения.",
+                  bg=BG_DEEP, fg=FG_DIM,
+                  font=("Segoe UI", 9), anchor="w").pack(fill="x",
+                                                          pady=(0, 12))
+
+        # ─ Font scale ─
+        tk.Label(body, text="МАСШТАБ ШРИФТА", bg=BG_DEEP, fg=FG_LABEL,
+                  font=("Segoe UI", 9, "bold")).pack(anchor="w",
+                                                       pady=(0, 4))
+        scale_row = ctk.CTkFrame(body, fg_color="transparent")
+        scale_row.pack(fill="x", pady=(0, 6))
+        self._fontscale_lbl = tk.Label(
+            scale_row, bg=BG_DEEP, fg=FG, font=("Segoe UI", 10, "bold"),
+            text=f"{self._fontscale_var.get():.2f}×", width=6, anchor="w",
+        )
+        self._fontscale_lbl.pack(side="right", padx=(8, 0))
+        slider = ctk.CTkSlider(
+            scale_row, from_=0.8, to=1.3, number_of_steps=10,
+            variable=self._fontscale_var,
+            command=self._on_fontscale,
+            button_color=ACCENT, button_hover_color=ACCENT_H,
+            progress_color=ACCENT_DIM, fg_color=BG_INPUT, height=14,
+        )
+        slider.pack(side="left", fill="x", expand=True)
+
+        tk.Label(body,
+                  text="0.8× — компактнее, 1.3× — крупнее. Применяется "
+                       "после перезапуска.",
+                  bg=BG_DEEP, fg=FG_DIM,
+                  font=("Segoe UI", 9), anchor="w").pack(fill="x",
+                                                          pady=(0, 12))
+
+        # ─ Density ─
+        tk.Label(body, text="ПЛОТНОСТЬ", bg=BG_DEEP, fg=FG_LABEL,
+                  font=("Segoe UI", 9, "bold")).pack(anchor="w",
+                                                       pady=(0, 4))
+        density_row = ctk.CTkFrame(body, fg_color="transparent")
+        density_row.pack(fill="x", pady=(0, 6))
+        for key, label in (("compact", "Компактная"),
+                            ("normal", "Стандарт"),
+                            ("comfortable", "Просторная")):
+            rb = ctk.CTkRadioButton(
+                density_row, text=label, variable=self._density_var,
+                value=key, fg_color=ACCENT, hover_color=ACCENT_H,
+                text_color=FG, font=("Segoe UI", 10),
+            )
+            rb.pack(side="left", padx=(0, 14))
+
+        # ─ Save / Reset ─
+        save_row = ctk.CTkFrame(body, fg_color="transparent")
+        save_row.pack(fill="x", pady=(16, 0))
+        PillButton(save_row, "Сохранить и перезапустить",
+                    icon="✓", variant="primary",
+                    command=self._save_prefs).pack(side="left")
+        PillButton(save_row, "Сбросить", variant="ghost",
+                    command=self._reset_prefs).pack(side="right")
+
+    def _pick_accent(self, key: str):
+        self._accent_var.set(key)
+        for k, btn in self._accent_chips.items():
+            btn.configure(border_color=(ACCENT if k == key else BG_INPUT))
+
+    def _on_fontscale(self, _v):
+        try:
+            self._fontscale_lbl.config(
+                text=f"{float(self._fontscale_var.get()):.2f}×")
+        except Exception:
+            pass
+
+    def _read_prefs(self) -> Dict:
+        try:
+            return getattr(self._app, "_user_prefs_full", None) \
+                   or self._load_prefs_from_disk()
+        except Exception:
+            return {}
+
+    def _load_prefs_from_disk(self) -> Dict:
+        import json
+        try:
+            with open(gui.CONFIG_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f) or {}
+            return data.get("preferences") or {}
+        except Exception:
+            return {}
+
+    def _save_prefs(self):
+        import json
+        prefs = {
+            "accent": self._accent_var.get(),
+            "font_scale": round(float(self._fontscale_var.get()), 2),
+            "density": self._density_var.get(),
+        }
+        try:
+            data = {}
+            try:
+                with open(gui.CONFIG_FILE, "r", encoding="utf-8") as f:
+                    data = json.load(f) or {}
+            except Exception:
+                data = {}
+            data["preferences"] = prefs
+            os.makedirs(os.path.dirname(gui.CONFIG_FILE), exist_ok=True)
+            with open(gui.CONFIG_FILE, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+        # toast + закрываем
+        try:
+            if hasattr(self._app, "toasts"):
+                self._app.toasts.show(
+                    "Настройки сохранены. Перезапусти приложение, чтобы "
+                    "изменения вступили в силу.", "info", timeout=4500)
+        except Exception:
+            pass
+        self.destroy()
+
+    def _reset_prefs(self):
+        self._accent_var.set("cyan")
+        self._fontscale_var.set(1.0)
+        self._density_var.set("normal")
+        self._on_fontscale(None)
+        for k, btn in self._accent_chips.items():
+            btn.configure(border_color=(ACCENT if k == "cyan" else BG_INPUT))
+
+    # ── Phase 6: About ───────────────────────────────────────
+    def _build_about_tab(self, tab):
+        body = ctk.CTkFrame(tab, fg_color="transparent")
+        body.pack(fill="both", expand=True, padx=4, pady=4)
+
+        # Большой header — иконка + название + версия
+        head = ctk.CTkFrame(body, fg_color="transparent")
+        head.pack(fill="x", pady=(8, 8))
+        try:
+            from PIL import Image  # type: ignore
+            if os.path.exists(ICON_DEFAULT):
+                pil = Image.open(ICON_DEFAULT)
+                img = ctk.CTkImage(pil, size=(48, 48))
+                ctk.CTkLabel(head, text="", image=img).pack(side="left",
+                                                              padx=(0, 14))
+        except Exception:
+            pass
+
+        col = ctk.CTkFrame(head, fg_color="transparent")
+        col.pack(side="left", fill="x", expand=True)
+        tk.Label(col, text="FTH Trade Copier",
+                  bg=BG_DEEP, fg=FG, anchor="w",
+                  font=("Segoe UI", 15, "bold")).pack(fill="x")
+        try:
+            ver = gui.upd_mod.VERSION if gui._UPD_OK else "—"
+        except Exception:
+            ver = "—"
+        tk.Label(col, text=f"Версия {ver}",
+                  bg=BG_DEEP, fg=FG_DIM, anchor="w",
+                  font=("Segoe UI", 10)).pack(fill="x")
+
+        ctk.CTkFrame(body, fg_color=DIVIDER, height=1).pack(fill="x",
+                                                                pady=8)
+
+        def info_row(label, value):
+            r = ctk.CTkFrame(body, fg_color="transparent")
+            r.pack(fill="x", pady=2)
+            tk.Label(r, text=label, bg=BG_DEEP, fg=FG_DIM,
+                      font=("Segoe UI", 10), anchor="w",
+                      width=24).pack(side="left")
+            tk.Label(r, text=value, bg=BG_DEEP, fg=FG,
+                      font=("Segoe UI", 10), anchor="w").pack(side="left",
+                                                                fill="x",
+                                                                expand=True)
+
+        try:
+            is_lic = bool(gui._LIC_OK and gui.lic_mod
+                           and gui.lic_mod.is_licensed())
+        except Exception:
+            is_lic = False
+        info_row("Лицензия:",
+                  "Активирована" if is_lic else "Не активирована")
+        info_row("Конфигурация:", gui.CONFIG_FILE)
+        info_row("Логи:", gui.LOGS_DIR)
+
+        ctk.CTkFrame(body, fg_color=DIVIDER, height=1).pack(fill="x",
+                                                                pady=8)
+
+        tk.Label(body,
+                  text="© Friendly Trading House. Все права защищены.",
+                  bg=BG_DEEP, fg=FG_DIM, font=("Segoe UI", 9),
+                  anchor="w").pack(fill="x", pady=(8, 0))
 
     def _select(self, idx):
         old_name = self._ent_name.get().strip()

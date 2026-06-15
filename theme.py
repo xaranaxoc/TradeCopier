@@ -43,6 +43,26 @@ ACCENT_HOVER = "#00D0F0"
 ACCENT_DIM = "#006E88"
 ACCENT_GLOW = "#002933"
 
+# Phase 6: accent-пресеты для пользовательских настроек. Cyan — дефолт.
+ACCENT_PRESETS = {
+    "cyan": {
+        "ACCENT": "#00B4D8", "ACCENT_HOVER": "#00D0F0",
+        "ACCENT_DIM": "#006E88", "ACCENT_GLOW": "#002933",
+    },
+    "teal": {
+        "ACCENT": "#14B8A6", "ACCENT_HOVER": "#2DD4BF",
+        "ACCENT_DIM": "#0F7E72", "ACCENT_GLOW": "#0B2A26",
+    },
+    "violet": {
+        "ACCENT": "#8B5CF6", "ACCENT_HOVER": "#A78BFA",
+        "ACCENT_DIM": "#5B3FA0", "ACCENT_GLOW": "#1E1339",
+    },
+    "amber": {
+        "ACCENT": "#F59E0B", "ACCENT_HOVER": "#FBBF24",
+        "ACCENT_DIM": "#A56708", "ACCENT_GLOW": "#3A2502",
+    },
+}
+
 # Status colors
 STATUS_OK = "#00E676"
 STATUS_OK_DIM = "#00B85E"
@@ -245,3 +265,60 @@ def configure_tabular_numerals(family, size, weight="normal"):
     for KPI values by using MONO_PREFS instead.
     """
     return tkfont.Font(family=family, size=size, weight=weight)
+
+
+# ── PREFERENCES ────────────────────────────────────────────
+# Phase 6: чтение/применение пользовательских предпочтений.
+def apply_accent_preset(name: str) -> None:
+    """Изменяет ACCENT/ACCENT_HOVER/ACCENT_DIM/ACCENT_GLOW под выбранный пресет.
+
+    Допустимые имена: cyan (default), teal, violet, amber.
+    Неизвестные имена игнорируются.
+    """
+    global ACCENT, ACCENT_HOVER, ACCENT_DIM, ACCENT_GLOW
+    preset = ACCENT_PRESETS.get((name or "").lower())
+    if not preset:
+        return
+    ACCENT = preset["ACCENT"]
+    ACCENT_HOVER = preset["ACCENT_HOVER"]
+    ACCENT_DIM = preset["ACCENT_DIM"]
+    ACCENT_GLOW = preset["ACCENT_GLOW"]
+
+
+def apply_preferences_from_file(config_path: str) -> dict:
+    """Считывает блок ``preferences`` из config.json (если есть) и применяет.
+
+    Безопасно к отсутствию файла / битому JSON / отсутствию блока.
+    Возвращает словарь применённых настроек или пустой dict.
+    """
+    import json
+    import os
+
+    prefs: dict = {}
+    try:
+        if not config_path or not os.path.exists(config_path):
+            return {}
+        with open(config_path, "r", encoding="utf-8") as f:
+            data = json.load(f) or {}
+        prefs = data.get("preferences") or {}
+        if not isinstance(prefs, dict):
+            return {}
+    except Exception:
+        return {}
+    accent = prefs.get("accent")
+    if isinstance(accent, str):
+        apply_accent_preset(accent)
+    return prefs
+
+
+def get_user_scale_factor(prefs: dict) -> float:
+    """Возвращает множитель из ``preferences.font_scale`` (clamp 0.8..1.3)."""
+    try:
+        v = float(prefs.get("font_scale", 1.0))
+    except Exception:
+        v = 1.0
+    if v < 0.8:
+        v = 0.8
+    if v > 1.3:
+        v = 1.3
+    return v

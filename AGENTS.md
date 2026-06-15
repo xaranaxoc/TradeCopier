@@ -20,6 +20,12 @@ top of `feat/ctk-redesign`. Rules for this series specifically:
 - **Bundled assets live in `img/fonts/`** (Inter, Phosphor, etc.) with a
   `LICENSES.md` next to them.
 - **Each phase keeps the app launchable.** Run a smoke pass before committing.
+- **Accent presets (Phase 6).** User-selectable accent lives in
+  `config.json` under `preferences.accent` (cyan / teal / violet / amber).
+  Applied at startup by `theme.apply_preferences_from_file(CONFIG_FILE)`
+  which mutates `theme.ACCENT/ACCENT_HOVER/ACCENT_DIM/ACCENT_GLOW` *before*
+  the `gui.py` module-level aliases bind to them. If you add a new alias,
+  put it AFTER the `theme.apply_preferences_from_file(...)` call.
 
 ## 0. Commit Discipline — Checkpoint Every Step
 
