@@ -1316,9 +1316,13 @@ class App(ctk.CTk):
         self._start_tray()
         self._schedule_check()
         self._bind_paste()
-        self._schedule_license_check()
-        self._check_update()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
+        # Проверки лицензии/обновлений делаем ПОСЛЕ показа окна, чтобы
+        # синхронный сетевой запрос check_token не задерживал появление UI
+        # (иначе окно не отрисовывается, пока висит запрос — «процесс есть,
+        # окна нет»).
+        self.after(200, self._schedule_license_check)
+        self.after(300, self._check_update)
 
     def _paste_global(self, event=None):
         try:
@@ -2366,7 +2370,10 @@ class App(ctk.CTk):
         SettingsDialog(self)
 
     def _on_close(self):
-        if self._trader and self._trader.is_running():
+        # Сворачиваем в tray ТОЛЬКО если иконка трея реально создана. Иначе
+        # окно скрылось бы навсегда без способа вернуть его — «процесс висит,
+        # окна нет», и мьютекс блокирует повторный запуск.
+        if self._trader and self._trader.is_running() and self._tray_icon:
             self.withdraw()
             self._log("📋 Сворачивание в tray — копитрейдер продолжает работу", "info")
             return
@@ -2386,20 +2393,82 @@ _MUTEX_NAME = "FTHTradeCopier_SingleInstance"
 
 
 def _activate_existing():
+    """Показать уже запущенное окно копировщика.
+
+    Заголовок окна содержит версию ("FTH Trade Copier v1.0"), поэтому точный
+    FindWindowW(None, "FTH Trade Copier") НИКОГДА его не находил и повторный
+    запуск молча завершался, а в трее/в памяти оставался невидимый процесс.
+    Ищем по префиксу через EnumWindows.
+    """
     user32 = ctypes.windll.user32
-    hwnd = user32.FindWindowW(None, "FTH Trade Copier")
-    if hwnd:
-        user32.ShowWindow(hwnd, 9)
+    found = []
+
+    EnumProc = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+
+    def _cb(hwnd, _lparam):
+        length = user32.GetWindowTextLengthW(hwnd)
+        if length:
+            buf = ctypes.create_unicode_buffer(length + 1)
+            user32.GetWindowTextW(hwnd, buf, length + 1)
+            if buf.value.startswith("FTH Trade Copier"):
+                found.append(hwnd)
+                return False
+        return True
+
+    user32.EnumWindows(EnumProc(_cb), 0)
+    if found:
+        hwnd = found[0]
+        user32.ShowWindow(hwnd, 9)  # SW_RESTORE
         user32.SetForegroundWindow(hwnd)
         return True
     return False
+
+
+def _log_crash():
+    """Записать трейсбек упавшего запуска в crash.log (рядом с конфигом)."""
+    import traceback
+    tb = traceback.format_exc()
+    try:
+        os.makedirs(APP_DATA_DIR, exist_ok=True)
+        path = os.path.join(APP_DATA_DIR, "crash.log")
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(f"\n===== {datetime.now():%Y-%m-%d %H:%M:%S} =====\n")
+            f.write(tb)
+        return path
+    except Exception:
+        return None
 
 
 if __name__ == "__main__":
     mutex = ctypes.windll.kernel32.CreateMutexW(None, False, _MUTEX_NAME)
     already_exists = ctypes.windll.kernel32.GetLastError() == 183
     if already_exists:
-        _activate_existing()
+        if not _activate_existing():
+            # Мьютекс занят, но окно найти не удалось — висит зависший
+            # экземпляр. Подсказываем пользователю, а не выходим молча.
+            try:
+                messagebox.showwarning(
+                    "FTH Trade Copier",
+                    "Программа уже запущена, но её окно не найдено.\n\n"
+                    "Закройте процесс FTHTradeCopier в Диспетчере задач "
+                    "(вкладка «Подробности»), затем запустите снова.",
+                )
+            except Exception:
+                pass
         sys.exit(0)
-    app = App()
-    app.mainloop()
+    try:
+        app = App()
+        app.mainloop()
+    except Exception as exc:
+        # Раньше при исключении в App()/mainloop процесс мог «зависнуть»
+        # (живой фоновый поток) без единого окна. Теперь — лог + диалог.
+        path = _log_crash()
+        try:
+            extra = f"\n\nЛог: {path}" if path else ""
+            messagebox.showerror(
+                "FTH Trade Copier — ошибка запуска",
+                f"Не удалось запустить программу:\n\n{exc}{extra}",
+            )
+        except Exception:
+            pass
+        raise
