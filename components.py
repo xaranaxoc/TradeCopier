@@ -419,6 +419,132 @@ def bind_tooltip(widget: tk.Misc, text: str) -> None:
     Tooltip.bind(widget, text)
 
 
+# ─── FilterChip ───────────────────────────────────────────────────────
+class FilterChip(ctk.CTkFrame):
+    """Кликабельный чип-фильтр (selected / normal).
+
+    Используется в toolbar'ах вкладок «Сделки» и «Лог».
+    """
+
+    def __init__(self, master, text: str,
+                 on_click: Optional[Callable[["FilterChip"], None]] = None,
+                 selected: bool = False, count: Optional[int] = None):
+        super().__init__(
+            master,
+            fg_color=theme.SURFACE_INPUT,
+            corner_radius=theme.RADIUS_CHIP,
+            border_width=1, border_color=theme.BORDER_SOFT,
+            height=24,
+        )
+        self._on_click = on_click
+        self._text = text
+        self._selected = selected
+
+        bold = theme.pick_font(theme.SANS_BOLD_PREFS)
+        self._lbl = tk.Label(
+            self, text=self._compose_label(count),
+            bg=theme.SURFACE_INPUT, fg=theme.TEXT_SECONDARY,
+            font=(bold, 9, "bold"), padx=10, pady=3,
+        )
+        self._lbl.pack()
+
+        for w in (self, self._lbl):
+            w.bind("<Button-1>", self._on_press)
+            w.bind("<Enter>", self._on_hover_in)
+            w.bind("<Leave>", self._on_hover_out)
+
+        self._apply_state()
+
+    def _compose_label(self, count: Optional[int]) -> str:
+        if count is None:
+            return self._text
+        return f"{self._text}  ·  {count}"
+
+    def _on_press(self, _e=None) -> None:
+        if self._on_click:
+            try:
+                self._on_click(self)
+            except Exception:
+                pass
+
+    def _on_hover_in(self, _e=None) -> None:
+        if not self._selected:
+            self.configure(fg_color=theme.SURFACE_ROW_HOVER)
+            self._lbl.config(bg=theme.SURFACE_ROW_HOVER, fg=theme.TEXT_PRIMARY)
+
+    def _on_hover_out(self, _e=None) -> None:
+        if not self._selected:
+            self.configure(fg_color=theme.SURFACE_INPUT)
+            self._lbl.config(bg=theme.SURFACE_INPUT, fg=theme.TEXT_SECONDARY)
+
+    # ── публичный API ────────────────────────────────────────
+    def set_selected(self, value: bool) -> None:
+        self._selected = bool(value)
+        self._apply_state()
+
+    def set_count(self, count: Optional[int]) -> None:
+        self._lbl.config(text=self._compose_label(count))
+
+    @property
+    def name(self) -> str:
+        return self._text
+
+    def _apply_state(self) -> None:
+        if self._selected:
+            self.configure(fg_color=theme.ACCENT_GLOW,
+                           border_color=theme.ACCENT)
+            self._lbl.config(bg=theme.ACCENT_GLOW, fg=theme.ACCENT)
+        else:
+            self.configure(fg_color=theme.SURFACE_INPUT,
+                           border_color=theme.BORDER_SOFT)
+            self._lbl.config(bg=theme.SURFACE_INPUT,
+                              fg=theme.TEXT_SECONDARY)
+
+
+# ─── ToggleSwitch (lite) ──────────────────────────────────────────────
+class ToggleSwitch(ctk.CTkFrame):
+    """Маленький on/off-переключатель: лейбл + CTkSwitch.
+
+    Используется для «Авто-прокрутка» в логе и для density / theme
+    в Settings.
+    """
+
+    def __init__(self, master, text: str,
+                 initial: bool = True,
+                 on_change: Optional[Callable[[bool], None]] = None):
+        super().__init__(master, fg_color="transparent")
+        sans = theme.pick_font(theme.SANS_PREFS)
+
+        self._var = tk.BooleanVar(value=bool(initial))
+        self._on_change = on_change
+
+        tk.Label(
+            self, text=text, bg=master.cget("bg") if False else theme.SURFACE_2,
+            fg=theme.TEXT_SECONDARY, font=(sans, 10),
+        ).pack(side="left", padx=(0, 8))
+
+        self._sw = ctk.CTkSwitch(
+            self, text="", variable=self._var, command=self._fire,
+            width=36, height=18,
+            progress_color=theme.ACCENT,
+            button_color=theme.TEXT_PRIMARY,
+        )
+        self._sw.pack(side="left")
+
+    def _fire(self) -> None:
+        if self._on_change:
+            try:
+                self._on_change(bool(self._var.get()))
+            except Exception:
+                pass
+
+    def get(self) -> bool:
+        return bool(self._var.get())
+
+    def set(self, value: bool) -> None:
+        self._var.set(bool(value))
+
+
 __all__ = [
     "StatusPill",
     "Badge",
@@ -427,4 +553,6 @@ __all__ = [
     "EmptyState",
     "Tooltip",
     "bind_tooltip",
+    "FilterChip",
+    "ToggleSwitch",
 ]

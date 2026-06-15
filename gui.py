@@ -1143,17 +1143,76 @@ class TradesTable(tk.Frame):
     def add_trade(self, time_str: str, slave: str, symbol: str,
                   direction: str, lot: float, master_ticket: str,
                   slave_ticket: str, status: str, tag: str = "ok"):
-        children = self.tree.get_children()
-        row_idx = len(children)
-        row_tag = "even" if row_idx % 2 == 0 else "odd"
-        self.tree.insert("", 0, values=(
-            time_str, slave, symbol, direction,
-            f"{lot:.2f}", master_ticket, slave_ticket, status
-        ), tags=(tag, row_tag))
-        children = self.tree.get_children()
-        while len(children) > self._max_rows:
-            self.tree.delete(children[-1])
-            children = self.tree.get_children()
+        # Phase 4: храним сырой список — нужно для фильтра/поиска.
+        if not hasattr(self, "_all_trades"):
+            self._all_trades = []
+            self._filter_status = "all"
+            self._filter_query = ""
+            self._summary_cb = None
+        record = dict(time_str=time_str, slave=slave, symbol=symbol,
+                      direction=direction, lot=lot,
+                      master_ticket=master_ticket, slave_ticket=slave_ticket,
+                      status=status, tag=tag)
+        self._all_trades.insert(0, record)
+        while len(self._all_trades) > self._max_rows:
+            self._all_trades.pop()
+        self._render()
+
+    # Phase 4: фильтр + поиск.
+    def set_filter(self, status: str = "all", query: str = ""):
+        self._filter_status = status or "all"
+        self._filter_query = (query or "").strip().lower()
+        self._render()
+
+    def set_summary_callback(self, cb):
+        """Регистрирует cb(total_ok, total_err) — toolbar обновит сводку."""
+        self._summary_cb = cb
+        self._fire_summary()
+
+    def _fire_summary(self):
+        cb = getattr(self, "_summary_cb", None)
+        if not cb:
+            return
+        ok = sum(1 for t in getattr(self, "_all_trades", []) if t["tag"] == "ok")
+        err = sum(1 for t in getattr(self, "_all_trades", []) if t["tag"] == "err")
+        try:
+            cb(ok, err)
+        except Exception:
+            pass
+
+    def _match(self, t: Dict) -> bool:
+        st = getattr(self, "_filter_status", "all")
+        if st == "ok" and t["tag"] != "ok":
+            return False
+        if st == "err" and t["tag"] != "err":
+            return False
+        q = getattr(self, "_filter_query", "")
+        if q:
+            blob = (
+                f"{t['time_str']} {t['slave']} {t['symbol']} "
+                f"{t['direction']} {t['master_ticket']} {t['slave_ticket']} "
+                f"{t['status']}"
+            ).lower()
+            if q not in blob:
+                return False
+        return True
+
+    def _render(self):
+        # пересоберём дерево с нуля; объёмы небольшие (≤200 строк).
+        for iid in self.tree.get_children():
+            self.tree.delete(iid)
+        idx = 0
+        for t in getattr(self, "_all_trades", []):
+            if not self._match(t):
+                continue
+            row_tag = "even" if idx % 2 == 0 else "odd"
+            idx += 1
+            self.tree.insert("", "end", values=(
+                t["time_str"], t["slave"], t["symbol"], t["direction"],
+                f"{t['lot']:.2f}", t["master_ticket"], t["slave_ticket"],
+                t["status"]
+            ), tags=(t["tag"], row_tag))
+        self._fire_summary()
 
 
 # ── ActivationWindow ──────────────────────────────────────────
@@ -1853,9 +1912,14 @@ class App(tk.Tk):
 
         trades_tab = tk.Frame(self.notebook, bg=CARD_BG)
         self.notebook.add(trades_tab, text="  Сделки  ")
+
+        # Phase 4: toolbar над таблицей — chips + поиск + сводка справа.
+        self._build_trades_toolbar(trades_tab, sans_reg, sans_bold)
+
         self.trades_table = TradesTable(trades_tab)
         self.trades_table.configure(bg=CARD_BG)
-        self.trades_table.pack(fill="both", expand=True, padx=2, pady=2)
+        self.trades_table.pack(fill="both", expand=True, padx=2, pady=(0, 2))
+        self.trades_table.set_summary_callback(self._update_trades_summary)
 
         for t in _load_trades():
             tag = "ok" if t.get("success") else "err"
@@ -1868,6 +1932,10 @@ class App(tk.Tk):
 
         log_tab = tk.Frame(self.notebook, bg=CARD_BG)
         self.notebook.add(log_tab, text="  Лог  ")
+
+        # Phase 4: toolbar над логом — chips + copy + auto-scroll.
+        self._build_log_toolbar(log_tab, sans_reg, sans_bold)
+
         log_inner = tk.Frame(log_tab, bg=CARD_BG)
         log_inner.pack(fill="both", expand=True, padx=2, pady=2)
         self.log_text = tk.Text(log_inner, bg=BG, fg=FG, font=FONT_MONO_SM,
@@ -1883,6 +1951,135 @@ class App(tk.Tk):
         self.log_text.tag_config("err", foreground=RED)
         self.log_text.tag_config("warn", foreground=YELLOW)
         self.log_text.tag_config("info", foreground=FG_DIM)
+
+    # ── Phase 4: trades toolbar ──────────────────────────────
+    def _build_trades_toolbar(self, parent, sans_reg, sans_bold):
+        bar = tk.Frame(parent, bg=CARD_BG)
+        bar.pack(fill="x", padx=2, pady=(2, 6))
+
+        # Чипы-фильтры
+        chip_row = tk.Frame(bar, bg=CARD_BG)
+        chip_row.pack(side="left")
+        self._trades_chips = {}
+        for name, label in (("all", "Все"), ("ok", "Успешные"),
+                             ("err", "Ошибки")):
+            chip = components.FilterChip(
+                chip_row, text=label,
+                selected=(name == "all"),
+                on_click=lambda _c, n=name: self._on_trades_chip(n),
+            )
+            chip.pack(side="left", padx=(0, 6))
+            self._trades_chips[name] = chip
+
+        # Сводка справа
+        self.lbl_trades_summary = tk.Label(
+            bar, text="✓ 0  ·  ✗ 0",
+            bg=CARD_BG, fg=FG_DIM, font=(sans_bold, 10),
+        )
+        self.lbl_trades_summary.pack(side="right", padx=(8, 4))
+
+        # Поиск
+        search_wrap = ctk.CTkFrame(
+            bar, fg_color=BG_INPUT, corner_radius=CORNER_SM,
+            border_width=1, border_color=SOFT_BORDER, height=26,
+        )
+        search_wrap.pack(side="right", padx=(8, 8))
+        search_wrap.pack_propagate(False)
+
+        icon_family = theme.pick_font(theme.ICON_PREFS)
+        tk.Label(search_wrap, text=theme.ICON_SEARCH,
+                 bg=BG_INPUT, fg=FG_DIM,
+                 font=(icon_family, 11)).pack(side="left", padx=(8, 4))
+
+        self.var_trades_query = tk.StringVar()
+        ent = tk.Entry(search_wrap, textvariable=self.var_trades_query,
+                       bg=BG_INPUT, fg=FG, insertbackground=FG,
+                       relief="flat", font=(sans_reg, 10), width=20,
+                       highlightthickness=0, borderwidth=0)
+        ent.pack(side="left", fill="x", expand=True, padx=(0, 8))
+        self.var_trades_query.trace_add("write", lambda *_:
+                                          self._on_trades_query_change())
+
+    def _on_trades_chip(self, name: str) -> None:
+        for k, chip in self._trades_chips.items():
+            chip.set_selected(k == name)
+        self.trades_table.set_filter(
+            status=name, query=self.var_trades_query.get(),
+        )
+
+    def _on_trades_query_change(self) -> None:
+        # текущий выбранный чип
+        active = "all"
+        for k, chip in self._trades_chips.items():
+            if chip._selected:
+                active = k
+                break
+        self.trades_table.set_filter(
+            status=active, query=self.var_trades_query.get(),
+        )
+
+    def _update_trades_summary(self, ok: int, err: int) -> None:
+        if hasattr(self, "lbl_trades_summary"):
+            self.lbl_trades_summary.config(text=f"✓ {ok}  ·  ✗ {err}")
+
+    # ── Phase 4: log toolbar ─────────────────────────────────
+    def _build_log_toolbar(self, parent, sans_reg, sans_bold):
+        bar = tk.Frame(parent, bg=CARD_BG)
+        bar.pack(fill="x", padx=2, pady=(2, 4))
+
+        chip_row = tk.Frame(bar, bg=CARD_BG)
+        chip_row.pack(side="left")
+        self._log_chips = {}
+        for name, label in (("all", "Все"), ("info", "Инфо"),
+                             ("warn", "Warn"), ("err", "Ошибки"),
+                             ("ok", "OK")):
+            chip = components.FilterChip(
+                chip_row, text=label,
+                selected=(name == "all"),
+                on_click=lambda _c, n=name: self._on_log_chip(n),
+            )
+            chip.pack(side="left", padx=(0, 6))
+            self._log_chips[name] = chip
+
+        # Copy + Auto-scroll справа
+        self._log_autoscroll = True
+
+        def _on_autoscroll(v):
+            self._log_autoscroll = bool(v)
+
+        self._log_autoscroll_switch = components.ToggleSwitch(
+            bar, text="Авто-прокрутка", initial=True,
+            on_change=_on_autoscroll,
+        )
+        self._log_autoscroll_switch.pack(side="right", padx=(8, 4))
+
+        btn_copy = PillButton(bar, "Копировать", variant="subtle",
+                                command=self._copy_log)
+        btn_copy.pack(side="right", padx=(8, 6))
+
+    def _on_log_chip(self, name: str) -> None:
+        for k, chip in self._log_chips.items():
+            chip.set_selected(k == name)
+        # Скрываем строки не-выбранного уровня через elide.
+        try:
+            for tag in ("info", "warn", "err", "ok"):
+                self.log_text.tag_configure(
+                    tag,
+                    elide=(name != "all" and name != tag),
+                )
+        except Exception:
+            pass
+
+    def _copy_log(self) -> None:
+        try:
+            txt = self.log_text.get("1.0", "end-1c")
+            self.clipboard_clear()
+            self.clipboard_append(txt)
+            if hasattr(self, "toasts"):
+                self.toasts.show("Лог скопирован в буфер", "ok",
+                                  timeout=1800)
+        except Exception:
+            pass
 
     # ── FOOTER ───────────────────────────────────────────────
     def _build_footer_stats_new(self, sans_reg):
@@ -2548,7 +2745,9 @@ class App(tk.Tk):
         self.log_text.config(state="normal")
         ts = datetime.now().strftime("%H:%M:%S")
         self.log_text.insert("end", f"[{ts}] {msg}\n", tag)
-        self.log_text.see("end")
+        # Phase 4: уважаем переключатель «Авто-прокрутка».
+        if getattr(self, "_log_autoscroll", True):
+            self.log_text.see("end")
         lines = int(self.log_text.index("end-1c").split(".")[0])
         if lines > 500:
             self.log_text.delete("1.0", f"{lines - 500}.0")
