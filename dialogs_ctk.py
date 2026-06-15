@@ -32,8 +32,10 @@ from gui import (
 if _LIC_OK:
     lic_mod = gui.lic_mod  # type: ignore[attr-defined]
 
-from gui_new import PillButton, IconButton, _make_card, CARD_BG, SOFT_BORDER, \
-    CORNER_LG, CORNER_MD, CORNER_SM
+from gui import (
+    PillButton, IconButton, _make_card,
+    CARD_BG, SOFT_BORDER, CORNER_LG, CORNER_MD, CORNER_SM,
+)
 
 
 # ── helpers общие для всех диалогов ─────────────────────────────────
