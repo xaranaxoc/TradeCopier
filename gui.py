@@ -709,13 +709,15 @@ class AccountRow:
         bg = BG_ROW
         r = self._row
 
-        self._bg_frame = tk.Frame(self._parent, bg=bg, highlightbackground=BORDER,
-                                   highlightthickness=1 if not self._hover else 1)
-        self._bg_frame.grid(row=r, column=0, columnspan=12, sticky="nsew", pady=(1, 1))
+        self._bg_frame = ctk.CTkFrame(self._parent, fg_color=bg, corner_radius=8,
+                                      border_width=1, border_color=BORDER, height=38)
+        self._bg_frame.grid(row=r, column=0, columnspan=12, sticky="nsew", pady=2)
+        self._bg_frame.grid_propagate(False)
         self._bg_frame.lower()
 
-        self._accent_strip = tk.Frame(self._bg_frame, bg=FG_DIM, width=3)
-        self._accent_strip.place(x=0, y=0, relheight=1.0)
+        self._accent_strip = ctk.CTkFrame(self._bg_frame, width=3, corner_radius=2,
+                                          fg_color=FG_DIM)
+        self._accent_strip.place(x=3, y=7, relheight=0.6)
 
         enabled = d.get("enabled", True)
         self.var_enabled = tk.BooleanVar(value=enabled)
@@ -866,9 +868,9 @@ class AccountRow:
         self._hover = hover
         if hasattr(self, '_bg_frame') and self._bg_frame:
             if hover:
-                self._bg_frame.configure(highlightbackground=ACCENT_DIM)
+                self._bg_frame.configure(border_color=ACCENT_DIM)
             else:
-                self._bg_frame.configure(highlightbackground=BORDER)
+                self._bg_frame.configure(border_color=BORDER)
 
 
     def update_info(self, balance: float, equity: float, login: int = 0,
