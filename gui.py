@@ -18,6 +18,7 @@ from typing import Dict, List, Optional
 import customtkinter as ctk
 
 import theme
+import components
 
 # ── CTk globals (тёмная тема + синий акцент) ─────────────────────
 ctk.set_appearance_mode("dark")
@@ -213,47 +214,8 @@ def _make_card(parent, **kw):
     return ctk.CTkFrame(parent, **defaults)
 
 
-class StatusPill(ctk.CTkFrame):
-    """Маленькая овальная плюшка `● TEXT` для статусов в шапке.
-
-    Состояния: idle / running / stopped / warn / error.
-    Цвет точки и подписи меняется через set_state().
-    """
-
-    _COLORS = {
-        "idle":    (FG_DIM, FG_LABEL),
-        "running": (GREEN,  FG),
-        "stopped": (FG_DIM, FG_LABEL),
-        "warn":    (YELLOW, FG),
-        "error":   (RED,    FG),
-    }
-
-    def __init__(self, master, text="—", state="idle"):
-        super().__init__(
-            master, fg_color=BG_INPUT, corner_radius=12,
-            border_width=1, border_color=SOFT_BORDER, height=26,
-        )
-        self._dot_color, self._text_color = self._COLORS[state]
-        self._dot = tk.Canvas(self, width=8, height=8, bg=BG_INPUT,
-                              highlightthickness=0, bd=0)
-        self._dot.pack(side="left", padx=(12, 6), pady=8)
-        self._dot_id = self._dot.create_oval(
-            0, 0, 8, 8, fill=self._dot_color, outline="",
-        )
-        self._lbl = tk.Label(
-            self, text=text, bg=BG_INPUT, fg=self._text_color,
-            font=(theme.pick_font(theme.SANS_BOLD_PREFS), 10, "bold"),
-        )
-        self._lbl.pack(side="left", padx=(0, 14))
-
-    def set_state(self, state, text=None):
-        if state not in self._COLORS:
-            state = "idle"
-        dot, txt = self._COLORS[state]
-        self._dot.itemconfig(self._dot_id, fill=dot)
-        self._lbl.config(fg=txt)
-        if text is not None:
-            self._lbl.config(text=text)
+# Phase 3a: StatusPill переехал в components.py.
+StatusPill = components.StatusPill
 
 
 # ── Persistence: trades ─────────────────────────────────────
@@ -288,39 +250,14 @@ def _load_trades() -> List[Dict]:
 
 # ── Tooltip (info mode) ────────────────────────────────────
 
-class _Tip:
-    enabled = False
-    _active = None
-
-    @classmethod
-    def show(cls, widget, text):
-        cls.hide()
-        tw = tk.Toplevel(widget)
-        tw.wm_overrideredirect(True)
-        tw.configure(bg=ACCENT)
-        tw.wm_attributes("-topmost", True)
-        lbl = tk.Label(tw, text=text, bg=ACCENT, fg="white",
-                       font=("Segoe UI", 9), padx=8, pady=4)
-        lbl.pack()
-        tw.update_idletasks()
-        wx = widget.winfo_rootx() + widget.winfo_width() // 2 - tw.winfo_width() // 2
-        wy = widget.winfo_rooty() + widget.winfo_height() + 2
-        tw.wm_geometry(f"+{wx}+{wy}")
-        cls._active = tw
-
-    @classmethod
-    def hide(cls):
-        if cls._active:
-            try:
-                cls._active.destroy()
-            except Exception:
-                pass
-            cls._active = None
+# Phase 3a: tooltip переехал в components.Tooltip с CTk-look-и-feel.
+# Здесь оставлен тонкий alias, чтобы старый код (dialogs / dialogs_ctk и
+# куча мест в gui.py) продолжал работать без правок.
+_Tip = components.Tooltip
 
 
 def _bind_tip(widget, text):
-    widget.bind("<Enter>", lambda e: _Tip.show(widget, text) if _Tip.enabled else None)
-    widget.bind("<Leave>", lambda e: _Tip.hide())
+    components.Tooltip.bind(widget, text)
 
 # ── Символы-алиасы ─────────────────────────────────────────
 
@@ -1483,6 +1420,8 @@ class App(tk.Tk):
         self._profiles: List[Dict] = []
 
         self._build_ui()
+        # Phase 3a: глобальный менеджер тостов (правый-нижний угол окна).
+        self.toasts = components.ToastManager(self)
         self._load_config()
         self._start_tray()
         self._schedule_check()
@@ -2076,6 +2015,38 @@ class App(tk.Tk):
 
     def _update_slave_count(self):
         self.lbl_slave_count.config(text=f"{len(self._slaves)}/{self.MAX_SLAVES}")
+        self._update_slaves_empty_state()
+
+    def _update_slaves_empty_state(self):
+        # Phase 3a: показываем EmptyState, когда слейв-таблица пустая.
+        if not hasattr(self, "_table_frame"):
+            return
+        is_empty = not self._slaves
+        existing = getattr(self, "_slaves_empty", None)
+        if is_empty:
+            if existing is None or not existing.winfo_exists():
+                self._slaves_empty = components.EmptyState(
+                    self._table_frame,
+                    title="Нет слейв-аккаунтов",
+                    subtitle="Добавьте хотя бы один аккаунт, чтобы "
+                             "начать копирование сделок с мастера.",
+                    icon=theme.ICON_INFO,
+                    cta_text="+ Добавить аккаунт",
+                    cta_command=self._add_slave,
+                )
+                # Заголовок таблицы (row=0) занят. Кладём поверх свободной
+                # области как overlay: place() со span'ом.
+                self._slaves_empty.place(
+                    relx=0.5, rely=0.5, anchor="center",
+                    relwidth=0.9, relheight=0.85,
+                )
+        else:
+            if existing is not None and existing.winfo_exists():
+                try:
+                    existing.destroy()
+                except Exception:
+                    pass
+                self._slaves_empty = None
 
     def _add_slave(self):
         if len(self._slaves) >= self.MAX_SLAVES:
@@ -2427,6 +2398,8 @@ class App(tk.Tk):
             self.status_pill.set_state("running", "Копирование активно")
         self._session_stats = {"copied": 0, "failed": 0}
         self._log("\u2705 Копитрейдер запущен", "ok")
+        if hasattr(self, "toasts"):
+            self.toasts.show("Копитрейдер запущен", "ok")
 
     def _stop(self):
         if self._trader:
@@ -2442,6 +2415,8 @@ class App(tk.Tk):
         if hasattr(self, "status_pill"):
             self.status_pill.set_state("stopped", "Остановлено")
         self._log("\u25A0 Копитрейдер остановлен", "warn")
+        if hasattr(self, "toasts"):
+            self.toasts.show("Копитрейдер остановлен", "info")
         self._schedule_check()
 
     # ── Колбэки ─────────────────────────────────────────────
