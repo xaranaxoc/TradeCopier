@@ -5,6 +5,7 @@ MT5 Local Copy Trader — GUI (tkinter + CustomTkinter)
 import os
 import sys
 import json
+import time
 import uuid
 import subprocess
 import threading
@@ -16,9 +17,15 @@ from typing import Dict, List, Optional
 
 import customtkinter as ctk
 
+import theme
+import components
+
 # ── CTk globals (тёмная тема + синий акцент) ─────────────────────
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("dark-blue")
+
+# Регистрируем встроенные шрифты (Inter, Phosphor) до создания окон.
+theme.register_bundled_fonts()
 
 try:
     import MetaTrader5 as mt5
@@ -76,33 +83,43 @@ ICON_DEFAULT = os.path.join(IMG_DIR, "convertico-fth.ico")
 ICON_CYAN = os.path.join(IMG_DIR, "convertico-fth-cyan.ico")
 
 # ── Цветовая палитра (neon cyan) ───────────────────────────
-BG_DEEP = "#080810"
-BG = "#0C0C14"
-BG_ROW = "#111119"
-BG_ROW_HOVER = "#171722"
-BG_INPUT = "#191924"
-BG_HEADER = "#0E0E18"
-FG = "#E4E4EE"
-FG_DIM = "#6A6A80"
-FG_LABEL = "#8888A0"
-FG_MUTED = "#3A3A50"
-ACCENT = "#00B4D8"
-ACCENT_H = "#00D0F0"
-ACCENT_DIM = "#006E88"
-CYAN_GLOW = "#002933"
-GREEN = "#00E676"
-GREEN_DIM = "#00B85E"
-GREEN_GLOW = "#003318"
-RED = "#FF3D57"
-RED_DIM = "#CC3044"
-RED_GLOW = "#330D14"
-YELLOW = "#FFB020"
-YELLOW_DIM = "#CC8D1A"
-BORDER = "#1C1C2C"
-BORDER_LIGHT = "#252538"
-DIVIDER = "#111120"
+# Источник правды — theme.py. Имена ниже оставлены как алиасы,
+# чтобы существующий код продолжал работать без правок.
+# Phase 6: применяем сохранённый accent-пресет до того, как забиндим
+# module-level алиасы — иначе виджеты унаследуют дефолтный cyan.
+_USER_PREFS = theme.apply_preferences_from_file(CONFIG_FILE)
+
+BG_DEEP       = theme.SURFACE_0
+BG            = theme.SURFACE_1
+BG_ROW        = theme.SURFACE_ROW
+BG_ROW_HOVER  = theme.SURFACE_ROW_HOVER
+BG_INPUT      = theme.SURFACE_INPUT
+BG_HEADER     = theme.SURFACE_HEADER
+FG            = theme.TEXT_PRIMARY
+FG_DIM        = theme.TEXT_TERTIARY
+FG_LABEL      = theme.TEXT_SECONDARY
+FG_MUTED      = theme.TEXT_DISABLED
+ACCENT        = theme.ACCENT
+ACCENT_H      = theme.ACCENT_HOVER
+ACCENT_DIM    = theme.ACCENT_DIM
+CYAN_GLOW     = theme.ACCENT_GLOW
+ACCENT_GLOW   = theme.ACCENT_GLOW
+GREEN         = theme.STATUS_OK
+GREEN_DIM     = theme.STATUS_OK_DIM
+GREEN_GLOW    = theme.STATUS_OK_GLOW
+RED           = theme.STATUS_ERR
+RED_DIM       = theme.STATUS_ERR_DIM
+RED_GLOW      = theme.STATUS_ERR_GLOW
+YELLOW        = theme.STATUS_WARN
+YELLOW_DIM    = theme.STATUS_WARN_DIM
+BORDER        = theme.BORDER_DEFAULT
+BORDER_LIGHT  = theme.BORDER_STRONG
+DIVIDER       = theme.DIVIDER
 
 # ── Шрифты ──────────────────────────────────────────────────
+# Конкретные семейства подбираются в App._build_ui через
+# theme.resolve_font_families() — там уже учтены встроенные
+# Inter / Segoe UI / fallbacks.
 FONT_TITLE = ("Segoe UI", 15, "bold")
 FONT_VAL = ("Segoe UI", 11)
 FONT_VAL_BOLD = ("Segoe UI", 11, "bold")
@@ -116,33 +133,27 @@ FONT_XS = ("Segoe UI", 7)
 
 
 # ── CTk-стилистика: радиусы / карточки / pill-кнопки ────────────
-CORNER_LG = 14
-CORNER_MD = 10
-CORNER_SM = 8
+CORNER_LG = theme.RADIUS_CARD
+CORNER_MD = theme.RADIUS_CTRL
+CORNER_SM = 8  # input fields — между chip и control
 
-CARD_BG       = "#11111C"
-CARD_BG_HOVER = "#181826"
-SOFT_BORDER   = "#1F1F30"
+CARD_BG       = theme.SURFACE_2
+CARD_BG_HOVER = theme.SURFACE_3
+SOFT_BORDER   = theme.BORDER_SOFT
 
 
 def _pick_font(prefs, fallback="TkDefaultFont"):
-    """Возвращает первый доступный шрифт из списка предпочтений."""
-    try:
-        available = set(tkfont.families())
-    except Exception:
-        return prefs[0] if prefs else fallback
-    for name in prefs:
-        if name in available:
-            return name
-    return fallback
+    """Совместимость со старым API — делегирует в theme.pick_font."""
+    return theme.pick_font(prefs, fallback)
 
 
 def _resolve_fonts():
-    """Автоподбор sans-шрифтов (Windows production → Segoe UI)."""
-    sans_reg = _pick_font(["Segoe UI", "Inter", "Roboto", "DejaVu Sans", "Arial"])
-    sans_bold = _pick_font(["Segoe UI Semibold", "Inter Semi Bold",
-                             "Roboto Medium", "DejaVu Sans", "Arial"])
-    sans_black = _pick_font(["Segoe UI Black", "Inter Black", "Arial Black"])
+    """Подбор sans-семейств. Inter (встроен) → Segoe UI → fallbacks.
+
+    Возвращает (sans_reg, sans_bold, sans_black) — старая сигнатура,
+    которой ждёт остальной gui.py.
+    """
+    sans_reg, sans_bold, sans_black, _mono, _icon = theme.resolve_font_families()
     return sans_reg, sans_bold, sans_black
 
 
@@ -153,24 +164,47 @@ class PillButton(ctk.CTkButton):
     `btn.config(state="disabled")` продолжал работать.
     """
 
+    # Phase 3b: добавлены вариант `subtle`, focus-ring и loading-state.
     def __init__(self, master, text, command=None, variant="ghost",
-                 icon=None, width=None, **kw):
+                 icon=None, width=None, focus_ring=True, **kw):
         if variant == "primary":
             fg, hover, txt = ACCENT, ACCENT_H, "#FFFFFF"
         elif variant == "danger":
             fg, hover, txt = RED_DIM, RED, "#FFFFFF"
+        elif variant == "subtle":
+            fg, hover, txt = "transparent", BG_INPUT, FG_DIM
         else:
             fg, hover, txt = BG_INPUT, CARD_BG_HOVER, FG_LABEL
         label = f"{icon}  {text}" if icon else text
+        self._variant = variant
+        self._stored_text = label
         kwargs = dict(
             master=master, text=label, command=command,
             fg_color=fg, hover_color=hover, text_color=txt,
             corner_radius=CORNER_MD, height=32,
+            border_width=0, border_color=ACCENT_DIM,
         )
         if width is not None:
             kwargs["width"] = width
         kwargs.update(kw)
         super().__init__(**kwargs)
+
+        if focus_ring:
+            self.bind("<FocusIn>",  lambda _e: self.configure(border_width=2),
+                      add="+")
+            self.bind("<FocusOut>", lambda _e: self.configure(border_width=0),
+                      add="+")
+
+    def set_loading(self, loading: bool, loading_text: str = "…"):
+        """Включает «загружается»: блокирует кнопку и временно меняет текст."""
+        if loading:
+            try:
+                self._stored_text = self.cget("text")
+            except Exception:
+                pass
+            self.configure(text=loading_text, state="disabled")
+        else:
+            self.configure(text=self._stored_text, state="normal")
 
     def config(self, **kw):  # type: ignore[override]
         if "bg" in kw:
@@ -181,19 +215,39 @@ class PillButton(ctk.CTkButton):
 
 
 class IconButton(ctk.CTkButton):
-    """Квадратная иконочная кнопка."""
+    """Квадратная иконочная кнопка.
 
-    def __init__(self, master, glyph, command=None, color=FG_DIM,
-                 hover_color=None, size=34, **kw):
-        super().__init__(
-            master, text=glyph, command=command,
+    Phase 3b: если передан ``icon`` (Phosphor codepoint), кнопка рисует
+    его шрифтом Phosphor — чёткие, единообразные иконки вместо случайных
+    Unicode-символов. Параметр ``glyph`` оставлен для обратной
+    совместимости (обычная Unicode-строка, текущий шрифт).
+    """
+
+    def __init__(self, master, glyph=None, command=None, color=FG_DIM,
+                 hover_color=None, size=34, icon=None, **kw):
+        sym = icon if icon is not None else (glyph or "")
+        font = kw.pop("font", None)
+        if font is None and icon is not None:
+            icon_family = theme.pick_font(theme.ICON_PREFS)
+            font = (icon_family, max(12, int(size * 0.5)))
+        kwargs = dict(
+            master=master, text=sym, command=command,
             width=size, height=size,
             fg_color=BG_INPUT,
             hover_color=hover_color or CARD_BG_HOVER,
             text_color=color,
             corner_radius=CORNER_MD,
-            **kw,
+            border_width=0, border_color=ACCENT_DIM,
         )
+        if font is not None:
+            kwargs["font"] = font
+        kwargs.update(kw)
+        super().__init__(**kwargs)
+
+        self.bind("<FocusIn>",  lambda _e: self.configure(border_width=2),
+                  add="+")
+        self.bind("<FocusOut>", lambda _e: self.configure(border_width=0),
+                  add="+")
 
 
 def _make_card(parent, **kw):
@@ -206,6 +260,10 @@ def _make_card(parent, **kw):
     )
     defaults.update(kw)
     return ctk.CTkFrame(parent, **defaults)
+
+
+# Phase 3a: StatusPill переехал в components.py.
+StatusPill = components.StatusPill
 
 
 # ── Persistence: trades ─────────────────────────────────────
@@ -240,39 +298,14 @@ def _load_trades() -> List[Dict]:
 
 # ── Tooltip (info mode) ────────────────────────────────────
 
-class _Tip:
-    enabled = False
-    _active = None
-
-    @classmethod
-    def show(cls, widget, text):
-        cls.hide()
-        tw = tk.Toplevel(widget)
-        tw.wm_overrideredirect(True)
-        tw.configure(bg=ACCENT)
-        tw.wm_attributes("-topmost", True)
-        lbl = tk.Label(tw, text=text, bg=ACCENT, fg="white",
-                       font=("Segoe UI", 9), padx=8, pady=4)
-        lbl.pack()
-        tw.update_idletasks()
-        wx = widget.winfo_rootx() + widget.winfo_width() // 2 - tw.winfo_width() // 2
-        wy = widget.winfo_rooty() + widget.winfo_height() + 2
-        tw.wm_geometry(f"+{wx}+{wy}")
-        cls._active = tw
-
-    @classmethod
-    def hide(cls):
-        if cls._active:
-            try:
-                cls._active.destroy()
-            except Exception:
-                pass
-            cls._active = None
+# Phase 3a: tooltip переехал в components.Tooltip с CTk-look-и-feel.
+# Здесь оставлен тонкий alias, чтобы старый код (dialogs / dialogs_ctk и
+# куча мест в gui.py) продолжал работать без правок.
+_Tip = components.Tooltip
 
 
 def _bind_tip(widget, text):
-    widget.bind("<Enter>", lambda e: _Tip.show(widget, text) if _Tip.enabled else None)
-    widget.bind("<Leave>", lambda e: _Tip.hide())
+    components.Tooltip.bind(widget, text)
 
 # ── Символы-алиасы ─────────────────────────────────────────
 
@@ -1115,17 +1148,76 @@ class TradesTable(tk.Frame):
     def add_trade(self, time_str: str, slave: str, symbol: str,
                   direction: str, lot: float, master_ticket: str,
                   slave_ticket: str, status: str, tag: str = "ok"):
-        children = self.tree.get_children()
-        row_idx = len(children)
-        row_tag = "even" if row_idx % 2 == 0 else "odd"
-        self.tree.insert("", 0, values=(
-            time_str, slave, symbol, direction,
-            f"{lot:.2f}", master_ticket, slave_ticket, status
-        ), tags=(tag, row_tag))
-        children = self.tree.get_children()
-        while len(children) > self._max_rows:
-            self.tree.delete(children[-1])
-            children = self.tree.get_children()
+        # Phase 4: храним сырой список — нужно для фильтра/поиска.
+        if not hasattr(self, "_all_trades"):
+            self._all_trades = []
+            self._filter_status = "all"
+            self._filter_query = ""
+            self._summary_cb = None
+        record = dict(time_str=time_str, slave=slave, symbol=symbol,
+                      direction=direction, lot=lot,
+                      master_ticket=master_ticket, slave_ticket=slave_ticket,
+                      status=status, tag=tag)
+        self._all_trades.insert(0, record)
+        while len(self._all_trades) > self._max_rows:
+            self._all_trades.pop()
+        self._render()
+
+    # Phase 4: фильтр + поиск.
+    def set_filter(self, status: str = "all", query: str = ""):
+        self._filter_status = status or "all"
+        self._filter_query = (query or "").strip().lower()
+        self._render()
+
+    def set_summary_callback(self, cb):
+        """Регистрирует cb(total_ok, total_err) — toolbar обновит сводку."""
+        self._summary_cb = cb
+        self._fire_summary()
+
+    def _fire_summary(self):
+        cb = getattr(self, "_summary_cb", None)
+        if not cb:
+            return
+        ok = sum(1 for t in getattr(self, "_all_trades", []) if t["tag"] == "ok")
+        err = sum(1 for t in getattr(self, "_all_trades", []) if t["tag"] == "err")
+        try:
+            cb(ok, err)
+        except Exception:
+            pass
+
+    def _match(self, t: Dict) -> bool:
+        st = getattr(self, "_filter_status", "all")
+        if st == "ok" and t["tag"] != "ok":
+            return False
+        if st == "err" and t["tag"] != "err":
+            return False
+        q = getattr(self, "_filter_query", "")
+        if q:
+            blob = (
+                f"{t['time_str']} {t['slave']} {t['symbol']} "
+                f"{t['direction']} {t['master_ticket']} {t['slave_ticket']} "
+                f"{t['status']}"
+            ).lower()
+            if q not in blob:
+                return False
+        return True
+
+    def _render(self):
+        # пересоберём дерево с нуля; объёмы небольшие (≤200 строк).
+        for iid in self.tree.get_children():
+            self.tree.delete(iid)
+        idx = 0
+        for t in getattr(self, "_all_trades", []):
+            if not self._match(t):
+                continue
+            row_tag = "even" if idx % 2 == 0 else "odd"
+            idx += 1
+            self.tree.insert("", "end", values=(
+                t["time_str"], t["slave"], t["symbol"], t["direction"],
+                f"{t['lot']:.2f}", t["master_ticket"], t["slave_ticket"],
+                t["status"]
+            ), tags=(t["tag"], row_tag))
+        self._fire_summary()
 
 
 # ── ActivationWindow ──────────────────────────────────────────
@@ -1405,10 +1497,28 @@ class App(tk.Tk):
             # останутся в старом виде.
             pass
         super().__init__()
+        # DPI scaling — Hi-DPI/4K-мониторы перестанут выглядеть «крохотно».
+        # Применяем ДО первого geometry(), чтобы окно сразу было нужного
+        # размера в физических пикселях.
+        try:
+            scale = theme.apply_dpi_scaling(self, ctk)
+            # Phase 6: дополнительный пользовательский множитель.
+            user_mul = theme.get_user_scale_factor(_USER_PREFS)
+            if abs(user_mul - 1.0) > 1e-3:
+                try:
+                    ctk.set_widget_scaling(scale * user_mul)
+                    ctk.set_window_scaling(scale * user_mul)
+                except Exception:
+                    pass
+        except Exception:
+            pass
         self.title(f"FTH Trade Copier v{upd_mod.VERSION}" if _UPD_OK else "FTH Trade Copier")
         self.configure(bg=BG_DEEP)
         self.resizable(True, True)
-        self.minsize(1100, 720)
+        # Phase 2: minsize смягчён под более скромные ноуты.
+        self.minsize(1024, 680)
+        # Геометрия выберется в _build_ui (либо из config.json, либо 70%
+        # экрана с зажимом). Здесь — временное значение до отрисовки.
         self.geometry("1140x760")
         if os.path.exists(ICON_DEFAULT):
             self.iconbitmap(ICON_DEFAULT)
@@ -1425,6 +1535,8 @@ class App(tk.Tk):
         self._profiles: List[Dict] = []
 
         self._build_ui()
+        # Phase 3a: глобальный менеджер тостов (правый-нижний угол окна).
+        self.toasts = components.ToastManager(self)
         self._load_config()
         self._start_tray()
         self._schedule_check()
@@ -1451,7 +1563,7 @@ class App(tk.Tk):
     def _set_logo_cyan(self, cyan: bool):
         if not hasattr(self, '_logo_label'):
             return
-        name = "convertico-fth-cyan_48x48" if cyan else "convertico-fth_48x48"
+        name = "convertico-fth-cyan_32x32" if cyan else "convertico-fth_32x32"
         path = os.path.join(IMG_DIR, f"{name}.png")
         if os.path.exists(path):
             try:
@@ -1473,7 +1585,8 @@ class App(tk.Tk):
                 pystray.MenuItem("Показать", self._tray_show, default=True),
                 pystray.MenuItem("Стоп + Выход", self._tray_exit),
             )
-            self._tray_icon = pystray.Icon("FTHTradeCopier", pil_img, "FTH Trade Copier", menu)
+            self._tray_icon = pystray.Icon("FTHTradeCopier", pil_img,
+                                             self._tray_tooltip(), menu)
             self._tray_thread = threading.Thread(target=self._tray_icon.run, daemon=True)
             self._tray_thread.start()
         except Exception:
@@ -1539,22 +1652,28 @@ class App(tk.Tk):
         body = ctk.CTkFrame(self, fg_color="transparent")
         body.pack(fill="both", expand=True, padx=16, pady=(10, 4))
 
+        # Phase 6: onboarding banner — показывается, если ни мастер,
+        # ни слейвы ещё не настроены.
+        self._build_onboarding_banner(body, sans_reg, sans_bold)
         self._build_master_panel_new(body, sans_reg, sans_bold)
         self._build_kpi_row_new(body, sans_reg, sans_bold)
         self._build_slaves_section_new(body, sans_reg, sans_bold)
         self._build_bottom_notebook_new(body, sans_reg, sans_bold)
         self._build_footer_stats_new(sans_reg)
+        # Покажем или скроем баннер уже после загрузки конфига.
+        self.after(50, self._update_onboarding_banner)
 
     # ── HEADER ────────────────────────────────────────────────
     def _build_header_new(self, sans_reg, sans_bold, sans_black):
-        hdr = ctk.CTkFrame(self, fg_color=BG_HEADER, corner_radius=0, height=76)
+        # Phase 2: компактнее (76→64px) + StatusPill в центре.
+        hdr = ctk.CTkFrame(self, fg_color=BG_HEADER, corner_radius=0, height=64)
         hdr.pack(fill="x")
         hdr.pack_propagate(False)
 
         left = ctk.CTkFrame(hdr, fg_color="transparent")
-        left.pack(side="left", padx=20, pady=14)
+        left.pack(side="left", padx=18, pady=10)
 
-        logo_path = os.path.join(IMG_DIR, "convertico-fth_48x48.png")
+        logo_path = os.path.join(IMG_DIR, "convertico-fth_32x32.png")
         if os.path.exists(logo_path):
             try:
                 self._logo_img = tk.PhotoImage(file=logo_path)
@@ -1570,20 +1689,28 @@ class App(tk.Tk):
         title_box.pack(side="left")
         version_suffix = f"  v{upd_mod.VERSION}" if _UPD_OK else ""
         ctk.CTkLabel(title_box, text=f"FTH Trade Copier{version_suffix}",
-                     text_color=FG, font=(sans_bold, 17),
+                     text_color=FG, font=(sans_bold, 15),
                      anchor="w").pack(anchor="w")
         ctk.CTkLabel(title_box, text="MT5 · Local copy engine",
-                     text_color=FG_DIM, font=(sans_reg, 11),
+                     text_color=FG_DIM, font=(sans_reg, 10),
                      anchor="w").pack(anchor="w")
 
-        right = ctk.CTkFrame(hdr, fg_color="transparent")
-        right.pack(side="right", padx=16, pady=14)
+        # Центр: статус-плюшка
+        center = ctk.CTkFrame(hdr, fg_color="transparent")
+        center.place(relx=0.5, rely=0.5, anchor="center")
+        self.status_pill = StatusPill(center, text="Остановлено", state="stopped")
+        self.status_pill.pack()
 
-        self.btn_info = IconButton(right, "i", command=self._toggle_info)
+        right = ctk.CTkFrame(hdr, fg_color="transparent")
+        right.pack(side="right", padx=14, pady=10)
+
+        self.btn_info = IconButton(right, icon=theme.ICON_INFO,
+                                     command=self._toggle_info)
         self.btn_info.pack(side="right", padx=(8, 0))
         _bind_tip(self.btn_info, "Режим подсказок")
 
-        btn_settings = IconButton(right, "⚙", command=self._open_settings)
+        btn_settings = IconButton(right, icon=theme.ICON_GEAR,
+                                   command=self._open_settings)
         btn_settings.pack(side="right", padx=(8, 0))
         _bind_tip(btn_settings, "Настройки приложения")
 
@@ -1625,8 +1752,12 @@ class App(tk.Tk):
         card.pack(fill="x", pady=(0, 12))
         card.pack_propagate(False)
 
-        strip = ctk.CTkFrame(card, width=3, corner_radius=2, fg_color=ACCENT)
-        strip.place(relx=0, rely=0.18, relheight=0.64, x=8)
+        # Phase 5: цветную полоску храним, чтобы анимировать пульс при run.
+        self._master_strip = ctk.CTkFrame(card, width=3, corner_radius=2,
+                                            fg_color=ACCENT)
+        self._master_strip.place(relx=0, rely=0.18, relheight=0.64, x=8)
+        self._master_strip_pulse = False
+        self._master_strip_phase = 0
 
         body = ctk.CTkFrame(card, fg_color="transparent")
         body.pack(fill="both", expand=True, padx=18, pady=10)
@@ -1655,31 +1786,50 @@ class App(tk.Tk):
 
         actions = ctk.CTkFrame(body, fg_color="transparent")
         actions.pack(side="left", padx=(14, 0))
-        IconButton(actions, "📈", color=ACCENT,
-                    command=self._open_master_terminal,
-                    size=30).pack(side="left", padx=2)
-        IconButton(actions, "✖", color=RED_DIM,
-                    command=self._close_all_master,
-                    size=30).pack(side="left", padx=2)
-        IconButton(actions, "⚠", color=YELLOW,
-                    command=self._test_master, size=30).pack(side="left", padx=2)
+        btn_open_master = IconButton(actions, icon=theme.ICON_CHART,
+                                       color=ACCENT,
+                                       command=self._open_master_terminal,
+                                       size=30)
+        btn_open_master.pack(side="left", padx=2)
+        _bind_tip(btn_open_master, "Открыть терминал мастера")
+        btn_close_master = IconButton(actions, icon=theme.ICON_X,
+                                        color=RED_DIM,
+                                        command=self._close_all_master,
+                                        size=30)
+        btn_close_master.pack(side="left", padx=2)
+        _bind_tip(btn_close_master, "Закрыть все сделки мастера")
+        btn_test_master = IconButton(actions, icon=theme.ICON_WARNING,
+                                       color=YELLOW,
+                                       command=self._test_master,
+                                       size=30)
+        btn_test_master.pack(side="left", padx=2)
+        _bind_tip(btn_test_master, "Тест мастера")
 
+        # 4 ячейки статов master'а в сетке 4×1: фиксированный шаг между
+        # колонками, чтобы длинные балансы не сдвигали соседей.
         right = ctk.CTkFrame(body, fg_color="transparent")
         right.pack(side="right", fill="y")
+        for i in range(4):
+            right.columnconfigure(i, minsize=92, weight=0, uniform="master_stats")
 
         self.lbl_master_login = self._stat_cell(right, "ЛОГИН", "—", FG_DIM,
-                                                  sans_reg, sans_bold)
+                                                  sans_reg, sans_bold, col=0)
         self.lbl_master_bal = self._stat_cell(right, "БАЛАНС", "—", FG,
-                                                sans_reg, sans_bold)
+                                                sans_reg, sans_bold, col=1)
         self.lbl_master_eq = self._stat_cell(right, "ЭКВИТИ", "—", FG_DIM,
-                                               sans_reg, sans_bold)
+                                               sans_reg, sans_bold, col=2)
         self.lbl_master_pnl = self._stat_cell(right, "P&L", "—", FG_DIM,
-                                                sans_reg, sans_bold)
+                                                sans_reg, sans_bold, col=3)
 
-    def _stat_cell(self, parent, label, value, color, sans_reg, sans_bold):
+    def _stat_cell(self, parent, label, value, color, sans_reg, sans_bold,
+                   col=None):
         # tk.Label, потому что App._refresh_master_panel зовёт .config(text=..., fg=...).
         wrap = ctk.CTkFrame(parent, fg_color="transparent")
-        wrap.pack(side="left", padx=12)
+        if col is None:
+            wrap.pack(side="left", padx=12)
+        else:
+            wrap.grid(row=0, column=col, padx=(0, 14) if col < 3 else 0,
+                      sticky="e")
         tk.Label(wrap, text=label, bg=CARD_BG, fg=FG_DIM,
                   font=(sans_reg, 9)).pack(anchor="e")
         lbl = tk.Label(wrap, text=value, bg=CARD_BG, fg=color,
@@ -1687,12 +1837,76 @@ class App(tk.Tk):
         lbl.pack(anchor="e", pady=(2, 0))
         return lbl
 
-    # ── KPI ROW ──────────────────────────────────────────────
+    # ── ONBOARDING BANNER (Phase 6) ──────────────────────────
+    def _build_onboarding_banner(self, parent, sans_reg, sans_bold):
+        """Лёгкая карточка приветствия для первого запуска."""
+        self._onboarding = _make_card(parent, height=86)
+        self._onboarding.pack(fill="x", pady=(0, 10))
+        self._onboarding.pack_propagate(False)
+        # cyan-полоска слева (как у master-карточки) для целостности.
+        strip = ctk.CTkFrame(self._onboarding, width=3, corner_radius=2,
+                              fg_color=ACCENT)
+        strip.place(relx=0, rely=0.18, relheight=0.64, x=8)
+
+        inner = ctk.CTkFrame(self._onboarding, fg_color="transparent")
+        inner.pack(fill="both", expand=True, padx=18, pady=10)
+
+        icon_family = theme.pick_font(theme.ICON_PREFS)
+        icon_box = ctk.CTkFrame(inner, width=44, height=44,
+                                  corner_radius=22, fg_color=ACCENT_GLOW)
+        icon_box.pack(side="left", padx=(0, 14))
+        icon_box.pack_propagate(False)
+        tk.Label(icon_box, text=theme.ICON_PLAY, bg=ACCENT_GLOW,
+                  fg=ACCENT, font=(icon_family, 18)).pack(expand=True)
+
+        text_col = ctk.CTkFrame(inner, fg_color="transparent")
+        text_col.pack(side="left", fill="both", expand=True)
+        tk.Label(text_col, text="Готовы запустить копитрейдер?",
+                  bg=CARD_BG, fg=FG, font=(sans_bold, 13),
+                  anchor="w").pack(fill="x")
+        tk.Label(text_col,
+                  text="1. Укажите путь к terminal64.exe мастера.   "
+                       "2. Добавьте хотя бы один слейв.   "
+                       "3. Нажмите «Старт» в шапке.",
+                  bg=CARD_BG, fg=FG_DIM, font=(sans_reg, 10),
+                  anchor="w").pack(fill="x", pady=(2, 0))
+
+        btn_row = ctk.CTkFrame(inner, fg_color="transparent")
+        btn_row.pack(side="right")
+        PillButton(btn_row, "Выбрать мастера", variant="primary",
+                    icon=theme.ICON_FOLDER,
+                    command=self._browse_master).pack(side="left",
+                                                       padx=(0, 6))
+        PillButton(btn_row, "Добавить слейв", variant="ghost",
+                    icon="+", command=self._add_slave).pack(side="left")
+
+    def _update_onboarding_banner(self) -> None:
+        if not hasattr(self, "_onboarding") or self._onboarding is None:
+            return
+        try:
+            has_master = bool(self.var_master_path.get().strip())
+            has_slaves = bool(self._slaves)
+            if has_master or has_slaves:
+                self._onboarding.pack_forget()
+            else:
+                self._onboarding.pack(
+                    fill="x", pady=(0, 10), before=self._master_strip.master
+                    if hasattr(self, "_master_strip") else None,
+                )
+        except Exception:
+            pass
+
+    # ── KPI ROW (Phase 5) ────────────────────────────────────
     def _build_kpi_row_new(self, parent, sans_reg, sans_bold):
         row = ctk.CTkFrame(parent, fg_color="transparent")
         row.pack(fill="x", pady=(0, 14))
 
         self._kpi_labels = {}
+        self._kpi_delta = {}
+        self._kpi_spark_canvas = {}
+        self._kpi_history = {}
+        self._kpi_cards = {}
+        self._kpi_prev_value = {}
         cards_data = [
             ("kpi_bal",  "Master Balance", "—", FG,     ACCENT),
             ("kpi_eq",   "Total Equity",   "—", FG,     ACCENT),
@@ -1700,24 +1914,188 @@ class App(tk.Tk):
             ("kpi_conn", "Connected",      "—", FG_DIM, ACCENT),
         ]
         for i, (key, title, value, color, strip_color) in enumerate(cards_data):
-            card = _make_card(row, height=78)
+            card = _make_card(row, height=90)
             card.pack(side="left", fill="x", expand=True,
                        padx=(0 if i == 0 else 10, 0))
             card.pack_propagate(False)
+            self._kpi_cards[key] = card
 
             strip = ctk.CTkFrame(card, width=3, corner_radius=2,
                                   fg_color=strip_color)
-            strip.place(relx=0, rely=0.18, relheight=0.64, x=8)
+            strip.place(relx=0, rely=0.16, relheight=0.68, x=8)
 
             inner = ctk.CTkFrame(card, fg_color="transparent")
             inner.pack(fill="both", expand=True, padx=18, pady=10)
 
             tk.Label(inner, text=title.upper(), bg=CARD_BG, fg=FG_DIM,
                       font=(sans_reg, 9), anchor="w").pack(fill="x")
-            lbl = tk.Label(inner, text=value, bg=CARD_BG, fg=color,
+
+            value_row = tk.Frame(inner, bg=CARD_BG)
+            value_row.pack(fill="x", pady=(2, 0))
+            lbl = tk.Label(value_row, text=value, bg=CARD_BG, fg=color,
                             font=(sans_bold, 18), anchor="w")
-            lbl.pack(fill="x", pady=(2, 0))
+            lbl.pack(side="left")
             self._kpi_labels[key] = lbl
+
+            delta = tk.Label(value_row, text="", bg=CARD_BG, fg=FG_DIM,
+                              font=(sans_bold, 10), anchor="w")
+            delta.pack(side="left", padx=(8, 0), pady=(6, 0))
+            self._kpi_delta[key] = delta
+
+            # Sparkline снизу справа карточки.
+            sc = tk.Canvas(card, width=78, height=20, bg=CARD_BG,
+                           highlightthickness=0, bd=0)
+            sc.place(relx=1.0, rely=1.0, anchor="se", x=-12, y=-10)
+            self._kpi_spark_canvas[key] = sc
+            self._kpi_history[key] = []
+
+    def _kpi_push(self, key: str, value: float, value_text: str,
+                  color: Optional[str] = None) -> None:
+        """Phase 5: централизованное обновление одной KPI-карточки.
+
+        Обновляет значение, считает дельту относительно прошлой пуш-точки,
+        перерисовывает sparkline, мигает фоном при изменении.
+        """
+        if key not in self._kpi_labels:
+            return
+        prev = self._kpi_prev_value.get(key)
+        # значение
+        if color is not None:
+            self._kpi_labels[key].config(text=value_text, fg=color)
+        else:
+            self._kpi_labels[key].config(text=value_text)
+        # дельта
+        delta_lbl = self._kpi_delta.get(key)
+        if delta_lbl is not None:
+            if prev is not None and prev != 0:
+                pct = (value - prev) / abs(prev) * 100
+                if abs(pct) < 0.005:
+                    delta_lbl.config(text="", fg=FG_DIM)
+                else:
+                    arrow = "\u25B2" if pct > 0 else "\u25BC"
+                    col = GREEN if pct > 0 else RED
+                    delta_lbl.config(text=f"{arrow} {abs(pct):.2f}%", fg=col)
+            else:
+                delta_lbl.config(text="")
+        # история
+        hist = self._kpi_history.get(key)
+        if hist is not None:
+            hist.append(value)
+            if len(hist) > 60:
+                del hist[0:len(hist) - 60]
+            self._kpi_redraw_spark(key)
+        # value flash на изменении
+        if prev is not None and prev != value:
+            self._kpi_flash(key)
+        self._kpi_prev_value[key] = value
+
+    def _kpi_redraw_spark(self, key: str) -> None:
+        sc = self._kpi_spark_canvas.get(key)
+        hist = self._kpi_history.get(key) or []
+        if sc is None or len(hist) < 2:
+            return
+        try:
+            sc.delete("all")
+        except Exception:
+            return
+        w = int(sc.cget("width"))
+        h = int(sc.cget("height"))
+        lo = min(hist)
+        hi = max(hist)
+        span = hi - lo if hi - lo > 1e-9 else 1.0
+        n = len(hist)
+        step = w / max(1, n - 1)
+        pts = []
+        for i, v in enumerate(hist):
+            x = i * step
+            y = h - 2 - (v - lo) / span * (h - 4)
+            pts.extend([x, y])
+        # тренд
+        trend_color = ACCENT
+        if hist[-1] > hist[0]:
+            trend_color = GREEN
+        elif hist[-1] < hist[0]:
+            trend_color = RED
+        try:
+            sc.create_line(*pts, fill=trend_color, width=1.5, smooth=True)
+            # точка-курсор справа
+            sc.create_oval(pts[-2] - 2, pts[-1] - 2,
+                            pts[-2] + 2, pts[-1] + 2,
+                            fill=trend_color, outline="")
+        except Exception:
+            pass
+
+    # Phase 6: расширенный tray-tooltip.
+    def _tray_tooltip(self) -> str:
+        try:
+            ver = upd_mod.VERSION if _UPD_OK else ""
+        except Exception:
+            ver = ""
+        running = bool(self._trader and self._trader.is_running())
+        state = "🟢 копирование" if running else "⏸ остановлено"
+        master = "—"
+        try:
+            p = self.var_master_path.get().strip()
+            if p:
+                master = os.path.splitext(os.path.basename(
+                    os.path.dirname(p)))[0] or "MT5"
+        except Exception:
+            pass
+        slaves = sum(1 for s in self._slaves if s.get("enabled", True))
+        total = len(self._slaves)
+        head = f"FTH Trade Copier v{ver}" if ver else "FTH Trade Copier"
+        return (f"{head}\n{state}\nМастер: {master}\n"
+                f"Слейвов активно: {slaves}/{total}")
+
+    def _refresh_tray_tooltip(self) -> None:
+        if not self._tray_icon:
+            return
+        try:
+            self._tray_icon.title = self._tray_tooltip()
+        except Exception:
+            pass
+
+    def _kpi_flash(self, key: str) -> None:
+        card = self._kpi_cards.get(key)
+        if card is None:
+            return
+        try:
+            card.configure(fg_color=BG_INPUT)
+            self.after(160, lambda: card.configure(fg_color=CARD_BG))
+        except Exception:
+            pass
+
+    # Phase 5: пульсация цветной полоски master-карточки.
+    _MASTER_PULSE_COLORS = ("#00B4D8", "#00D2F2", "#33E2FF",
+                             "#00D2F2", "#00B4D8", "#0094B5")
+
+    def _set_master_pulse(self, on: bool) -> None:
+        self._master_strip_pulse = bool(on)
+        if not hasattr(self, "_master_strip"):
+            return
+        if on:
+            self._master_strip_phase = 0
+            self._tick_master_pulse()
+        else:
+            try:
+                self._master_strip.configure(fg_color=ACCENT)
+            except Exception:
+                pass
+
+    def _tick_master_pulse(self) -> None:
+        if not self._master_strip_pulse:
+            return
+        try:
+            colors = self._MASTER_PULSE_COLORS
+            c = colors[self._master_strip_phase % len(colors)]
+            self._master_strip.configure(fg_color=c)
+            self._master_strip_phase += 1
+        except Exception:
+            return
+        try:
+            self.after(280, self._tick_master_pulse)
+        except Exception:
+            pass
 
     # ── SLAVES SECTION ───────────────────────────────────────
     def _build_slaves_section_new(self, parent, sans_reg, sans_bold):
@@ -1761,15 +2139,20 @@ class App(tk.Tk):
             style.theme_use("clam")
         except Exception:
             pass
-        style.configure("CTkNotebook.TNotebook", background=BG_DEEP,
+        # Phase 2: «underline»-индикатор вместо заливки.
+        # Выбранная вкладка имеет CARD_BG-фон (сливается с панелью) и
+        # ACCENT-цвет текста — это даёт впечатление линии-подчёркивания.
+        style.configure("CTkNotebook.TNotebook", background=CARD_BG,
                         borderwidth=0)
         style.configure("CTkNotebook.TNotebook.Tab",
-                        background=BG_INPUT, foreground=FG_DIM,
-                        padding=[16, 6], font=(sans_bold, 9),
+                        background=BG_DEEP, foreground=FG_DIM,
+                        padding=[18, 8], font=(sans_bold, 10),
                         borderwidth=0)
         style.map("CTkNotebook.TNotebook.Tab",
-                   background=[("selected", ACCENT)],
-                   foreground=[("selected", "white")])
+                   background=[("selected", CARD_BG),
+                               ("active", BG_INPUT)],
+                   foreground=[("selected", ACCENT),
+                               ("active", FG)])
 
         nb_card = _make_card(parent)
         nb_card.pack(fill="both", expand=False, pady=(0, 0))
@@ -1780,9 +2163,14 @@ class App(tk.Tk):
 
         trades_tab = tk.Frame(self.notebook, bg=CARD_BG)
         self.notebook.add(trades_tab, text="  Сделки  ")
+
+        # Phase 4: toolbar над таблицей — chips + поиск + сводка справа.
+        self._build_trades_toolbar(trades_tab, sans_reg, sans_bold)
+
         self.trades_table = TradesTable(trades_tab)
         self.trades_table.configure(bg=CARD_BG)
-        self.trades_table.pack(fill="both", expand=True, padx=2, pady=2)
+        self.trades_table.pack(fill="both", expand=True, padx=2, pady=(0, 2))
+        self.trades_table.set_summary_callback(self._update_trades_summary)
 
         for t in _load_trades():
             tag = "ok" if t.get("success") else "err"
@@ -1795,6 +2183,10 @@ class App(tk.Tk):
 
         log_tab = tk.Frame(self.notebook, bg=CARD_BG)
         self.notebook.add(log_tab, text="  Лог  ")
+
+        # Phase 4: toolbar над логом — chips + copy + auto-scroll.
+        self._build_log_toolbar(log_tab, sans_reg, sans_bold)
+
         log_inner = tk.Frame(log_tab, bg=CARD_BG)
         log_inner.pack(fill="both", expand=True, padx=2, pady=2)
         self.log_text = tk.Text(log_inner, bg=BG, fg=FG, font=FONT_MONO_SM,
@@ -1811,18 +2203,175 @@ class App(tk.Tk):
         self.log_text.tag_config("warn", foreground=YELLOW)
         self.log_text.tag_config("info", foreground=FG_DIM)
 
+    # ── Phase 4: trades toolbar ──────────────────────────────
+    def _build_trades_toolbar(self, parent, sans_reg, sans_bold):
+        bar = tk.Frame(parent, bg=CARD_BG)
+        bar.pack(fill="x", padx=2, pady=(2, 6))
+
+        # Чипы-фильтры
+        chip_row = tk.Frame(bar, bg=CARD_BG)
+        chip_row.pack(side="left")
+        self._trades_chips = {}
+        for name, label in (("all", "Все"), ("ok", "Успешные"),
+                             ("err", "Ошибки")):
+            chip = components.FilterChip(
+                chip_row, text=label,
+                selected=(name == "all"),
+                on_click=lambda _c, n=name: self._on_trades_chip(n),
+            )
+            chip.pack(side="left", padx=(0, 6))
+            self._trades_chips[name] = chip
+
+        # Сводка справа
+        self.lbl_trades_summary = tk.Label(
+            bar, text="✓ 0  ·  ✗ 0",
+            bg=CARD_BG, fg=FG_DIM, font=(sans_bold, 10),
+        )
+        self.lbl_trades_summary.pack(side="right", padx=(8, 4))
+
+        # Поиск
+        search_wrap = ctk.CTkFrame(
+            bar, fg_color=BG_INPUT, corner_radius=CORNER_SM,
+            border_width=1, border_color=SOFT_BORDER, height=26,
+        )
+        search_wrap.pack(side="right", padx=(8, 8))
+        search_wrap.pack_propagate(False)
+
+        icon_family = theme.pick_font(theme.ICON_PREFS)
+        tk.Label(search_wrap, text=theme.ICON_SEARCH,
+                 bg=BG_INPUT, fg=FG_DIM,
+                 font=(icon_family, 11)).pack(side="left", padx=(8, 4))
+
+        self.var_trades_query = tk.StringVar()
+        ent = tk.Entry(search_wrap, textvariable=self.var_trades_query,
+                       bg=BG_INPUT, fg=FG, insertbackground=FG,
+                       relief="flat", font=(sans_reg, 10), width=20,
+                       highlightthickness=0, borderwidth=0)
+        ent.pack(side="left", fill="x", expand=True, padx=(0, 8))
+        self.var_trades_query.trace_add("write", lambda *_:
+                                          self._on_trades_query_change())
+
+    def _on_trades_chip(self, name: str) -> None:
+        for k, chip in self._trades_chips.items():
+            chip.set_selected(k == name)
+        self.trades_table.set_filter(
+            status=name, query=self.var_trades_query.get(),
+        )
+
+    def _on_trades_query_change(self) -> None:
+        # текущий выбранный чип
+        active = "all"
+        for k, chip in self._trades_chips.items():
+            if chip._selected:
+                active = k
+                break
+        self.trades_table.set_filter(
+            status=active, query=self.var_trades_query.get(),
+        )
+
+    def _update_trades_summary(self, ok: int, err: int) -> None:
+        if hasattr(self, "lbl_trades_summary"):
+            self.lbl_trades_summary.config(text=f"✓ {ok}  ·  ✗ {err}")
+
+    # ── Phase 4: log toolbar ─────────────────────────────────
+    def _build_log_toolbar(self, parent, sans_reg, sans_bold):
+        bar = tk.Frame(parent, bg=CARD_BG)
+        bar.pack(fill="x", padx=2, pady=(2, 4))
+
+        chip_row = tk.Frame(bar, bg=CARD_BG)
+        chip_row.pack(side="left")
+        self._log_chips = {}
+        for name, label in (("all", "Все"), ("info", "Инфо"),
+                             ("warn", "Warn"), ("err", "Ошибки"),
+                             ("ok", "OK")):
+            chip = components.FilterChip(
+                chip_row, text=label,
+                selected=(name == "all"),
+                on_click=lambda _c, n=name: self._on_log_chip(n),
+            )
+            chip.pack(side="left", padx=(0, 6))
+            self._log_chips[name] = chip
+
+        # Copy + Auto-scroll справа
+        self._log_autoscroll = True
+
+        def _on_autoscroll(v):
+            self._log_autoscroll = bool(v)
+
+        self._log_autoscroll_switch = components.ToggleSwitch(
+            bar, text="Авто-прокрутка", initial=True,
+            on_change=_on_autoscroll,
+        )
+        self._log_autoscroll_switch.pack(side="right", padx=(8, 4))
+
+        btn_copy = PillButton(bar, "Копировать", variant="subtle",
+                                command=self._copy_log)
+        btn_copy.pack(side="right", padx=(8, 6))
+
+    def _on_log_chip(self, name: str) -> None:
+        for k, chip in self._log_chips.items():
+            chip.set_selected(k == name)
+        # Скрываем строки не-выбранного уровня через elide.
+        try:
+            for tag in ("info", "warn", "err", "ok"):
+                self.log_text.tag_configure(
+                    tag,
+                    elide=(name != "all" and name != tag),
+                )
+        except Exception:
+            pass
+
+    def _copy_log(self) -> None:
+        try:
+            txt = self.log_text.get("1.0", "end-1c")
+            self.clipboard_clear()
+            self.clipboard_append(txt)
+            if hasattr(self, "toasts"):
+                self.toasts.show("Лог скопирован в буфер", "ok",
+                                  timeout=1800)
+        except Exception:
+            pass
+
     # ── FOOTER ───────────────────────────────────────────────
     def _build_footer_stats_new(self, sans_reg):
-        bar = ctk.CTkFrame(self, fg_color=BG_DEEP, height=24)
+        bar = ctk.CTkFrame(self, fg_color=BG_DEEP, height=26)
         bar.pack(fill="x", padx=18, pady=(2, 6))
 
         self.lbl_stats = tk.Label(bar, text="", bg=BG_DEEP, fg=FG_DIM,
                                     font=(sans_reg, 10))
         self.lbl_stats.pack(side="left")
+
+        # Uptime — справа, рядом с версией.
         if _UPD_OK:
             ctk.CTkLabel(bar, text=f"v{upd_mod.VERSION}",
                           text_color=FG_MUTED,
                           font=(sans_reg, 10)).pack(side="right")
+
+        self._uptime_start = time.time()
+        self.lbl_uptime = tk.Label(bar, text="uptime 00:00",
+                                    bg=BG_DEEP, fg=FG_MUTED,
+                                    font=(sans_reg, 10))
+        self.lbl_uptime.pack(side="right", padx=(0, 14))
+        self._tick_uptime()
+
+    def _tick_uptime(self):
+        try:
+            elapsed = int(time.time() - getattr(self, "_uptime_start",
+                                                time.time()))
+            h, rem = divmod(elapsed, 3600)
+            m, s = divmod(rem, 60)
+            if h:
+                txt = f"uptime {h:d}:{m:02d}:{s:02d}"
+            else:
+                txt = f"uptime {m:02d}:{s:02d}"
+            if hasattr(self, "lbl_uptime"):
+                self.lbl_uptime.config(text=txt)
+        except Exception:
+            pass
+        try:
+            self.after(1000, self._tick_uptime)
+        except Exception:
+            pass
 
     # ── Info toggle ──────────────────────────────────────────
     def _toggle_info(self):
@@ -1843,6 +2392,7 @@ class App(tk.Tk):
         if path:
             self.var_master_path.set(path.replace("/", "\\"))
             self._save_config()
+            self._update_onboarding_banner()
 
     def _open_master_terminal(self):
         path = self.var_master_path.get().strip()
@@ -1969,6 +2519,38 @@ class App(tk.Tk):
 
     def _update_slave_count(self):
         self.lbl_slave_count.config(text=f"{len(self._slaves)}/{self.MAX_SLAVES}")
+        self._update_slaves_empty_state()
+
+    def _update_slaves_empty_state(self):
+        # Phase 3a: показываем EmptyState, когда слейв-таблица пустая.
+        if not hasattr(self, "_table_frame"):
+            return
+        is_empty = not self._slaves
+        existing = getattr(self, "_slaves_empty", None)
+        if is_empty:
+            if existing is None or not existing.winfo_exists():
+                self._slaves_empty = components.EmptyState(
+                    self._table_frame,
+                    title="Нет слейв-аккаунтов",
+                    subtitle="Добавьте хотя бы один аккаунт, чтобы "
+                             "начать копирование сделок с мастера.",
+                    icon=theme.ICON_INFO,
+                    cta_text="+ Добавить аккаунт",
+                    cta_command=self._add_slave,
+                )
+                # Заголовок таблицы (row=0) занят. Кладём поверх свободной
+                # области как overlay: place() со span'ом.
+                self._slaves_empty.place(
+                    relx=0.5, rely=0.5, anchor="center",
+                    relwidth=0.9, relheight=0.85,
+                )
+        else:
+            if existing is not None and existing.winfo_exists():
+                try:
+                    existing.destroy()
+                except Exception:
+                    pass
+                self._slaves_empty = None
 
     def _add_slave(self):
         if len(self._slaves) >= self.MAX_SLAVES:
@@ -1988,6 +2570,7 @@ class App(tk.Tk):
             self._add_slave_row(data)
             self._update_slave_count()
             self._save_config()
+            self._update_onboarding_banner()
 
     def _add_slave_row(self, data: Dict):
         row = AccountRow(self._table_frame, self._next_row, data,
@@ -2256,7 +2839,8 @@ class App(tk.Tk):
             bal = float(bal_text.replace("$", "").replace(",", "")) if bal_text and bal_text != "\u2014" else 0
         except Exception:
             bal = 0
-        self._kpi_labels["kpi_bal"].config(text=f"${bal:,.2f}" if bal > 0 else "\u2014")
+        self._kpi_push("kpi_bal", bal,
+                        f"${bal:,.2f}" if bal > 0 else "\u2014")
 
         total_eq = bal
         for row in self._rows:
@@ -2267,7 +2851,8 @@ class App(tk.Tk):
                     total_eq += eq
             except Exception:
                 pass
-        self._kpi_labels["kpi_eq"].config(text=f"${total_eq:,.2f}" if total_eq > 0 else "\u2014")
+        self._kpi_push("kpi_eq", total_eq,
+                        f"${total_eq:,.2f}" if total_eq > 0 else "\u2014")
 
         net_pnl = 0.0
         for row in self._rows:
@@ -2280,12 +2865,13 @@ class App(tk.Tk):
                 pass
         pnl_color = GREEN if net_pnl >= 0 else RED
         pnl_sign = "+" if net_pnl >= 0 else ""
-        self._kpi_labels["kpi_pnl"].config(text=f"{pnl_sign}${net_pnl:,.2f}" if net_pnl != 0 else "\u2014",
-                                            fg=pnl_color if net_pnl != 0 else FG_DIM)
+        self._kpi_push("kpi_pnl", net_pnl,
+                        f"{pnl_sign}${net_pnl:,.2f}" if net_pnl != 0 else "\u2014",
+                        color=pnl_color if net_pnl != 0 else FG_DIM)
 
         connected = sum(1 for row in self._rows if row.var_enabled.get())
         total = len(self._rows)
-        self._kpi_labels["kpi_conn"].config(text=f"{connected}/{total}")
+        self._kpi_push("kpi_conn", float(connected), f"{connected}/{total}")
 
     def _start(self):
         master_path = self.var_master_path.get().strip()
@@ -2316,8 +2902,15 @@ class App(tk.Tk):
             self.wm_iconbitmap(ICON_CYAN)
         self._set_logo_cyan(True)
         self._update_tray_icon(True)
+        if hasattr(self, "status_pill"):
+            self.status_pill.set_state("running", "Копирование активно")
         self._session_stats = {"copied": 0, "failed": 0}
         self._log("\u2705 Копитрейдер запущен", "ok")
+        if hasattr(self, "toasts"):
+            self.toasts.show("Копитрейдер запущен", "ok")
+        # Phase 5: запускаем пульс цветной полоски master-карточки.
+        self._set_master_pulse(True)
+        self._refresh_tray_tooltip()
 
     def _stop(self):
         if self._trader:
@@ -2330,7 +2923,13 @@ class App(tk.Tk):
             self.wm_iconbitmap(ICON_DEFAULT)
         self._set_logo_cyan(False)
         self._update_tray_icon(False)
+        if hasattr(self, "status_pill"):
+            self.status_pill.set_state("stopped", "Остановлено")
         self._log("\u25A0 Копитрейдер остановлен", "warn")
+        if hasattr(self, "toasts"):
+            self.toasts.show("Копитрейдер остановлен", "info")
+        self._set_master_pulse(False)
+        self._refresh_tray_tooltip()
         self._schedule_check()
 
     # ── Колбэки ─────────────────────────────────────────────
@@ -2407,7 +3006,9 @@ class App(tk.Tk):
         self.log_text.config(state="normal")
         ts = datetime.now().strftime("%H:%M:%S")
         self.log_text.insert("end", f"[{ts}] {msg}\n", tag)
-        self.log_text.see("end")
+        # Phase 4: уважаем переключатель «Авто-прокрутка».
+        if getattr(self, "_log_autoscroll", True):
+            self.log_text.see("end")
         lines = int(self.log_text.index("end-1c").split(".")[0])
         if lines > 500:
             self.log_text.delete("1.0", f"{lines - 500}.0")
@@ -2466,7 +3067,23 @@ class App(tk.Tk):
             "profiles": self._profiles,
             "poll_interval_seconds": 1,
             "min_lot_mode": self._min_lot_mode,
+            "window": self._window_state_dict(),
         }
+
+    def _window_state_dict(self) -> Dict:
+        """Снимок геометрии/состояния окна для сохранения в config.json."""
+        try:
+            maximized = bool(self.state() == "zoomed")
+        except Exception:
+            maximized = False
+        try:
+            geom = self.geometry() if not maximized else None
+        except Exception:
+            geom = None
+        out = {"maximized": maximized}
+        if geom:
+            out["geometry"] = geom
+        return out
 
     def _save_config(self):
         try:
@@ -2482,13 +3099,18 @@ class App(tk.Tk):
             self._profiles.append({"name": f"Профиль {i + 1}", "master": {"path": ""}, "slaves": []})
         self._active_profile = 0
 
-        if not os.path.exists(CONFIG_FILE):
-            self._update_slave_count()
-            return
-        try:
-            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-                cfg = json.load(f)
-        except Exception:
+        cfg = None
+        if os.path.exists(CONFIG_FILE):
+            try:
+                with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+                    cfg = json.load(f)
+            except Exception:
+                cfg = None
+
+        # Сначала окно — чтобы первый кадр уже был в нужном размере.
+        self._apply_window_state(cfg.get("window") if isinstance(cfg, dict) else None)
+
+        if not isinstance(cfg, dict):
             self._update_slave_count()
             return
 
@@ -2507,6 +3129,39 @@ class App(tk.Tk):
         self._min_lot_mode = cfg.get("min_lot_mode", False)
         self._load_active_profile()
         self._update_slave_count()
+
+    # ── Геометрия окна (Phase 2) ─────────────────────────────
+    def _apply_window_state(self, win_cfg):
+        """Применить сохранённую геометрию или подобрать 70% от экрана."""
+        if isinstance(win_cfg, dict) and isinstance(win_cfg.get("geometry"), str):
+            try:
+                self.geometry(win_cfg["geometry"])
+            except Exception:
+                self._apply_default_geometry()
+            if win_cfg.get("maximized"):
+                try:
+                    # Windows / Linux: 'zoomed' разворачивает на весь экран.
+                    self.state("zoomed")
+                except Exception:
+                    pass
+            return
+        self._apply_default_geometry()
+
+    def _apply_default_geometry(self):
+        """70% экрана, зажато на [1100×720 — 1680×1000], центрировано."""
+        try:
+            sw = self.winfo_screenwidth()
+            sh = self.winfo_screenheight()
+        except Exception:
+            sw, sh = 1600, 900
+        w = max(1100, min(1680, int(sw * 0.70)))
+        h = max(720,  min(1000, int(sh * 0.70)))
+        x = max(0, (sw - w) // 2)
+        y = max(0, (sh - h) // 2)
+        try:
+            self.geometry(f"{w}x{h}+{x}+{y}")
+        except Exception:
+            self.geometry(f"{w}x{h}")
 
     def _load_active_profile(self):
         p = self._profiles[self._active_profile]
