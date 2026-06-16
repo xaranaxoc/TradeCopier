@@ -175,17 +175,38 @@ class PillButton(ctk.CTkButton):
             fg, hover, txt = "transparent", BG_INPUT, FG_DIM
         else:
             fg, hover, txt = BG_INPUT, CARD_BG_HOVER, FG_LABEL
-        label = f"{icon}  {text}" if icon else text
+        # Phase 7 (UI Polish v2): убрали Unicode-иконку из заголовка.
+        # Современные приложения (Linear/Notion/Cursor) не ставят
+        # ▶/■ перед текстом primary-кнопок — это атавизм. icon kwarg
+        # сохраняем для обратной совместимости, но визуально игнорируем.
+        label = text
         self._variant = variant
         self._stored_text = label
+        # Phase 7: primary/danger выше и шире — visual hierarchy.
+        if variant in ("primary", "danger"):
+            btn_h = theme.CTRL_H_LG
+            min_w = theme.BTN_PRIMARY_MIN_W
+            font_size = 13
+        else:
+            btn_h = theme.CTRL_H_MD
+            min_w = None
+            font_size = 12
         kwargs = dict(
             master=master, text=label, command=command,
             fg_color=fg, hover_color=hover, text_color=txt,
-            corner_radius=CORNER_MD, height=32,
+            corner_radius=CORNER_MD, height=btn_h,
             border_width=0, border_color=ACCENT_DIM,
         )
         if width is not None:
             kwargs["width"] = width
+        elif min_w is not None:
+            kwargs["width"] = min_w
+        if "font" not in kw:
+            try:
+                sans_bold = theme.pick_font(theme.SANS_BOLD_PREFS)
+                kwargs["font"] = (sans_bold, font_size)
+            except Exception:
+                pass
         kwargs.update(kw)
         super().__init__(**kwargs)
 
@@ -224,12 +245,17 @@ class IconButton(ctk.CTkButton):
     """
 
     def __init__(self, master, glyph=None, command=None, color=FG_DIM,
-                 hover_color=None, size=34, icon=None, **kw):
+                 hover_color=None, size=None, icon=None, **kw):
+        # Phase 7: default 36 — синхронно с CTRL_H_LG и primary PillButton,
+        # чтобы в одной строке шапки/тулбара кнопки совпадали по росту.
+        if size is None:
+            size = theme.CTRL_H_LG
         sym = icon if icon is not None else (glyph or "")
         font = kw.pop("font", None)
         if font is None and icon is not None:
             icon_family = theme.pick_font(theme.ICON_PREFS)
-            font = (icon_family, max(12, int(size * 0.5)))
+            # Phase 7: чуть крупнее глиф (52% от размера кнопки).
+            font = (icon_family, max(14, int(size * 0.52)))
         kwargs = dict(
             master=master, text=sym, command=command,
             width=size, height=size,
@@ -1649,8 +1675,11 @@ class App(tk.Tk):
         self._build_header_new(sans_reg, sans_bold, sans_black)
 
         # Тело
+        # Phase 10 (UI Polish v2): padding 16/10 → 20/16 — больше воздуха
+        # вокруг секций; стандарт Linear/Notion.
         body = ctk.CTkFrame(self, fg_color="transparent")
-        body.pack(fill="both", expand=True, padx=16, pady=(10, 4))
+        body.pack(fill="both", expand=True,
+                  padx=theme.SP_XL, pady=(theme.SP_LG, theme.SP_XS))
 
         # Phase 6: onboarding banner — показывается, если ни мастер,
         # ни слейвы ещё не настроены.
@@ -1666,12 +1695,14 @@ class App(tk.Tk):
     # ── HEADER ────────────────────────────────────────────────
     def _build_header_new(self, sans_reg, sans_bold, sans_black):
         # Phase 2: компактнее (76→64px) + StatusPill в центре.
-        hdr = ctk.CTkFrame(self, fg_color=BG_HEADER, corner_radius=0, height=64)
+        # Phase 8 (UI Polish v2): 64→56 px, ровно три зоны
+        # (brand · status · actions), отступы из шкалы spacing.
+        hdr = ctk.CTkFrame(self, fg_color=BG_HEADER, corner_radius=0, height=56)
         hdr.pack(fill="x")
         hdr.pack_propagate(False)
 
         left = ctk.CTkFrame(hdr, fg_color="transparent")
-        left.pack(side="left", padx=18, pady=10)
+        left.pack(side="left", padx=theme.SP_XL, pady=theme.SP_SM)
 
         logo_path = os.path.join(IMG_DIR, "convertico-fth_32x32.png")
         if os.path.exists(logo_path):
@@ -1687,12 +1718,15 @@ class App(tk.Tk):
 
         title_box = ctk.CTkFrame(left, fg_color="transparent")
         title_box.pack(side="left")
-        version_suffix = f"  v{upd_mod.VERSION}" if _UPD_OK else ""
-        ctk.CTkLabel(title_box, text=f"FTH Trade Copier{version_suffix}",
+        # Phase 7 (UI Polish v2): убрали v1.1.0 — версия уже есть
+        # в title-bar окна Windows и в About-секции настроек. Дублировать
+        # в шапке = визуальный шум.
+        ctk.CTkLabel(title_box, text="FTH Trade Copier",
                      text_color=FG, font=(sans_bold, 15),
                      anchor="w").pack(anchor="w")
+        # Phase 11: subtitle 10 → 11, FG_DIM → FG_MUTED.
         ctk.CTkLabel(title_box, text="MT5 · Local copy engine",
-                     text_color=FG_DIM, font=(sans_reg, 10),
+                     text_color=FG_MUTED, font=(sans_reg, 11),
                      anchor="w").pack(anchor="w")
 
         # Центр: статус-плюшка
@@ -1702,45 +1736,70 @@ class App(tk.Tk):
         self.status_pill.pack()
 
         right = ctk.CTkFrame(hdr, fg_color="transparent")
-        right.pack(side="right", padx=14, pady=10)
+        right.pack(side="right", padx=theme.SP_XL, pady=theme.SP_SM)
 
+        # Phase 7 (UI Polish v2):
+        # 1. Phosphor codepoints перевели на ПРОВЕРЕННЫЕ значения
+        #    (ICON_GEAR=U+E270, ICON_INFO=U+E2CE) — раньше ⚙ был пустым,
+        #    а ℹ показывал «динамик».
+        # 2. Поменяли местами группы Копитрейдер / Терминалы: Копитрейдер
+        #    как primary action идёт ЛЕВЕЕ Терминалов.
+        # 3. PillButton (Старт/Стоп/Запустить/Закрыть) поднялись до 36 px и
+        #    стали шире (>= 108) — primary тяжелее служебных IconButton.
+        # При side="right" последний упакованный окажется самым левым,
+        # поэтому порядок ниже = инверсия визуальной последовательности.
+        # Phase 8: служебные icon-кнопки идут вплотную друг к другу,
+        # после небольшого вертикального разделителя — отделяем
+        # primary actions от служебных.
         self.btn_info = IconButton(right, icon=theme.ICON_INFO,
                                      command=self._toggle_info)
-        self.btn_info.pack(side="right", padx=(8, 0))
+        self.btn_info.pack(side="right", padx=(theme.SP_XS, 0))
         _bind_tip(self.btn_info, "Режим подсказок")
 
         btn_settings = IconButton(right, icon=theme.ICON_GEAR,
                                    command=self._open_settings)
-        btn_settings.pack(side="right", padx=(8, 0))
+        btn_settings.pack(side="right", padx=(theme.SP_MD, 0))
         _bind_tip(btn_settings, "Настройки приложения")
 
+        sep2 = ctk.CTkFrame(right, fg_color=BORDER, width=1, height=20)
+        sep2.pack(side="right", padx=(theme.SP_MD, 0), pady=theme.SP_SM)
+
+        terms = self._header_group(right, "ТЕРМИНАЛЫ", sans_bold)
+        terms.pack(side="right", padx=(theme.SP_MD, 0))
+        btn_launch = PillButton(terms.row, "Запустить",
+                                 variant="primary", command=self._launch_all)
+        btn_launch.pack(side="left", padx=theme.SP_XS)
+        _bind_tip(btn_launch, "Запустить все терминалы (свёрнутые)")
+        btn_shutdown = PillButton(terms.row, "Закрыть",
+                                   variant="danger", command=self._shutdown_all)
+        btn_shutdown.pack(side="left", padx=theme.SP_XS)
+        _bind_tip(btn_shutdown, "Завершить процессы всех терминалов")
+
+        # Phase 8: слабый вертикальный разделитель между двумя смысловыми
+        # группами primary-кнопок — заменяет caps-метки, не добавляя шума.
+        sep1 = ctk.CTkFrame(right, fg_color=BORDER, width=1, height=20)
+        sep1.pack(side="right", padx=(theme.SP_MD, 0), pady=theme.SP_SM)
+
         engine = self._header_group(right, "КОПИТРЕЙДЕР", sans_bold)
-        engine.pack(side="right", padx=(14, 0))
-        self.btn_start = PillButton(engine.row, "Старт", icon="▶",
+        engine.pack(side="right", padx=(0, 0))
+        self.btn_start = PillButton(engine.row, "Старт",
                                      variant="primary", command=self._start)
-        self.btn_start.pack(side="left", padx=4)
+        self.btn_start.pack(side="left", padx=theme.SP_XS)
         _bind_tip(self.btn_start, "Запустить копирование сделок")
-        self.btn_stop = PillButton(engine.row, "Стоп", icon="■",
+        self.btn_stop = PillButton(engine.row, "Стоп",
                                     variant="danger", command=self._stop)
-        self.btn_stop.pack(side="left", padx=4)
+        self.btn_stop.pack(side="left", padx=theme.SP_XS)
         _bind_tip(self.btn_stop, "Остановить копирование")
         self.btn_stop.configure(state="disabled")
 
-        terms = self._header_group(right, "ТЕРМИНАЛЫ", sans_bold)
-        terms.pack(side="right", padx=(14, 0))
-        btn_launch = PillButton(terms.row, "Запустить", icon="▶",
-                                 variant="primary", command=self._launch_all)
-        btn_launch.pack(side="left", padx=4)
-        _bind_tip(btn_launch, "Запустить все терминалы (свёрнутые)")
-        btn_shutdown = PillButton(terms.row, "Закрыть", icon="■",
-                                   variant="danger", command=self._shutdown_all)
-        btn_shutdown.pack(side="left", padx=4)
-        _bind_tip(btn_shutdown, "Завершить процессы всех терминалов")
-
     def _header_group(self, parent, title, sans_bold):
+        # Phase 8 (UI Polish v2): убрали микро-подпись (8 px caps
+        # «КОПИТРЕЙДЕР»/«ТЕРМИНАЛЫ»). Текст самих кнопок уже несёт
+        # семантику, лишний caps-лейбл — визуальный шум. Группа теперь
+        # это просто строка; title-аргумент сохранён для
+        # обратной совместимости вызывающих.
+        del title  # noqa: F841 — intentionally unused
         wrap = ctk.CTkFrame(parent, fg_color="transparent")
-        ctk.CTkLabel(wrap, text=title, text_color=FG_DIM,
-                     font=(sans_bold, 8)).pack(anchor="w", padx=4)
         row = ctk.CTkFrame(wrap, fg_color="transparent")
         row.pack(fill="x")
         wrap.row = row  # type: ignore[attr-defined]
@@ -1748,61 +1807,103 @@ class App(tk.Tk):
 
     # ── MASTER PANEL ─────────────────────────────────────────
     def _build_master_panel_new(self, parent, sans_reg, sans_bold):
-        card = _make_card(parent, height=72)
-        card.pack(fill="x", pady=(0, 12))
+        # Phase 9 (UI Polish v2):
+        # — карточка чуть выше (84 px) ради «дыхания» вокруг 36-px
+        #   контролов и нормальной шкалы шрифтов 13/11.
+        # — внутренние отступы по шкале spacing (SP_XL/SP_MD).
+        # — заголовок sentence-case «Терминал-мастер» + тонкая
+        #   подпись с путём EXE справа от заголовка.
+        # — пульс-полоса 1 px (раньше 3) — больше карточки, меньше шума.
+        card = _make_card(parent, height=84)
+        card.pack(fill="x", pady=(0, theme.SP_LG))
         card.pack_propagate(False)
 
-        # Phase 5: цветную полоску храним, чтобы анимировать пульс при run.
-        self._master_strip = ctk.CTkFrame(card, width=3, corner_radius=2,
+        # Phase 5/9: цветная полоса слева. 1 px вместо 3, повыше — slim accent.
+        self._master_strip = ctk.CTkFrame(card, width=1, corner_radius=1,
                                             fg_color=ACCENT)
-        self._master_strip.place(relx=0, rely=0.18, relheight=0.64, x=8)
+        self._master_strip.place(relx=0, rely=0.18, relheight=0.64, x=6)
         self._master_strip_pulse = False
         self._master_strip_phase = 0
 
         body = ctk.CTkFrame(card, fg_color="transparent")
-        body.pack(fill="both", expand=True, padx=18, pady=10)
+        body.pack(fill="both", expand=True,
+                  padx=theme.SP_XL, pady=theme.SP_MD)
 
         left = ctk.CTkFrame(body, fg_color="transparent")
         left.pack(side="left", fill="y")
-        ctk.CTkLabel(left, text="MASTER", text_color=ACCENT,
-                     font=(sans_bold, 10)).pack(anchor="w")
+
+        # Заголовок-строка: «Терминал-мастер» + ёмкая подпись с путём.
+        title_row = ctk.CTkFrame(left, fg_color="transparent")
+        title_row.pack(anchor="w")
+        ctk.CTkLabel(title_row, text="Терминал-мастер",
+                     text_color=FG, font=(sans_bold, 13)).pack(side="left")
+        self._lbl_master_pathline = ctk.CTkLabel(
+            title_row, text="", text_color=FG_MUTED,
+            font=(sans_reg, 11))
+        self._lbl_master_pathline.pack(side="left", padx=(theme.SP_MD, 0))
+
+        def _refresh_pathline(*_):
+            p = self.var_master_path.get().strip() if hasattr(self, "var_master_path") else ""
+            # Show only last 48 chars (path), prefix · so it reads as caption.
+            if not p:
+                self._lbl_master_pathline.configure(text="путь к terminal64.exe не задан")
+            else:
+                shown = p if len(p) <= 56 else "…" + p[-55:]
+                self._lbl_master_pathline.configure(text="· " + shown)
 
         path_row = ctk.CTkFrame(left, fg_color="transparent")
-        path_row.pack(anchor="w", pady=(4, 0))
+        path_row.pack(anchor="w", pady=(theme.SP_SM, 0))
 
+        # Phase 9: «soft input» — фон тот же, что у карточки-hover, без
+        # резкой границы. Focus-ring добавляется через FocusIn/Out.
         self.var_master_path = tk.StringVar()
+        self.var_master_path.trace_add("write", _refresh_pathline)
         self._ent_master = ctk.CTkEntry(
             path_row, textvariable=self.var_master_path,
-            width=320, height=28,
-            fg_color=BG_INPUT, border_color=SOFT_BORDER, text_color=FG,
-            corner_radius=CORNER_SM, font=(sans_reg, 10),
+            width=340, height=theme.CTRL_H_LG,
+            fg_color=CARD_BG_HOVER, border_color=CARD_BG_HOVER,
+            text_color=FG, corner_radius=CORNER_MD,
+            font=(sans_reg, 12),
         )
         self._ent_master.pack(side="left")
 
-        btn_browse_m = PillButton(path_row, "...", width=42,
+        # Focus-ring: динамическая accent-граница при фокусе.
+        def _ent_focus_in(_e):
+            try: self._ent_master.configure(border_color=ACCENT_DIM)
+            except Exception: pass
+        def _ent_focus_out(_e):
+            try: self._ent_master.configure(border_color=CARD_BG_HOVER)
+            except Exception: pass
+        self._ent_master.bind("<FocusIn>", _ent_focus_in, add="+")
+        self._ent_master.bind("<FocusOut>", _ent_focus_out, add="+")
+
+        # Browse-кнопка — рядом, тот же размер, Phosphor folder-open.
+        btn_browse_m = IconButton(path_row, icon=theme.ICON_FOLDER,
+                                    color=FG_LABEL,
                                     command=self._browse_master)
-        btn_browse_m.pack(side="left", padx=(6, 0))
+        btn_browse_m.pack(side="left", padx=(theme.SP_SM, 0))
         _bind_tip(btn_browse_m, "Выбрать путь к terminal64.exe мастера")
 
+        # Инициализация подписи (на случай если путь придёт позже).
+        _refresh_pathline()
+
+        # Master-actions: одинаковые 36×36, сгруппированы вплотную.
         actions = ctk.CTkFrame(body, fg_color="transparent")
-        actions.pack(side="left", padx=(14, 0))
+        actions.pack(side="left", padx=(theme.SP_LG, 0))
         btn_open_master = IconButton(actions, icon=theme.ICON_CHART,
                                        color=ACCENT,
-                                       command=self._open_master_terminal,
-                                       size=30)
-        btn_open_master.pack(side="left", padx=2)
+                                       command=self._open_master_terminal)
+        btn_open_master.pack(side="left", padx=theme.SP_XS)
         _bind_tip(btn_open_master, "Открыть терминал мастера")
         btn_close_master = IconButton(actions, icon=theme.ICON_X,
                                         color=RED_DIM,
-                                        command=self._close_all_master,
-                                        size=30)
-        btn_close_master.pack(side="left", padx=2)
+                                        command=self._close_all_master)
+        btn_close_master.pack(side="left", padx=theme.SP_XS)
         _bind_tip(btn_close_master, "Закрыть все сделки мастера")
         btn_test_master = IconButton(actions, icon=theme.ICON_WARNING,
                                        color=YELLOW,
-                                       command=self._test_master,
-                                       size=30)
-        btn_test_master.pack(side="left", padx=2)
+                                       command=self._test_master)
+        btn_test_master.pack(side="left", padx=theme.SP_XS)
         _bind_tip(btn_test_master, "Тест мастера")
 
         # 4 ячейки статов master'а в сетке 4×1: фиксированный шаг между
@@ -1830,34 +1931,44 @@ class App(tk.Tk):
         else:
             wrap.grid(row=0, column=col, padx=(0, 14) if col < 3 else 0,
                       sticky="e")
-        tk.Label(wrap, text=label, bg=CARD_BG, fg=FG_DIM,
-                  font=(sans_reg, 9)).pack(anchor="e")
+        # Phase 11: KPI mini-label 9 → 11, FG_DIM → FG_MUTED.
+        tk.Label(wrap, text=label, bg=CARD_BG, fg=FG_MUTED,
+                  font=(sans_reg, 11)).pack(anchor="e")
         lbl = tk.Label(wrap, text=value, bg=CARD_BG, fg=color,
                         font=(sans_bold, 13))
         lbl.pack(anchor="e", pady=(2, 0))
         return lbl
 
-    # ── ONBOARDING BANNER (Phase 6) ──────────────────────────
+    # ── ONBOARDING BANNER (Phase 6, restyled Phase 12) ───────
     def _build_onboarding_banner(self, parent, sans_reg, sans_bold):
-        """Лёгкая карточка приветствия для первого запуска."""
-        self._onboarding = _make_card(parent, height=86)
-        self._onboarding.pack(fill="x", pady=(0, 10))
+        """Лёгкая карточка приветствия для первого запуска.
+
+        Phase 12 (UI Polish v2): подняли набор подсказки, убрали
+        многострочный «1. 2. 3.» в одну строку, шрифты подняли к
+        12/13 px, отступы — по шкале spacing. По высоте 86 → 72:
+        баннер перестал доминировать над KPI-секцией.
+        """
+        self._onboarding = _make_card(parent, height=72)
+        self._onboarding.pack(fill="x", pady=(0, theme.SP_LG))
         self._onboarding.pack_propagate(False)
-        # cyan-полоска слева (как у master-карточки) для целостности.
-        strip = ctk.CTkFrame(self._onboarding, width=3, corner_radius=2,
+        # accent-полоска слева, как у master-карточки — 1 px (как Phase 9).
+        strip = ctk.CTkFrame(self._onboarding, width=1, corner_radius=1,
                               fg_color=ACCENT)
-        strip.place(relx=0, rely=0.18, relheight=0.64, x=8)
+        strip.place(relx=0, rely=0.18, relheight=0.64, x=6)
 
         inner = ctk.CTkFrame(self._onboarding, fg_color="transparent")
-        inner.pack(fill="both", expand=True, padx=18, pady=10)
+        inner.pack(fill="both", expand=True,
+                   padx=theme.SP_XL, pady=theme.SP_MD)
 
         icon_family = theme.pick_font(theme.ICON_PREFS)
-        icon_box = ctk.CTkFrame(inner, width=44, height=44,
-                                  corner_radius=22, fg_color=ACCENT_GLOW)
-        icon_box.pack(side="left", padx=(0, 14))
+        icon_box = ctk.CTkFrame(inner, width=theme.CTRL_H_LG,
+                                  height=theme.CTRL_H_LG,
+                                  corner_radius=theme.CTRL_H_LG // 2,
+                                  fg_color=ACCENT_GLOW)
+        icon_box.pack(side="left", padx=(0, theme.SP_LG))
         icon_box.pack_propagate(False)
-        tk.Label(icon_box, text=theme.ICON_PLAY, bg=ACCENT_GLOW,
-                  fg=ACCENT, font=(icon_family, 18)).pack(expand=True)
+        tk.Label(icon_box, text=theme.ICON_SPARKLE, bg=ACCENT_GLOW,
+                  fg=ACCENT, font=(icon_family, 16)).pack(expand=True)
 
         text_col = ctk.CTkFrame(inner, fg_color="transparent")
         text_col.pack(side="left", fill="both", expand=True)
@@ -1865,20 +1976,18 @@ class App(tk.Tk):
                   bg=CARD_BG, fg=FG, font=(sans_bold, 13),
                   anchor="w").pack(fill="x")
         tk.Label(text_col,
-                  text="1. Укажите путь к terminal64.exe мастера.   "
-                       "2. Добавьте хотя бы один слейв.   "
-                       "3. Нажмите «Старт» в шапке.",
-                  bg=CARD_BG, fg=FG_DIM, font=(sans_reg, 10),
-                  anchor="w").pack(fill="x", pady=(2, 0))
+                  text="Выберите terminal64.exe мастера, добавьте хотя "
+                       "бы один слейв и нажмите «Старт».",
+                  bg=CARD_BG, fg=FG_MUTED, font=(sans_reg, 12),
+                  anchor="w").pack(fill="x", pady=(theme.SP_XS, 0))
 
         btn_row = ctk.CTkFrame(inner, fg_color="transparent")
         btn_row.pack(side="right")
         PillButton(btn_row, "Выбрать мастера", variant="primary",
-                    icon=theme.ICON_FOLDER,
                     command=self._browse_master).pack(side="left",
-                                                       padx=(0, 6))
+                                                       padx=(0, theme.SP_SM))
         PillButton(btn_row, "Добавить слейв", variant="ghost",
-                    icon="+", command=self._add_slave).pack(side="left")
+                    command=self._add_slave).pack(side="left")
 
     def _update_onboarding_banner(self) -> None:
         if not hasattr(self, "_onboarding") or self._onboarding is None:
@@ -1898,8 +2007,9 @@ class App(tk.Tk):
 
     # ── KPI ROW (Phase 5) ────────────────────────────────────
     def _build_kpi_row_new(self, parent, sans_reg, sans_bold):
+        # Phase 10: spacing scale — SP_LG (16) между KPI и таблицами.
         row = ctk.CTkFrame(parent, fg_color="transparent")
-        row.pack(fill="x", pady=(0, 14))
+        row.pack(fill="x", pady=(0, theme.SP_LG))
 
         self._kpi_labels = {}
         self._kpi_delta = {}
@@ -1927,8 +2037,9 @@ class App(tk.Tk):
             inner = ctk.CTkFrame(card, fg_color="transparent")
             inner.pack(fill="both", expand=True, padx=18, pady=10)
 
-            tk.Label(inner, text=title.upper(), bg=CARD_BG, fg=FG_DIM,
-                      font=(sans_reg, 9), anchor="w").pack(fill="x")
+            # Phase 11: KPI title 9 → 11, FG_DIM → FG_MUTED.
+            tk.Label(inner, text=title.upper(), bg=CARD_BG, fg=FG_MUTED,
+                      font=(sans_bold, 11), anchor="w").pack(fill="x")
 
             value_row = tk.Frame(inner, bg=CARD_BG)
             value_row.pack(fill="x", pady=(2, 0))
@@ -1937,9 +2048,11 @@ class App(tk.Tk):
             lbl.pack(side="left")
             self._kpi_labels[key] = lbl
 
-            delta = tk.Label(value_row, text="", bg=CARD_BG, fg=FG_DIM,
-                              font=(sans_bold, 10), anchor="w")
-            delta.pack(side="left", padx=(8, 0), pady=(6, 0))
+            # Phase 11: KPI delta 10 → 11, padding по шкале.
+            delta = tk.Label(value_row, text="", bg=CARD_BG, fg=FG_MUTED,
+                              font=(sans_bold, 11), anchor="w")
+            delta.pack(side="left", padx=(theme.SP_SM, 0),
+                       pady=(theme.SP_XS + 2, 0))
             self._kpi_delta[key] = delta
 
             # Sparkline снизу справа карточки.
@@ -2100,18 +2213,22 @@ class App(tk.Tk):
     # ── SLAVES SECTION ───────────────────────────────────────
     def _build_slaves_section_new(self, parent, sans_reg, sans_bold):
         header = ctk.CTkFrame(parent, fg_color="transparent")
-        header.pack(fill="x", pady=(0, 6))
+        header.pack(fill="x", pady=(0, theme.SP_MD))
 
-        ctk.CTkLabel(header, text="SLAVE ACCOUNTS", text_color=FG_LABEL,
-                     font=(sans_bold, 11)).pack(side="left")
+        # Phase 11: каноничный section-header — sentence-case заголовок
+        # 13 px FG + caption-счётчик FG_MUTED 11 px справа. Кнопки —
+        # одинаковая 36-px primary-высота, отступ по шкале.
+        ctk.CTkLabel(header, text="Подчинённые счета", text_color=FG,
+                     font=(sans_bold, 13)).pack(side="left")
         self.lbl_slave_count = tk.Label(header, text="0/10",
-                                          bg=BG_DEEP, fg=FG_DIM,
-                                          font=(sans_bold, 10))
-        self.lbl_slave_count.pack(side="left", padx=(10, 0))
+                                          bg=BG_DEEP, fg=FG_MUTED,
+                                          font=(sans_reg, 11))
+        self.lbl_slave_count.pack(side="left", padx=(theme.SP_SM, 0))
 
-        PillButton(header, "✖ Закрыть сделки", variant="danger",
-                    command=self._close_all_open).pack(side="right", padx=(8, 0))
-        PillButton(header, "+ Аккаунт", variant="primary",
+        PillButton(header, "Закрыть сделки", variant="danger",
+                    command=self._close_all_open).pack(side="right",
+                                                       padx=(theme.SP_SM, 0))
+        PillButton(header, "Добавить счёт", variant="primary",
                     command=self._add_slave).pack(side="right")
 
         table_card = _make_card(parent)
@@ -2123,10 +2240,13 @@ class App(tk.Tk):
         for idx, _, min_w, weight, _ in COL_SPEC:
             self._table_frame.columnconfigure(idx, minsize=min_w, weight=weight)
 
+        # Phase 11: table-header 8 px → 11 px (нижняя граница legibility);
+        # цвет FG_MUTED уже маркирует «вторичное», caps носит структуру.
         for idx, text, _, _, anchor in COL_SPEC:
-            tk.Label(self._table_frame, text=text, bg=CARD_BG, fg=FG_DIM,
-                      font=(sans_bold, 8), anchor=anchor).grid(
-                row=0, column=idx, padx=2, pady=(0, 6), sticky="ew")
+            tk.Label(self._table_frame, text=text, bg=CARD_BG, fg=FG_MUTED,
+                      font=(sans_bold, 11), anchor=anchor).grid(
+                row=0, column=idx, padx=theme.SP_XS, pady=(0, theme.SP_SM),
+                sticky="ew")
 
         self._next_row = 1
         # stub для совместимости с возможными внешними обращениями
@@ -2144,9 +2264,11 @@ class App(tk.Tk):
         # ACCENT-цвет текста — это даёт впечатление линии-подчёркивания.
         style.configure("CTkNotebook.TNotebook", background=CARD_BG,
                         borderwidth=0)
+        # Phase 11: вкладки 10 → 12 px, padding по шкале (SP_XL/SP_SM).
         style.configure("CTkNotebook.TNotebook.Tab",
-                        background=BG_DEEP, foreground=FG_DIM,
-                        padding=[18, 8], font=(sans_bold, 10),
+                        background=BG_DEEP, foreground=FG_MUTED,
+                        padding=[theme.SP_XL, theme.SP_SM],
+                        font=(sans_bold, 12),
                         borderwidth=0)
         style.map("CTkNotebook.TNotebook.Tab",
                    background=[("selected", CARD_BG),
@@ -2334,24 +2456,21 @@ class App(tk.Tk):
 
     # ── FOOTER ───────────────────────────────────────────────
     def _build_footer_stats_new(self, sans_reg):
-        bar = ctk.CTkFrame(self, fg_color=BG_DEEP, height=26)
-        bar.pack(fill="x", padx=18, pady=(2, 6))
+        # Phase 10 (UI Polish v2): футер 28 px, без v1.1.0 — версия
+        # уже в title-bar окна Windows и в About. Только статистика
+        # копировщика слева и uptime справа.
+        bar = ctk.CTkFrame(self, fg_color=BG_DEEP, height=28)
+        bar.pack(fill="x", padx=theme.SP_XL, pady=(theme.SP_XS, theme.SP_SM))
 
-        self.lbl_stats = tk.Label(bar, text="", bg=BG_DEEP, fg=FG_DIM,
-                                    font=(sans_reg, 10))
-        self.lbl_stats.pack(side="left")
-
-        # Uptime — справа, рядом с версией.
-        if _UPD_OK:
-            ctk.CTkLabel(bar, text=f"v{upd_mod.VERSION}",
-                          text_color=FG_MUTED,
-                          font=(sans_reg, 10)).pack(side="right")
+        self.lbl_stats = tk.Label(bar, text="", bg=BG_DEEP, fg=FG_MUTED,
+                                    font=(sans_reg, 11))
+        self.lbl_stats.pack(side="left", padx=(theme.SP_SM, 0))
 
         self._uptime_start = time.time()
         self.lbl_uptime = tk.Label(bar, text="uptime 00:00",
                                     bg=BG_DEEP, fg=FG_MUTED,
-                                    font=(sans_reg, 10))
-        self.lbl_uptime.pack(side="right", padx=(0, 14))
+                                    font=(sans_reg, 11))
+        self.lbl_uptime.pack(side="right", padx=(0, theme.SP_SM))
         self._tick_uptime()
 
     def _tick_uptime(self):
