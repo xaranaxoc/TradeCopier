@@ -237,7 +237,13 @@ class SymbolPickerDialog(tk.Toplevel):
         pw2, py2 = parent.winfo_width(), parent.winfo_height()
         w = ui_scaling.scale(300)
         h = ui_scaling.scale(380)
-        self.geometry(f"{w}x{h}+{pw + (pw2 - w) // 2}+{py + (py2 - h) // 2}")
+        x = pw + (pw2 - w) // 2
+        y = py + (py2 - h) // 2
+        # Clamp into the work area of the parent's monitor so the dialog never
+        # opens off-screen on multi-monitor setups or tiny laptops.
+        wa = ui_scaling.get_work_area_for_window(parent)
+        x, y, w, h = ui_scaling.clamp_to_work_area(x, y, w, h, wa)
+        self.geometry(f"{w}x{h}+{x}+{y}")
 
     def _build(self):
         frm = tk.Frame(self, bg=BG)
@@ -326,7 +332,11 @@ class SlaveDialog(tk.Toplevel):
         pw, py = parent.winfo_rootx(), parent.winfo_rooty()
         pw2, py2 = parent.winfo_width(), parent.winfo_height()
         w, h = self.winfo_width(), self.winfo_height()
-        self.geometry(f"+{pw + (pw2 - w) // 2}+{py + (py2 - h) // 2}")
+        x = pw + (pw2 - w) // 2
+        y = py + (py2 - h) // 2
+        wa = ui_scaling.get_work_area_for_window(parent)
+        x, y, w, h = ui_scaling.clamp_to_work_area(x, y, w, h, wa)
+        self.geometry(f"{w}x{h}+{x}+{y}")
 
     def _lbl(self, parent, text, **kw):
         return tk.Label(parent, text=text, bg=BG, fg=FG_LABEL, font=FONT_SM, **kw)
@@ -1065,9 +1075,15 @@ class ActivationWindow(tk.Toplevel):
         self.update_idletasks()
         w = self.winfo_width()
         h = self.winfo_height()
-        sw = self.winfo_screenwidth()
-        sh = self.winfo_screenheight()
-        self.geometry(f"+{sw // 2 - w // 2}+{sh // 2 - h // 2}")
+        # Use the work area of the parent monitor (multi-monitor safe) instead
+        # of the absolute screen origin, which lands the dialog on the primary
+        # display even when the parent is on a secondary one.
+        wa = ui_scaling.get_work_area_for_window(self.master or self)
+        wl, wt, wr, wb = wa
+        x = wl + ((wr - wl) - w) // 2
+        y = wt + ((wb - wt) - h) // 2
+        x, y, w, h = ui_scaling.clamp_to_work_area(x, y, w, h, wa)
+        self.geometry(f"+{x}+{y}")
 
     def _lbl(self, parent, text, **kw):
         return tk.Label(parent, text=text, bg=BG_DEEP, fg=FG_LABEL, font=FONT_SM, **kw)
@@ -1272,9 +1288,13 @@ class SettingsDialog(tk.Toplevel):
         self.update_idletasks()
         w = self.winfo_reqwidth()
         h = self.winfo_reqheight()
-        x = parent.winfo_x() + (parent.winfo_width() - w) // 2
-        y = parent.winfo_y() + (parent.winfo_height() - h) // 2
-        self.geometry(f"+{x}+{y}")
+        # Use rootx/rooty (screen coords) instead of x/y (parent-relative) and
+        # clamp into parent's monitor so the dialog never opens off-screen.
+        x = parent.winfo_rootx() + (parent.winfo_width() - w) // 2
+        y = parent.winfo_rooty() + (parent.winfo_height() - h) // 2
+        wa = ui_scaling.get_work_area_for_window(parent)
+        x, y, w, h = ui_scaling.clamp_to_work_area(x, y, w, h, wa)
+        self.geometry(f"{w}x{h}+{x}+{y}")
 
     def _select(self, idx):
         old_name = self._ent_name.get().strip()
