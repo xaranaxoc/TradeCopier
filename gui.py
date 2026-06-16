@@ -1003,7 +1003,7 @@ class TradesTable(tk.Frame):
         style.theme_use("clam")
         style.configure("T.Treeview", background=BG_ROW, foreground=FG,
                         fieldbackground=BG_ROW, font=FONT_MONO_SM,
-                        rowheight=17, borderwidth=0)
+                        rowheight=ui_scaling.scale(17), borderwidth=0)
         style.configure("T.Treeview.Heading", background=BG_INPUT, foreground=FG_DIM,
                         font=FONT_XS, borderwidth=0, relief="flat")
         style.map("T.Treeview", background=[("selected", ACCENT)],
@@ -1014,7 +1014,8 @@ class TradesTable(tk.Frame):
                                   style="T.Treeview", height=6)
         for col, hdr, w in zip(self.COLS, self.HEADERS, self.WIDTHS):
             self.tree.heading(col, text=hdr, anchor="w")
-            self.tree.column(col, width=w, minwidth=w, anchor="w", stretch=True)
+            sw = ui_scaling.scale(w)
+            self.tree.column(col, width=sw, minwidth=sw, anchor="w", stretch=True)
 
         sb = ttk.Scrollbar(self, orient="vertical", command=self.tree.yview)
         self.tree.configure(yscrollcommand=sb.set)
@@ -1611,10 +1612,11 @@ class App(tk.Tk):
         self._paned.pack(fill="both", expand=True, padx=14, pady=2)
 
         self._table_frame = tk.Frame(self._paned, bg=BG_DEEP)
-        self._paned.add(self._table_frame, minsize=80, height=200)
+        self._paned.add(self._table_frame, minsize=ui_scaling.scale(80),
+                        height=ui_scaling.scale(200))
 
         for idx, _, min_w, weight, _ in COL_SPEC:
-            self._table_frame.columnconfigure(idx, minsize=min_w, weight=weight)
+            self._table_frame.columnconfigure(idx, minsize=ui_scaling.scale(min_w), weight=weight)
 
         for idx, text, _, _, anchor in COL_SPEC:
             lbl_h = tk.Label(self._table_frame, text=text, bg=BG_DEEP, fg=FG_DIM,
@@ -1645,7 +1647,8 @@ class App(tk.Tk):
                   foreground=[("selected", FG)])
 
         nb_frame = tk.Frame(self._paned, bg=BG_DEEP)
-        self._paned.add(nb_frame, minsize=60, height=180)
+        self._paned.add(nb_frame, minsize=ui_scaling.scale(60),
+                        height=ui_scaling.scale(180))
 
         self.notebook = ttk.Notebook(nb_frame, style="TNotebook")
         self.notebook.pack(fill="both", expand=True)
