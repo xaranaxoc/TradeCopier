@@ -1281,6 +1281,28 @@ class SettingsDialog(tk.Toplevel):
         btn_switch.pack(side="left")
         _bind_tip(btn_switch, "Сохранить и переключиться на профиль")
 
+        def open_config_folder():
+            try:
+                os.makedirs(APP_DATA_DIR, exist_ok=True)
+                # On Windows os.startfile on a directory opens it in Explorer
+                # and selects nothing. Pass the folder path itself so users
+                # land in the right directory and can spot config.json.
+                os.startfile(APP_DATA_DIR)
+            except Exception as e:
+                messagebox.showerror(
+                    "Ошибка",
+                    f"Не удалось открыть папку:\n{APP_DATA_DIR}\n\n{e}",
+                    parent=self,
+                )
+
+        btn_open_cfg = tk.Button(
+            btn_row, text="\U0001F4C2 Папка config", command=open_config_folder,
+            bg=BG_INPUT, fg=FG_DIM, relief="flat", font=FONT,
+            activebackground=BG_ROW_HOVER, cursor="hand2", padx=10, pady=4,
+        )
+        btn_open_cfg.pack(side="left", padx=(8, 0))
+        _bind_tip(btn_open_cfg, f"Открыть папку с config.json в проводнике\n({APP_DATA_DIR})")
+
         def check_updates():
             self.destroy()
             parent._check_update(force=True)
