@@ -39,6 +39,8 @@ try:
 except ImportError:
     _COPIER_OK = False
 
+import ui_scaling
+
 try:
     import license as lic_mod
     _LIC_OK = True
@@ -155,8 +157,18 @@ class _Tip:
                        font=("Segoe UI", 9), padx=8, pady=4)
         lbl.pack()
         tw.update_idletasks()
-        wx = widget.winfo_rootx() + widget.winfo_width() // 2 - tw.winfo_width() // 2
+        tw_w = tw.winfo_width()
+        tw_h = tw.winfo_height()
+        wx = widget.winfo_rootx() + widget.winfo_width() // 2 - tw_w // 2
         wy = widget.winfo_rooty() + widget.winfo_height() + 2
+        # Clamp into the work area of the widget's monitor so the tooltip
+        # never spills off-screen on small displays or when the parent sits
+        # near the right/bottom edge of a secondary monitor.
+        try:
+            wa = ui_scaling.get_work_area_for_window(widget)
+            wx, wy, _, _ = ui_scaling.clamp_to_work_area(wx, wy, tw_w, tw_h, wa)
+        except Exception:
+            pass
         tw.wm_geometry(f"+{wx}+{wy}")
         cls._active = tw
 
@@ -233,7 +245,15 @@ class SymbolPickerDialog(tk.Toplevel):
         self.update_idletasks()
         pw, py = parent.winfo_rootx(), parent.winfo_rooty()
         pw2, py2 = parent.winfo_width(), parent.winfo_height()
-        self.geometry(f"{300}x{380}+{pw + (pw2 - 300) // 2}+{py + (py2 - 380) // 2}")
+        w = ui_scaling.scale(300)
+        h = ui_scaling.scale(380)
+        x = pw + (pw2 - w) // 2
+        y = py + (py2 - h) // 2
+        # Clamp into the work area of the parent's monitor so the dialog never
+        # opens off-screen on multi-monitor setups or tiny laptops.
+        wa = ui_scaling.get_work_area_for_window(parent)
+        x, y, w, h = ui_scaling.clamp_to_work_area(x, y, w, h, wa)
+        self.geometry(f"{w}x{h}+{x}+{y}")
 
     def _build(self):
         frm = tk.Frame(self, bg=BG)
@@ -303,7 +323,13 @@ class SlaveDialog(tk.Toplevel):
         self._skip_suggest = True
         self._edit_id = (slave_data or {}).get("id", "")
         self.title("Настройки аккаунта")
-        self.resizable(False, False)
+        # Horizontal-only resize. The form is sized vertically to its content
+        # so vertical growth would just create empty space below the buttons;
+        # horizontally the user may want extra width for long symbol pairs
+        # ("US500.cash → SPX500") or terminal paths. minsize is set below from
+        # the layout's requested size so the dialog can never be shrunk
+        # smaller than what fits its widgets.
+        self.resizable(True, False)
         self.configure(bg=BG)
         self.withdraw()
         icon = ICON_CYAN if getattr(parent, '_trader', None) and parent._trader.is_running() else ICON_DEFAULT
@@ -321,8 +347,22 @@ class SlaveDialog(tk.Toplevel):
         self.update_idletasks()
         pw, py = parent.winfo_rootx(), parent.winfo_rooty()
         pw2, py2 = parent.winfo_width(), parent.winfo_height()
-        w, h = self.winfo_width(), self.winfo_height()
-        self.geometry(f"+{pw + (pw2 - w) // 2}+{py + (py2 - h) // 2}")
+        # Dialog is .withdraw()'n at this point, so winfo_width/height return
+        # 1×1. Use the layout's *requested* size instead, otherwise we set the
+        # geometry to "1x1+x+y" and the dialog opens as a tiny strip.
+        w = max(self.winfo_reqwidth(), self.winfo_width())
+        h = max(self.winfo_reqheight(), self.winfo_height())
+        # Lock minimum size to the requested size so user-resize can grow but
+        # never shrink below what fits the form fields.
+        try:
+            self.minsize(w, h)
+        except Exception:
+            pass
+        x = pw + (pw2 - w) // 2
+        y = py + (py2 - h) // 2
+        wa = ui_scaling.get_work_area_for_window(parent)
+        x, y, w, h = ui_scaling.clamp_to_work_area(x, y, w, h, wa)
+        self.geometry(f"{w}x{h}+{x}+{y}")
 
     def _lbl(self, parent, text, **kw):
         return tk.Label(parent, text=text, bg=BG, fg=FG_LABEL, font=FONT_SM, **kw)
@@ -346,6 +386,10 @@ class SlaveDialog(tk.Toplevel):
         pad = {"padx": 12, "pady": 3}
         frm_top = tk.Frame(self, bg=BG)
         frm_top.pack(fill="x", **pad)
+        # Make the input column take all extra horizontal space when the user
+        # widens the dialog (so the "Имя" / "terminal64.exe" entries stretch
+        # instead of leaving an empty strip on the right).
+        frm_top.columnconfigure(1, weight=1)
 
         self._lbl(frm_top, "Имя").grid(row=0, column=0, sticky="w", pady=2)
         self.var_name = tk.StringVar(value=data.get("name", ""))
@@ -571,7 +615,10 @@ class SlaveDialog(tk.Toplevel):
         row_frame.pack(fill="x", pady=1)
         var_master = tk.StringVar(value=master_sym)
         var_slave = tk.StringVar(value=slave_sym)
-        self._ent(row_frame, var_master, 8).pack(side="left")
+        # width=8 sets the natural request size; fill+expand lets the entries
+        # grow horizontally when the dialog is widened (long symbol names like
+        # "EURUSD.r" or "US500.cash" become fully visible).
+        self._ent(row_frame, var_master, 8).pack(side="left", fill="x", expand=True)
 
         var_master.trace_add("write", lambda *_: self._auto_suggest(var_master, var_slave))
 
@@ -585,7 +632,7 @@ class SlaveDialog(tk.Toplevel):
         btn_pick_m.pack(side="left", padx=1)
         _bind_tip(btn_pick_m, "Выбрать символ мастера из списка")
         tk.Label(row_frame, text="\u2192", bg=BG, fg=FG_DIM, font=FONT_SM).pack(side="left", padx=3)
-        self._ent(row_frame, var_slave, 8).pack(side="left")
+        self._ent(row_frame, var_slave, 8).pack(side="left", fill="x", expand=True)
 
         def pick_s():
             dlg = SymbolPickerDialog(self, self._slave_symbols, "Слейв")
@@ -989,7 +1036,7 @@ class TradesTable(tk.Frame):
         style.theme_use("clam")
         style.configure("T.Treeview", background=BG_ROW, foreground=FG,
                         fieldbackground=BG_ROW, font=FONT_MONO_SM,
-                        rowheight=17, borderwidth=0)
+                        rowheight=ui_scaling.scale(17), borderwidth=0)
         style.configure("T.Treeview.Heading", background=BG_INPUT, foreground=FG_DIM,
                         font=FONT_XS, borderwidth=0, relief="flat")
         style.map("T.Treeview", background=[("selected", ACCENT)],
@@ -1000,7 +1047,8 @@ class TradesTable(tk.Frame):
                                   style="T.Treeview", height=6)
         for col, hdr, w in zip(self.COLS, self.HEADERS, self.WIDTHS):
             self.tree.heading(col, text=hdr, anchor="w")
-            self.tree.column(col, width=w, minwidth=w, anchor="w", stretch=True)
+            sw = ui_scaling.scale(w)
+            self.tree.column(col, width=sw, minwidth=sw, anchor="w", stretch=True)
 
         sb = ttk.Scrollbar(self, orient="vertical", command=self.tree.yview)
         self.tree.configure(yscrollcommand=sb.set)
@@ -1059,11 +1107,20 @@ class ActivationWindow(tk.Toplevel):
 
     def _center_on_screen(self):
         self.update_idletasks()
-        w = self.winfo_width()
-        h = self.winfo_height()
-        sw = self.winfo_screenwidth()
-        sh = self.winfo_screenheight()
-        self.geometry(f"+{sw // 2 - w // 2}+{sh // 2 - h // 2}")
+        # Fall back to requested size if the window isn't fully mapped yet —
+        # otherwise winfo_width()/height() can briefly return 1 and the dialog
+        # opens as a 1×1 strip.
+        w = max(self.winfo_reqwidth(), self.winfo_width())
+        h = max(self.winfo_reqheight(), self.winfo_height())
+        # Use the work area of the parent monitor (multi-monitor safe) instead
+        # of the absolute screen origin, which lands the dialog on the primary
+        # display even when the parent is on a secondary one.
+        wa = ui_scaling.get_work_area_for_window(self.master or self)
+        wl, wt, wr, wb = wa
+        x = wl + ((wr - wl) - w) // 2
+        y = wt + ((wb - wt) - h) // 2
+        x, y, w, h = ui_scaling.clamp_to_work_area(x, y, w, h, wa)
+        self.geometry(f"{w}x{h}+{x}+{y}")
 
     def _lbl(self, parent, text, **kw):
         return tk.Label(parent, text=text, bg=BG_DEEP, fg=FG_LABEL, font=FONT_SM, **kw)
@@ -1250,6 +1307,28 @@ class SettingsDialog(tk.Toplevel):
         btn_switch.pack(side="left")
         _bind_tip(btn_switch, "Сохранить и переключиться на профиль")
 
+        def open_config_folder():
+            try:
+                os.makedirs(APP_DATA_DIR, exist_ok=True)
+                # On Windows os.startfile on a directory opens it in Explorer
+                # and selects nothing. Pass the folder path itself so users
+                # land in the right directory and can spot config.json.
+                os.startfile(APP_DATA_DIR)
+            except Exception as e:
+                messagebox.showerror(
+                    "Ошибка",
+                    f"Не удалось открыть папку:\n{APP_DATA_DIR}\n\n{e}",
+                    parent=self,
+                )
+
+        btn_open_cfg = tk.Button(
+            btn_row, text="\U0001F4C2 Папка config", command=open_config_folder,
+            bg=BG_INPUT, fg=FG_DIM, relief="flat", font=FONT,
+            activebackground=BG_ROW_HOVER, cursor="hand2", padx=10, pady=4,
+        )
+        btn_open_cfg.pack(side="left", padx=(8, 0))
+        _bind_tip(btn_open_cfg, f"Открыть папку с config.json в проводнике\n({APP_DATA_DIR})")
+
         def check_updates():
             self.destroy()
             parent._check_update(force=True)
@@ -1268,9 +1347,13 @@ class SettingsDialog(tk.Toplevel):
         self.update_idletasks()
         w = self.winfo_reqwidth()
         h = self.winfo_reqheight()
-        x = parent.winfo_x() + (parent.winfo_width() - w) // 2
-        y = parent.winfo_y() + (parent.winfo_height() - h) // 2
-        self.geometry(f"+{x}+{y}")
+        # Use rootx/rooty (screen coords) instead of x/y (parent-relative) and
+        # clamp into parent's monitor so the dialog never opens off-screen.
+        x = parent.winfo_rootx() + (parent.winfo_width() - w) // 2
+        y = parent.winfo_rooty() + (parent.winfo_height() - h) // 2
+        wa = ui_scaling.get_work_area_for_window(parent)
+        x, y, w, h = ui_scaling.clamp_to_work_area(x, y, w, h, wa)
+        self.geometry(f"{w}x{h}+{x}+{y}")
 
     def _select(self, idx):
         old_name = self._ent_name.get().strip()
@@ -1295,11 +1378,22 @@ class SettingsDialog(tk.Toplevel):
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
+        # Configure Tk to the current display DPI so Hi-DPI users get crisp
+        # rendering instead of OS bitmap-scaling. DPI awareness itself is
+        # enabled in __main__ before this Tk root is created.
+        ui_scaling.init_root_scaling(self)
         self.title(f"FTH Trade Copier v{upd_mod.VERSION}" if _UPD_OK else "FTH Trade Copier")
         self.configure(bg=BG_DEEP)
         self.resizable(True, True)
-        self.minsize(1100, 720)
-        self.geometry("1140x760")
+        # Adaptive initial geometry: 78% of the work area on the monitor under
+        # the cursor, clamped to a sensible range and DPI-scaled. minsize is
+        # lowered so 1366x768 laptops (~728 px usable height) actually fit.
+        work_area = ui_scaling.get_cursor_work_area(self)
+        w, h, x, y = ui_scaling.compute_initial_geometry(
+            work_area, frac=0.78, min_w=960, min_h=640, max_w=1400, max_h=900
+        )
+        self.minsize(ui_scaling.scale(960), ui_scaling.scale(640))
+        self.geometry(f"{w}x{h}+{x}+{y}")
         if os.path.exists(ICON_DEFAULT):
             self.iconbitmap(ICON_DEFAULT)
             self.wm_iconbitmap(ICON_DEFAULT)
@@ -1313,9 +1407,13 @@ class App(tk.Tk):
         self._tray_icon = None
         self._active_profile = 0
         self._profiles: List[Dict] = []
+        self._window_state: Dict = {}
 
         self._build_ui()
         self._load_config()
+        # _load_config populated self._window_state from config.json (if any).
+        # Apply it after _build_ui so the PanedWindow exists for sash restore.
+        self._apply_window_state()
         self._start_tray()
         self._schedule_check()
         self._bind_paste()
@@ -1572,10 +1670,11 @@ class App(tk.Tk):
         self._paned.pack(fill="both", expand=True, padx=14, pady=2)
 
         self._table_frame = tk.Frame(self._paned, bg=BG_DEEP)
-        self._paned.add(self._table_frame, minsize=80, height=200)
+        self._paned.add(self._table_frame, minsize=ui_scaling.scale(80),
+                        height=ui_scaling.scale(200))
 
         for idx, _, min_w, weight, _ in COL_SPEC:
-            self._table_frame.columnconfigure(idx, minsize=min_w, weight=weight)
+            self._table_frame.columnconfigure(idx, minsize=ui_scaling.scale(min_w), weight=weight)
 
         for idx, text, _, _, anchor in COL_SPEC:
             lbl_h = tk.Label(self._table_frame, text=text, bg=BG_DEEP, fg=FG_DIM,
@@ -1606,7 +1705,8 @@ class App(tk.Tk):
                   foreground=[("selected", FG)])
 
         nb_frame = tk.Frame(self._paned, bg=BG_DEEP)
-        self._paned.add(nb_frame, minsize=60, height=180)
+        self._paned.add(nb_frame, minsize=ui_scaling.scale(60),
+                        height=ui_scaling.scale(180))
 
         self.notebook = ttk.Notebook(nb_frame, style="TNotebook")
         self.notebook.pack(fill="both", expand=True)
@@ -2290,12 +2390,85 @@ class App(tk.Tk):
         self._profiles[self._active_profile].update(self._build_profile())
         if "name" not in self._profiles[self._active_profile]:
             self._profiles[self._active_profile]["name"] = f"Профиль {self._active_profile + 1}"
+        self._capture_window_state()
         return {
             "active_profile": self._active_profile,
             "profiles": self._profiles,
             "poll_interval_seconds": 1,
             "min_lot_mode": self._min_lot_mode,
+            "window": self._window_state,
         }
+
+    # ── Window state persistence ────────────────────────────────
+    def _capture_window_state(self) -> None:
+        """Snapshot current main-window geometry/zoom/sash into self._window_state."""
+        try:
+            geom = self.geometry()
+            try:
+                st = self.state()
+            except Exception:
+                st = "normal"
+            sash_y = None
+            try:
+                paned = getattr(self, "_paned", None)
+                if paned is not None:
+                    coord = paned.sash_coord(0)
+                    if coord:
+                        sash_y = int(coord[1])
+            except Exception:
+                sash_y = None
+            # If currently zoomed, geometry() reports the maximised size — keep the
+            # last known "normal" geometry so we restore to a sensible window when
+            # the user un-maximises later.
+            if st == "zoomed":
+                prev = (self._window_state or {}).get("geometry")
+                if prev:
+                    geom = prev
+            self._window_state = {
+                "geometry": geom,
+                "zoomed": st == "zoomed",
+                "sash_y": sash_y,
+            }
+        except Exception:
+            # Don't let UI state capture ever break config save.
+            pass
+
+    def _apply_window_state(self) -> None:
+        """Apply self._window_state (geometry/zoom/sash) restored from config."""
+        st = getattr(self, "_window_state", None) or {}
+        import re
+        geom = st.get("geometry")
+        if isinstance(geom, str):
+            m = re.match(r"^(\d+)x(\d+)([+\-]\d+)([+\-]\d+)$", geom)
+            if m:
+                try:
+                    w = int(m.group(1)); h = int(m.group(2))
+                    x = int(m.group(3)); y = int(m.group(4))
+                    wa = ui_scaling.get_cursor_work_area(self)
+                    x, y, w, h = ui_scaling.clamp_to_work_area(x, y, w, h, wa)
+                    mw = ui_scaling.scale(960)
+                    mh = ui_scaling.scale(640)
+                    w = max(w, mw); h = max(h, mh)
+                    self.geometry(f"{w}x{h}+{x}+{y}")
+                except Exception:
+                    pass
+        if st.get("zoomed"):
+            try:
+                self.state("zoomed")
+            except Exception:
+                pass
+        sash_y = st.get("sash_y")
+        if isinstance(sash_y, int) and sash_y > 0:
+            paned = getattr(self, "_paned", None)
+            if paned is not None:
+                # Defer to after layout finishes, otherwise sash_place is ignored.
+                self.after(80, lambda y=sash_y: self._safe_set_sash(y))
+
+    def _safe_set_sash(self, y: int) -> None:
+        try:
+            self._paned.sash_place(0, 0, int(y))
+        except Exception:
+            pass
 
     def _save_config(self):
         try:
@@ -2334,6 +2507,9 @@ class App(tk.Tk):
             }
 
         self._min_lot_mode = cfg.get("min_lot_mode", False)
+        win = cfg.get("window")
+        if isinstance(win, dict):
+            self._window_state = win
         self._load_active_profile()
         self._update_slave_count()
 
@@ -2403,6 +2579,8 @@ def _activate_existing():
 
 
 if __name__ == "__main__":
+    # Must run BEFORE any Tk window is created so Windows doesn't bitmap-scale us.
+    ui_scaling.enable_dpi_awareness()
     mutex = ctypes.windll.kernel32.CreateMutexW(None, False, _MUTEX_NAME)
     already_exists = ctypes.windll.kernel32.GetLastError() == 183
     if already_exists:
