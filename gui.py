@@ -323,7 +323,10 @@ class SlaveDialog(tk.Toplevel):
         self._skip_suggest = True
         self._edit_id = (slave_data or {}).get("id", "")
         self.title("Настройки аккаунта")
-        self.resizable(False, False)
+        # Allow user to resize if content doesn't fit (DPI-scaled fonts may
+        # push the dialog past short laptop screens). minsize is set below
+        # from the layout's requested size so nothing can be clipped.
+        self.resizable(True, True)
         self.configure(bg=BG)
         self.withdraw()
         icon = ICON_CYAN if getattr(parent, '_trader', None) and parent._trader.is_running() else ICON_DEFAULT
@@ -341,7 +344,17 @@ class SlaveDialog(tk.Toplevel):
         self.update_idletasks()
         pw, py = parent.winfo_rootx(), parent.winfo_rooty()
         pw2, py2 = parent.winfo_width(), parent.winfo_height()
-        w, h = self.winfo_width(), self.winfo_height()
+        # Dialog is .withdraw()'n at this point, so winfo_width/height return
+        # 1×1. Use the layout's *requested* size instead, otherwise we set the
+        # geometry to "1x1+x+y" and the dialog opens as a tiny strip.
+        w = max(self.winfo_reqwidth(), self.winfo_width())
+        h = max(self.winfo_reqheight(), self.winfo_height())
+        # Lock minimum size to the requested size so user-resize can grow but
+        # never shrink below what fits the form fields.
+        try:
+            self.minsize(w, h)
+        except Exception:
+            pass
         x = pw + (pw2 - w) // 2
         y = py + (py2 - h) // 2
         wa = ui_scaling.get_work_area_for_window(parent)
@@ -1084,8 +1097,11 @@ class ActivationWindow(tk.Toplevel):
 
     def _center_on_screen(self):
         self.update_idletasks()
-        w = self.winfo_width()
-        h = self.winfo_height()
+        # Fall back to requested size if the window isn't fully mapped yet —
+        # otherwise winfo_width()/height() can briefly return 1 and the dialog
+        # opens as a 1×1 strip.
+        w = max(self.winfo_reqwidth(), self.winfo_width())
+        h = max(self.winfo_reqheight(), self.winfo_height())
         # Use the work area of the parent monitor (multi-monitor safe) instead
         # of the absolute screen origin, which lands the dialog on the primary
         # display even when the parent is on a secondary one.
@@ -1094,7 +1110,7 @@ class ActivationWindow(tk.Toplevel):
         x = wl + ((wr - wl) - w) // 2
         y = wt + ((wb - wt) - h) // 2
         x, y, w, h = ui_scaling.clamp_to_work_area(x, y, w, h, wa)
-        self.geometry(f"+{x}+{y}")
+        self.geometry(f"{w}x{h}+{x}+{y}")
 
     def _lbl(self, parent, text, **kw):
         return tk.Label(parent, text=text, bg=BG_DEEP, fg=FG_LABEL, font=FONT_SM, **kw)
