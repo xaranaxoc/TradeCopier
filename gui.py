@@ -1675,8 +1675,11 @@ class App(tk.Tk):
         self._build_header_new(sans_reg, sans_bold, sans_black)
 
         # Тело
+        # Phase 10 (UI Polish v2): padding 16/10 → 20/16 — больше воздуха
+        # вокруг секций; стандарт Linear/Notion.
         body = ctk.CTkFrame(self, fg_color="transparent")
-        body.pack(fill="both", expand=True, padx=16, pady=(10, 4))
+        body.pack(fill="both", expand=True,
+                  padx=theme.SP_XL, pady=(theme.SP_LG, theme.SP_XS))
 
         # Phase 6: onboarding banner — показывается, если ни мастер,
         # ни слейвы ещё не настроены.
@@ -1811,7 +1814,7 @@ class App(tk.Tk):
         #   подпись с путём EXE справа от заголовка.
         # — пульс-полоса 1 px (раньше 3) — больше карточки, меньше шума.
         card = _make_card(parent, height=84)
-        card.pack(fill="x", pady=(0, theme.SP_MD))
+        card.pack(fill="x", pady=(0, theme.SP_LG))
         card.pack_propagate(False)
 
         # Phase 5/9: цветная полоса слева. 1 px вместо 3, повыше — slim accent.
@@ -1995,8 +1998,9 @@ class App(tk.Tk):
 
     # ── KPI ROW (Phase 5) ────────────────────────────────────
     def _build_kpi_row_new(self, parent, sans_reg, sans_bold):
+        # Phase 10: spacing scale — SP_LG (16) между KPI и таблицами.
         row = ctk.CTkFrame(parent, fg_color="transparent")
-        row.pack(fill="x", pady=(0, 14))
+        row.pack(fill="x", pady=(0, theme.SP_LG))
 
         self._kpi_labels = {}
         self._kpi_delta = {}
@@ -2431,24 +2435,21 @@ class App(tk.Tk):
 
     # ── FOOTER ───────────────────────────────────────────────
     def _build_footer_stats_new(self, sans_reg):
-        bar = ctk.CTkFrame(self, fg_color=BG_DEEP, height=26)
-        bar.pack(fill="x", padx=18, pady=(2, 6))
+        # Phase 10 (UI Polish v2): футер 28 px, без v1.1.0 — версия
+        # уже в title-bar окна Windows и в About. Только статистика
+        # копировщика слева и uptime справа.
+        bar = ctk.CTkFrame(self, fg_color=BG_DEEP, height=28)
+        bar.pack(fill="x", padx=theme.SP_XL, pady=(theme.SP_XS, theme.SP_SM))
 
-        self.lbl_stats = tk.Label(bar, text="", bg=BG_DEEP, fg=FG_DIM,
-                                    font=(sans_reg, 10))
-        self.lbl_stats.pack(side="left")
-
-        # Uptime — справа, рядом с версией.
-        if _UPD_OK:
-            ctk.CTkLabel(bar, text=f"v{upd_mod.VERSION}",
-                          text_color=FG_MUTED,
-                          font=(sans_reg, 10)).pack(side="right")
+        self.lbl_stats = tk.Label(bar, text="", bg=BG_DEEP, fg=FG_MUTED,
+                                    font=(sans_reg, 11))
+        self.lbl_stats.pack(side="left", padx=(theme.SP_SM, 0))
 
         self._uptime_start = time.time()
         self.lbl_uptime = tk.Label(bar, text="uptime 00:00",
                                     bg=BG_DEEP, fg=FG_MUTED,
-                                    font=(sans_reg, 10))
-        self.lbl_uptime.pack(side="right", padx=(0, 14))
+                                    font=(sans_reg, 11))
+        self.lbl_uptime.pack(side="right", padx=(0, theme.SP_SM))
         self._tick_uptime()
 
     def _tick_uptime(self):
