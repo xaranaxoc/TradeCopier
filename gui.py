@@ -1939,27 +1939,36 @@ class App(tk.Tk):
         lbl.pack(anchor="e", pady=(2, 0))
         return lbl
 
-    # ── ONBOARDING BANNER (Phase 6) ──────────────────────────
+    # ── ONBOARDING BANNER (Phase 6, restyled Phase 12) ───────
     def _build_onboarding_banner(self, parent, sans_reg, sans_bold):
-        """Лёгкая карточка приветствия для первого запуска."""
-        self._onboarding = _make_card(parent, height=86)
-        self._onboarding.pack(fill="x", pady=(0, 10))
+        """Лёгкая карточка приветствия для первого запуска.
+
+        Phase 12 (UI Polish v2): подняли набор подсказки, убрали
+        многострочный «1. 2. 3.» в одну строку, шрифты подняли к
+        12/13 px, отступы — по шкале spacing. По высоте 86 → 72:
+        баннер перестал доминировать над KPI-секцией.
+        """
+        self._onboarding = _make_card(parent, height=72)
+        self._onboarding.pack(fill="x", pady=(0, theme.SP_LG))
         self._onboarding.pack_propagate(False)
-        # cyan-полоска слева (как у master-карточки) для целостности.
-        strip = ctk.CTkFrame(self._onboarding, width=3, corner_radius=2,
+        # accent-полоска слева, как у master-карточки — 1 px (как Phase 9).
+        strip = ctk.CTkFrame(self._onboarding, width=1, corner_radius=1,
                               fg_color=ACCENT)
-        strip.place(relx=0, rely=0.18, relheight=0.64, x=8)
+        strip.place(relx=0, rely=0.18, relheight=0.64, x=6)
 
         inner = ctk.CTkFrame(self._onboarding, fg_color="transparent")
-        inner.pack(fill="both", expand=True, padx=18, pady=10)
+        inner.pack(fill="both", expand=True,
+                   padx=theme.SP_XL, pady=theme.SP_MD)
 
         icon_family = theme.pick_font(theme.ICON_PREFS)
-        icon_box = ctk.CTkFrame(inner, width=44, height=44,
-                                  corner_radius=22, fg_color=ACCENT_GLOW)
-        icon_box.pack(side="left", padx=(0, 14))
+        icon_box = ctk.CTkFrame(inner, width=theme.CTRL_H_LG,
+                                  height=theme.CTRL_H_LG,
+                                  corner_radius=theme.CTRL_H_LG // 2,
+                                  fg_color=ACCENT_GLOW)
+        icon_box.pack(side="left", padx=(0, theme.SP_LG))
         icon_box.pack_propagate(False)
-        tk.Label(icon_box, text=theme.ICON_PLAY, bg=ACCENT_GLOW,
-                  fg=ACCENT, font=(icon_family, 18)).pack(expand=True)
+        tk.Label(icon_box, text=theme.ICON_SPARKLE, bg=ACCENT_GLOW,
+                  fg=ACCENT, font=(icon_family, 16)).pack(expand=True)
 
         text_col = ctk.CTkFrame(inner, fg_color="transparent")
         text_col.pack(side="left", fill="both", expand=True)
@@ -1967,20 +1976,18 @@ class App(tk.Tk):
                   bg=CARD_BG, fg=FG, font=(sans_bold, 13),
                   anchor="w").pack(fill="x")
         tk.Label(text_col,
-                  text="1. Укажите путь к terminal64.exe мастера.   "
-                       "2. Добавьте хотя бы один слейв.   "
-                       "3. Нажмите «Старт» в шапке.",
-                  bg=CARD_BG, fg=FG_DIM, font=(sans_reg, 10),
-                  anchor="w").pack(fill="x", pady=(2, 0))
+                  text="Выберите terminal64.exe мастера, добавьте хотя "
+                       "бы один слейв и нажмите «Старт».",
+                  bg=CARD_BG, fg=FG_MUTED, font=(sans_reg, 12),
+                  anchor="w").pack(fill="x", pady=(theme.SP_XS, 0))
 
         btn_row = ctk.CTkFrame(inner, fg_color="transparent")
         btn_row.pack(side="right")
         PillButton(btn_row, "Выбрать мастера", variant="primary",
-                    icon=theme.ICON_FOLDER,
                     command=self._browse_master).pack(side="left",
-                                                       padx=(0, 6))
+                                                       padx=(0, theme.SP_SM))
         PillButton(btn_row, "Добавить слейв", variant="ghost",
-                    icon="+", command=self._add_slave).pack(side="left")
+                    command=self._add_slave).pack(side="left")
 
     def _update_onboarding_banner(self) -> None:
         if not hasattr(self, "_onboarding") or self._onboarding is None:
