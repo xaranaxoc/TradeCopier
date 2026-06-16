@@ -235,7 +235,9 @@ class SymbolPickerDialog(tk.Toplevel):
         self.update_idletasks()
         pw, py = parent.winfo_rootx(), parent.winfo_rooty()
         pw2, py2 = parent.winfo_width(), parent.winfo_height()
-        self.geometry(f"{300}x{380}+{pw + (pw2 - 300) // 2}+{py + (py2 - 380) // 2}")
+        w = ui_scaling.scale(300)
+        h = ui_scaling.scale(380)
+        self.geometry(f"{w}x{h}+{pw + (pw2 - w) // 2}+{py + (py2 - h) // 2}")
 
     def _build(self):
         frm = tk.Frame(self, bg=BG)
