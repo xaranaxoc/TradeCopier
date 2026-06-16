@@ -39,6 +39,8 @@ try:
 except ImportError:
     _COPIER_OK = False
 
+import ui_scaling
+
 try:
     import license as lic_mod
     _LIC_OK = True
@@ -1295,6 +1297,10 @@ class SettingsDialog(tk.Toplevel):
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
+        # Configure Tk to the current display DPI so Hi-DPI users get crisp
+        # rendering instead of OS bitmap-scaling. DPI awareness itself is
+        # enabled in __main__ before this Tk root is created.
+        ui_scaling.init_root_scaling(self)
         self.title(f"FTH Trade Copier v{upd_mod.VERSION}" if _UPD_OK else "FTH Trade Copier")
         self.configure(bg=BG_DEEP)
         self.resizable(True, True)
@@ -2403,6 +2409,8 @@ def _activate_existing():
 
 
 if __name__ == "__main__":
+    # Must run BEFORE any Tk window is created so Windows doesn't bitmap-scale us.
+    ui_scaling.enable_dpi_awareness()
     mutex = ctypes.windll.kernel32.CreateMutexW(None, False, _MUTEX_NAME)
     already_exists = ctypes.windll.kernel32.GetLastError() == 183
     if already_exists:
