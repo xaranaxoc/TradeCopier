@@ -1692,12 +1692,14 @@ class App(tk.Tk):
     # ── HEADER ────────────────────────────────────────────────
     def _build_header_new(self, sans_reg, sans_bold, sans_black):
         # Phase 2: компактнее (76→64px) + StatusPill в центре.
-        hdr = ctk.CTkFrame(self, fg_color=BG_HEADER, corner_radius=0, height=64)
+        # Phase 8 (UI Polish v2): 64→56 px, ровно три зоны
+        # (brand · status · actions), отступы из шкалы spacing.
+        hdr = ctk.CTkFrame(self, fg_color=BG_HEADER, corner_radius=0, height=56)
         hdr.pack(fill="x")
         hdr.pack_propagate(False)
 
         left = ctk.CTkFrame(hdr, fg_color="transparent")
-        left.pack(side="left", padx=18, pady=10)
+        left.pack(side="left", padx=theme.SP_XL, pady=theme.SP_SM)
 
         logo_path = os.path.join(IMG_DIR, "convertico-fth_32x32.png")
         if os.path.exists(logo_path):
@@ -1730,7 +1732,7 @@ class App(tk.Tk):
         self.status_pill.pack()
 
         right = ctk.CTkFrame(hdr, fg_color="transparent")
-        right.pack(side="right", padx=14, pady=10)
+        right.pack(side="right", padx=theme.SP_XL, pady=theme.SP_SM)
 
         # Phase 7 (UI Polish v2):
         # 1. Phosphor codepoints перевели на ПРОВЕРЕННЫЕ значения
@@ -1742,18 +1744,24 @@ class App(tk.Tk):
         #    стали шире (>= 108) — primary тяжелее служебных IconButton.
         # При side="right" последний упакованный окажется самым левым,
         # поэтому порядок ниже = инверсия визуальной последовательности.
+        # Phase 8: служебные icon-кнопки идут вплотную друг к другу,
+        # после небольшого вертикального разделителя — отделяем
+        # primary actions от служебных.
         self.btn_info = IconButton(right, icon=theme.ICON_INFO,
                                      command=self._toggle_info)
-        self.btn_info.pack(side="right", padx=(theme.SP_SM, 0))
+        self.btn_info.pack(side="right", padx=(theme.SP_XS, 0))
         _bind_tip(self.btn_info, "Режим подсказок")
 
         btn_settings = IconButton(right, icon=theme.ICON_GEAR,
                                    command=self._open_settings)
-        btn_settings.pack(side="right", padx=(theme.SP_SM, 0))
+        btn_settings.pack(side="right", padx=(theme.SP_MD, 0))
         _bind_tip(btn_settings, "Настройки приложения")
 
+        sep2 = ctk.CTkFrame(right, fg_color=BORDER, width=1, height=20)
+        sep2.pack(side="right", padx=(theme.SP_MD, 0), pady=theme.SP_SM)
+
         terms = self._header_group(right, "ТЕРМИНАЛЫ", sans_bold)
-        terms.pack(side="right", padx=(theme.SP_LG, 0))
+        terms.pack(side="right", padx=(theme.SP_MD, 0))
         btn_launch = PillButton(terms.row, "Запустить",
                                  variant="primary", command=self._launch_all)
         btn_launch.pack(side="left", padx=theme.SP_XS)
@@ -1763,8 +1771,13 @@ class App(tk.Tk):
         btn_shutdown.pack(side="left", padx=theme.SP_XS)
         _bind_tip(btn_shutdown, "Завершить процессы всех терминалов")
 
+        # Phase 8: слабый вертикальный разделитель между двумя смысловыми
+        # группами primary-кнопок — заменяет caps-метки, не добавляя шума.
+        sep1 = ctk.CTkFrame(right, fg_color=BORDER, width=1, height=20)
+        sep1.pack(side="right", padx=(theme.SP_MD, 0), pady=theme.SP_SM)
+
         engine = self._header_group(right, "КОПИТРЕЙДЕР", sans_bold)
-        engine.pack(side="right", padx=(theme.SP_LG, 0))
+        engine.pack(side="right", padx=(0, 0))
         self.btn_start = PillButton(engine.row, "Старт",
                                      variant="primary", command=self._start)
         self.btn_start.pack(side="left", padx=theme.SP_XS)
@@ -1776,9 +1789,13 @@ class App(tk.Tk):
         self.btn_stop.configure(state="disabled")
 
     def _header_group(self, parent, title, sans_bold):
+        # Phase 8 (UI Polish v2): убрали микро-подпись (8 px caps
+        # «КОПИТРЕЙДЕР»/«ТЕРМИНАЛЫ»). Текст самих кнопок уже несёт
+        # семантику, лишний caps-лейбл — визуальный шум. Группа теперь
+        # это просто строка; title-аргумент сохранён для
+        # обратной совместимости вызывающих.
+        del title  # noqa: F841 — intentionally unused
         wrap = ctk.CTkFrame(parent, fg_color="transparent")
-        ctk.CTkLabel(wrap, text=title, text_color=FG_DIM,
-                     font=(sans_bold, 8)).pack(anchor="w", padx=4)
         row = ctk.CTkFrame(wrap, fg_color="transparent")
         row.pack(fill="x")
         wrap.row = row  # type: ignore[attr-defined]
