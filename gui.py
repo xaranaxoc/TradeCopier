@@ -1724,8 +1724,9 @@ class App(tk.Tk):
         ctk.CTkLabel(title_box, text="FTH Trade Copier",
                      text_color=FG, font=(sans_bold, 15),
                      anchor="w").pack(anchor="w")
+        # Phase 11: subtitle 10 → 11, FG_DIM → FG_MUTED.
         ctk.CTkLabel(title_box, text="MT5 · Local copy engine",
-                     text_color=FG_DIM, font=(sans_reg, 10),
+                     text_color=FG_MUTED, font=(sans_reg, 11),
                      anchor="w").pack(anchor="w")
 
         # Центр: статус-плюшка
@@ -1930,8 +1931,9 @@ class App(tk.Tk):
         else:
             wrap.grid(row=0, column=col, padx=(0, 14) if col < 3 else 0,
                       sticky="e")
-        tk.Label(wrap, text=label, bg=CARD_BG, fg=FG_DIM,
-                  font=(sans_reg, 9)).pack(anchor="e")
+        # Phase 11: KPI mini-label 9 → 11, FG_DIM → FG_MUTED.
+        tk.Label(wrap, text=label, bg=CARD_BG, fg=FG_MUTED,
+                  font=(sans_reg, 11)).pack(anchor="e")
         lbl = tk.Label(wrap, text=value, bg=CARD_BG, fg=color,
                         font=(sans_bold, 13))
         lbl.pack(anchor="e", pady=(2, 0))
@@ -2028,8 +2030,9 @@ class App(tk.Tk):
             inner = ctk.CTkFrame(card, fg_color="transparent")
             inner.pack(fill="both", expand=True, padx=18, pady=10)
 
-            tk.Label(inner, text=title.upper(), bg=CARD_BG, fg=FG_DIM,
-                      font=(sans_reg, 9), anchor="w").pack(fill="x")
+            # Phase 11: KPI title 9 → 11, FG_DIM → FG_MUTED.
+            tk.Label(inner, text=title.upper(), bg=CARD_BG, fg=FG_MUTED,
+                      font=(sans_bold, 11), anchor="w").pack(fill="x")
 
             value_row = tk.Frame(inner, bg=CARD_BG)
             value_row.pack(fill="x", pady=(2, 0))
@@ -2038,9 +2041,11 @@ class App(tk.Tk):
             lbl.pack(side="left")
             self._kpi_labels[key] = lbl
 
-            delta = tk.Label(value_row, text="", bg=CARD_BG, fg=FG_DIM,
-                              font=(sans_bold, 10), anchor="w")
-            delta.pack(side="left", padx=(8, 0), pady=(6, 0))
+            # Phase 11: KPI delta 10 → 11, padding по шкале.
+            delta = tk.Label(value_row, text="", bg=CARD_BG, fg=FG_MUTED,
+                              font=(sans_bold, 11), anchor="w")
+            delta.pack(side="left", padx=(theme.SP_SM, 0),
+                       pady=(theme.SP_XS + 2, 0))
             self._kpi_delta[key] = delta
 
             # Sparkline снизу справа карточки.
@@ -2201,18 +2206,22 @@ class App(tk.Tk):
     # ── SLAVES SECTION ───────────────────────────────────────
     def _build_slaves_section_new(self, parent, sans_reg, sans_bold):
         header = ctk.CTkFrame(parent, fg_color="transparent")
-        header.pack(fill="x", pady=(0, 6))
+        header.pack(fill="x", pady=(0, theme.SP_MD))
 
-        ctk.CTkLabel(header, text="SLAVE ACCOUNTS", text_color=FG_LABEL,
-                     font=(sans_bold, 11)).pack(side="left")
+        # Phase 11: каноничный section-header — sentence-case заголовок
+        # 13 px FG + caption-счётчик FG_MUTED 11 px справа. Кнопки —
+        # одинаковая 36-px primary-высота, отступ по шкале.
+        ctk.CTkLabel(header, text="Подчинённые счета", text_color=FG,
+                     font=(sans_bold, 13)).pack(side="left")
         self.lbl_slave_count = tk.Label(header, text="0/10",
-                                          bg=BG_DEEP, fg=FG_DIM,
-                                          font=(sans_bold, 10))
-        self.lbl_slave_count.pack(side="left", padx=(10, 0))
+                                          bg=BG_DEEP, fg=FG_MUTED,
+                                          font=(sans_reg, 11))
+        self.lbl_slave_count.pack(side="left", padx=(theme.SP_SM, 0))
 
-        PillButton(header, "✖ Закрыть сделки", variant="danger",
-                    command=self._close_all_open).pack(side="right", padx=(8, 0))
-        PillButton(header, "+ Аккаунт", variant="primary",
+        PillButton(header, "Закрыть сделки", variant="danger",
+                    command=self._close_all_open).pack(side="right",
+                                                       padx=(theme.SP_SM, 0))
+        PillButton(header, "Добавить счёт", variant="primary",
                     command=self._add_slave).pack(side="right")
 
         table_card = _make_card(parent)
@@ -2224,10 +2233,13 @@ class App(tk.Tk):
         for idx, _, min_w, weight, _ in COL_SPEC:
             self._table_frame.columnconfigure(idx, minsize=min_w, weight=weight)
 
+        # Phase 11: table-header 8 px → 11 px (нижняя граница legibility);
+        # цвет FG_MUTED уже маркирует «вторичное», caps носит структуру.
         for idx, text, _, _, anchor in COL_SPEC:
-            tk.Label(self._table_frame, text=text, bg=CARD_BG, fg=FG_DIM,
-                      font=(sans_bold, 8), anchor=anchor).grid(
-                row=0, column=idx, padx=2, pady=(0, 6), sticky="ew")
+            tk.Label(self._table_frame, text=text, bg=CARD_BG, fg=FG_MUTED,
+                      font=(sans_bold, 11), anchor=anchor).grid(
+                row=0, column=idx, padx=theme.SP_XS, pady=(0, theme.SP_SM),
+                sticky="ew")
 
         self._next_row = 1
         # stub для совместимости с возможными внешними обращениями
@@ -2245,9 +2257,11 @@ class App(tk.Tk):
         # ACCENT-цвет текста — это даёт впечатление линии-подчёркивания.
         style.configure("CTkNotebook.TNotebook", background=CARD_BG,
                         borderwidth=0)
+        # Phase 11: вкладки 10 → 12 px, padding по шкале (SP_XL/SP_SM).
         style.configure("CTkNotebook.TNotebook.Tab",
-                        background=BG_DEEP, foreground=FG_DIM,
-                        padding=[18, 8], font=(sans_bold, 10),
+                        background=BG_DEEP, foreground=FG_MUTED,
+                        padding=[theme.SP_XL, theme.SP_SM],
+                        font=(sans_bold, 12),
                         borderwidth=0)
         style.map("CTkNotebook.TNotebook.Tab",
                    background=[("selected", CARD_BG),
