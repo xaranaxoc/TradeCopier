@@ -157,8 +157,18 @@ class _Tip:
                        font=("Segoe UI", 9), padx=8, pady=4)
         lbl.pack()
         tw.update_idletasks()
-        wx = widget.winfo_rootx() + widget.winfo_width() // 2 - tw.winfo_width() // 2
+        tw_w = tw.winfo_width()
+        tw_h = tw.winfo_height()
+        wx = widget.winfo_rootx() + widget.winfo_width() // 2 - tw_w // 2
         wy = widget.winfo_rooty() + widget.winfo_height() + 2
+        # Clamp into the work area of the widget's monitor so the tooltip
+        # never spills off-screen on small displays or when the parent sits
+        # near the right/bottom edge of a secondary monitor.
+        try:
+            wa = ui_scaling.get_work_area_for_window(widget)
+            wx, wy, _, _ = ui_scaling.clamp_to_work_area(wx, wy, tw_w, tw_h, wa)
+        except Exception:
+            pass
         tw.wm_geometry(f"+{wx}+{wy}")
         cls._active = tw
 
