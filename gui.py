@@ -1328,9 +1328,13 @@ class App(tk.Tk):
         self._tray_icon = None
         self._active_profile = 0
         self._profiles: List[Dict] = []
+        self._window_state: Dict = {}
 
         self._build_ui()
         self._load_config()
+        # _load_config populated self._window_state from config.json (if any).
+        # Apply it after _build_ui so the PanedWindow exists for sash restore.
+        self._apply_window_state()
         self._start_tray()
         self._schedule_check()
         self._bind_paste()
@@ -2305,12 +2309,85 @@ class App(tk.Tk):
         self._profiles[self._active_profile].update(self._build_profile())
         if "name" not in self._profiles[self._active_profile]:
             self._profiles[self._active_profile]["name"] = f"Профиль {self._active_profile + 1}"
+        self._capture_window_state()
         return {
             "active_profile": self._active_profile,
             "profiles": self._profiles,
             "poll_interval_seconds": 1,
             "min_lot_mode": self._min_lot_mode,
+            "window": self._window_state,
         }
+
+    # ── Window state persistence ────────────────────────────────
+    def _capture_window_state(self) -> None:
+        """Snapshot current main-window geometry/zoom/sash into self._window_state."""
+        try:
+            geom = self.geometry()
+            try:
+                st = self.state()
+            except Exception:
+                st = "normal"
+            sash_y = None
+            try:
+                paned = getattr(self, "_paned", None)
+                if paned is not None:
+                    coord = paned.sash_coord(0)
+                    if coord:
+                        sash_y = int(coord[1])
+            except Exception:
+                sash_y = None
+            # If currently zoomed, geometry() reports the maximised size — keep the
+            # last known "normal" geometry so we restore to a sensible window when
+            # the user un-maximises later.
+            if st == "zoomed":
+                prev = (self._window_state or {}).get("geometry")
+                if prev:
+                    geom = prev
+            self._window_state = {
+                "geometry": geom,
+                "zoomed": st == "zoomed",
+                "sash_y": sash_y,
+            }
+        except Exception:
+            # Don't let UI state capture ever break config save.
+            pass
+
+    def _apply_window_state(self) -> None:
+        """Apply self._window_state (geometry/zoom/sash) restored from config."""
+        st = getattr(self, "_window_state", None) or {}
+        import re
+        geom = st.get("geometry")
+        if isinstance(geom, str):
+            m = re.match(r"^(\d+)x(\d+)([+\-]\d+)([+\-]\d+)$", geom)
+            if m:
+                try:
+                    w = int(m.group(1)); h = int(m.group(2))
+                    x = int(m.group(3)); y = int(m.group(4))
+                    wa = ui_scaling.get_cursor_work_area(self)
+                    x, y, w, h = ui_scaling.clamp_to_work_area(x, y, w, h, wa)
+                    mw = ui_scaling.scale(960)
+                    mh = ui_scaling.scale(640)
+                    w = max(w, mw); h = max(h, mh)
+                    self.geometry(f"{w}x{h}+{x}+{y}")
+                except Exception:
+                    pass
+        if st.get("zoomed"):
+            try:
+                self.state("zoomed")
+            except Exception:
+                pass
+        sash_y = st.get("sash_y")
+        if isinstance(sash_y, int) and sash_y > 0:
+            paned = getattr(self, "_paned", None)
+            if paned is not None:
+                # Defer to after layout finishes, otherwise sash_place is ignored.
+                self.after(80, lambda y=sash_y: self._safe_set_sash(y))
+
+    def _safe_set_sash(self, y: int) -> None:
+        try:
+            self._paned.sash_place(0, 0, int(y))
+        except Exception:
+            pass
 
     def _save_config(self):
         try:
@@ -2349,6 +2426,9 @@ class App(tk.Tk):
             }
 
         self._min_lot_mode = cfg.get("min_lot_mode", False)
+        win = cfg.get("window")
+        if isinstance(win, dict):
+            self._window_state = win
         self._load_active_profile()
         self._update_slave_count()
 
