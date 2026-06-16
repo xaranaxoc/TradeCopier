@@ -323,10 +323,13 @@ class SlaveDialog(tk.Toplevel):
         self._skip_suggest = True
         self._edit_id = (slave_data or {}).get("id", "")
         self.title("Настройки аккаунта")
-        # Allow user to resize if content doesn't fit (DPI-scaled fonts may
-        # push the dialog past short laptop screens). minsize is set below
-        # from the layout's requested size so nothing can be clipped.
-        self.resizable(True, True)
+        # Horizontal-only resize. The form is sized vertically to its content
+        # so vertical growth would just create empty space below the buttons;
+        # horizontally the user may want extra width for long symbol pairs
+        # ("US500.cash → SPX500") or terminal paths. minsize is set below from
+        # the layout's requested size so the dialog can never be shrunk
+        # smaller than what fits its widgets.
+        self.resizable(True, False)
         self.configure(bg=BG)
         self.withdraw()
         icon = ICON_CYAN if getattr(parent, '_trader', None) and parent._trader.is_running() else ICON_DEFAULT
@@ -383,6 +386,10 @@ class SlaveDialog(tk.Toplevel):
         pad = {"padx": 12, "pady": 3}
         frm_top = tk.Frame(self, bg=BG)
         frm_top.pack(fill="x", **pad)
+        # Make the input column take all extra horizontal space when the user
+        # widens the dialog (so the "Имя" / "terminal64.exe" entries stretch
+        # instead of leaving an empty strip on the right).
+        frm_top.columnconfigure(1, weight=1)
 
         self._lbl(frm_top, "Имя").grid(row=0, column=0, sticky="w", pady=2)
         self.var_name = tk.StringVar(value=data.get("name", ""))
@@ -608,7 +615,10 @@ class SlaveDialog(tk.Toplevel):
         row_frame.pack(fill="x", pady=1)
         var_master = tk.StringVar(value=master_sym)
         var_slave = tk.StringVar(value=slave_sym)
-        self._ent(row_frame, var_master, 8).pack(side="left")
+        # width=8 sets the natural request size; fill+expand lets the entries
+        # grow horizontally when the dialog is widened (long symbol names like
+        # "EURUSD.r" or "US500.cash" become fully visible).
+        self._ent(row_frame, var_master, 8).pack(side="left", fill="x", expand=True)
 
         var_master.trace_add("write", lambda *_: self._auto_suggest(var_master, var_slave))
 
@@ -622,7 +632,7 @@ class SlaveDialog(tk.Toplevel):
         btn_pick_m.pack(side="left", padx=1)
         _bind_tip(btn_pick_m, "Выбрать символ мастера из списка")
         tk.Label(row_frame, text="\u2192", bg=BG, fg=FG_DIM, font=FONT_SM).pack(side="left", padx=3)
-        self._ent(row_frame, var_slave, 8).pack(side="left")
+        self._ent(row_frame, var_slave, 8).pack(side="left", fill="x", expand=True)
 
         def pick_s():
             dlg = SymbolPickerDialog(self, self._slave_symbols, "Слейв")
