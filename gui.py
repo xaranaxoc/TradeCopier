@@ -1306,8 +1306,15 @@ class App(tk.Tk):
         self.title(f"FTH Trade Copier v{upd_mod.VERSION}" if _UPD_OK else "FTH Trade Copier")
         self.configure(bg=BG_DEEP)
         self.resizable(True, True)
-        self.minsize(1100, 720)
-        self.geometry("1140x760")
+        # Adaptive initial geometry: 78% of the work area on the monitor under
+        # the cursor, clamped to a sensible range and DPI-scaled. minsize is
+        # lowered so 1366x768 laptops (~728 px usable height) actually fit.
+        work_area = ui_scaling.get_cursor_work_area(self)
+        w, h, x, y = ui_scaling.compute_initial_geometry(
+            work_area, frac=0.78, min_w=960, min_h=640, max_w=1400, max_h=900
+        )
+        self.minsize(ui_scaling.scale(960), ui_scaling.scale(640))
+        self.geometry(f"{w}x{h}+{x}+{y}")
         if os.path.exists(ICON_DEFAULT):
             self.iconbitmap(ICON_DEFAULT)
             self.wm_iconbitmap(ICON_DEFAULT)

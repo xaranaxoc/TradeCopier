@@ -111,6 +111,139 @@ def current_dpi() -> int:
     return _DPI
 
 
+def get_cursor_work_area(root=None):
+    """Return ``(left, top, right, bottom)`` work area (excluding taskbar) of
+    the monitor under the mouse cursor.
+
+    Falls back to the primary screen size reported by Tk if Windows APIs are
+    unavailable. ``root`` is only used for the Tk fallback.
+    """
+    if sys.platform.startswith("win"):
+        try:
+            user32 = ctypes.windll.user32
+
+            class POINT(ctypes.Structure):
+                _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
+
+            class RECT(ctypes.Structure):
+                _fields_ = [
+                    ("left", ctypes.c_long),
+                    ("top", ctypes.c_long),
+                    ("right", ctypes.c_long),
+                    ("bottom", ctypes.c_long),
+                ]
+
+            class MONITORINFO(ctypes.Structure):
+                _fields_ = [
+                    ("cbSize", ctypes.c_ulong),
+                    ("rcMonitor", RECT),
+                    ("rcWork", RECT),
+                    ("dwFlags", ctypes.c_ulong),
+                ]
+
+            pt = POINT()
+            if user32.GetCursorPos(ctypes.byref(pt)):
+                MONITOR_DEFAULTTONEAREST = 2
+                hmon = user32.MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST)
+                mi = MONITORINFO()
+                mi.cbSize = ctypes.sizeof(MONITORINFO)
+                if user32.GetMonitorInfoW(hmon, ctypes.byref(mi)):
+                    r = mi.rcWork
+                    return (r.left, r.top, r.right, r.bottom)
+        except (AttributeError, OSError):
+            pass
+    # Fallback to Tk's primary-screen size (no taskbar info).
+    if root is not None:
+        try:
+            return (0, 0, int(root.winfo_screenwidth()), int(root.winfo_screenheight()))
+        except Exception:
+            pass
+    return (0, 0, 1024, 768)
+
+
+def get_work_area_for_window(hwnd_or_root):
+    """Return work area for the monitor the given window is on.
+
+    Accepts a Tk widget (uses ``winfo_id``) or a raw HWND. Falls back to the
+    cursor monitor or primary screen.
+    """
+    hwnd = None
+    root = None
+    if isinstance(hwnd_or_root, int):
+        hwnd = hwnd_or_root
+    else:
+        root = hwnd_or_root
+        try:
+            hwnd = int(hwnd_or_root.winfo_id())
+        except Exception:
+            hwnd = None
+    if sys.platform.startswith("win") and hwnd:
+        try:
+            user32 = ctypes.windll.user32
+
+            class RECT(ctypes.Structure):
+                _fields_ = [
+                    ("left", ctypes.c_long),
+                    ("top", ctypes.c_long),
+                    ("right", ctypes.c_long),
+                    ("bottom", ctypes.c_long),
+                ]
+
+            class MONITORINFO(ctypes.Structure):
+                _fields_ = [
+                    ("cbSize", ctypes.c_ulong),
+                    ("rcMonitor", RECT),
+                    ("rcWork", RECT),
+                    ("dwFlags", ctypes.c_ulong),
+                ]
+
+            MONITOR_DEFAULTTONEAREST = 2
+            hmon = user32.MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST)
+            mi = MONITORINFO()
+            mi.cbSize = ctypes.sizeof(MONITORINFO)
+            if user32.GetMonitorInfoW(hmon, ctypes.byref(mi)):
+                r = mi.rcWork
+                return (r.left, r.top, r.right, r.bottom)
+        except (AttributeError, OSError):
+            pass
+    return get_cursor_work_area(root)
+
+
+def clamp_to_work_area(x, y, w, h, work_area):
+    """Clamp a window rect into a work area so it cannot fall off-screen."""
+    wl, wt, wr, wb = work_area
+    ww = max(1, wr - wl)
+    wh = max(1, wb - wt)
+    w = min(int(w), ww)
+    h = min(int(h), wh)
+    x = max(wl, min(int(x), wr - w))
+    y = max(wt, min(int(y), wb - h))
+    return x, y, w, h
+
+
+def compute_initial_geometry(work_area, frac=0.78, min_w=960, min_h=640,
+                             max_w=1400, max_h=900):
+    """Return ``(w, h, x, y)`` for an adaptive initial window centered in ``work_area``.
+
+    ``min_*``/``max_*`` are unscaled logical sizes; they get DPI-scaled here.
+    """
+    wl, wt, wr, wb = work_area
+    aw = max(1, wr - wl)
+    ah = max(1, wb - wt)
+    # Limit logical bounds by physical work area too.
+    mn_w = min(scale(min_w), aw - scale(16))
+    mn_h = min(scale(min_h), ah - scale(16))
+    mx_w = min(scale(max_w), aw - scale(16))
+    mx_h = min(scale(max_h), ah - scale(16))
+    w = int(aw * frac)
+    h = int(ah * frac)
+    w = max(mn_w, min(w, mx_w))
+    h = max(mn_h, min(h, mx_h))
+    x = wl + (aw - w) // 2
+    y = wt + (ah - h) // 2
+    return w, h, x, y
+
+
 __all__ = [
     "enable_dpi_awareness",
     "init_root_scaling",
@@ -118,4 +251,8 @@ __all__ = [
     "fpt",
     "current_scale",
     "current_dpi",
+    "get_cursor_work_area",
+    "get_work_area_for_window",
+    "clamp_to_work_area",
+    "compute_initial_geometry",
 ]
