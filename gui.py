@@ -1803,50 +1803,87 @@ class App(tk.Tk):
 
     # ── MASTER PANEL ─────────────────────────────────────────
     def _build_master_panel_new(self, parent, sans_reg, sans_bold):
-        card = _make_card(parent, height=72)
-        card.pack(fill="x", pady=(0, 12))
+        # Phase 9 (UI Polish v2):
+        # — карточка чуть выше (84 px) ради «дыхания» вокруг 36-px
+        #   контролов и нормальной шкалы шрифтов 13/11.
+        # — внутренние отступы по шкале spacing (SP_XL/SP_MD).
+        # — заголовок sentence-case «Терминал-мастер» + тонкая
+        #   подпись с путём EXE справа от заголовка.
+        # — пульс-полоса 1 px (раньше 3) — больше карточки, меньше шума.
+        card = _make_card(parent, height=84)
+        card.pack(fill="x", pady=(0, theme.SP_MD))
         card.pack_propagate(False)
 
-        # Phase 5: цветную полоску храним, чтобы анимировать пульс при run.
-        self._master_strip = ctk.CTkFrame(card, width=3, corner_radius=2,
+        # Phase 5/9: цветная полоса слева. 1 px вместо 3, повыше — slim accent.
+        self._master_strip = ctk.CTkFrame(card, width=1, corner_radius=1,
                                             fg_color=ACCENT)
-        self._master_strip.place(relx=0, rely=0.18, relheight=0.64, x=8)
+        self._master_strip.place(relx=0, rely=0.18, relheight=0.64, x=6)
         self._master_strip_pulse = False
         self._master_strip_phase = 0
 
         body = ctk.CTkFrame(card, fg_color="transparent")
-        body.pack(fill="both", expand=True, padx=18, pady=10)
+        body.pack(fill="both", expand=True,
+                  padx=theme.SP_XL, pady=theme.SP_MD)
 
         left = ctk.CTkFrame(body, fg_color="transparent")
         left.pack(side="left", fill="y")
-        ctk.CTkLabel(left, text="MASTER", text_color=ACCENT,
-                     font=(sans_bold, 10)).pack(anchor="w")
+
+        # Заголовок-строка: «Терминал-мастер» + ёмкая подпись с путём.
+        title_row = ctk.CTkFrame(left, fg_color="transparent")
+        title_row.pack(anchor="w")
+        ctk.CTkLabel(title_row, text="Терминал-мастер",
+                     text_color=FG, font=(sans_bold, 13)).pack(side="left")
+        self._lbl_master_pathline = ctk.CTkLabel(
+            title_row, text="", text_color=FG_MUTED,
+            font=(sans_reg, 11))
+        self._lbl_master_pathline.pack(side="left", padx=(theme.SP_MD, 0))
+
+        def _refresh_pathline(*_):
+            p = self.var_master_path.get().strip() if hasattr(self, "var_master_path") else ""
+            # Show only last 48 chars (path), prefix · so it reads as caption.
+            if not p:
+                self._lbl_master_pathline.configure(text="путь к terminal64.exe не задан")
+            else:
+                shown = p if len(p) <= 56 else "…" + p[-55:]
+                self._lbl_master_pathline.configure(text="· " + shown)
 
         path_row = ctk.CTkFrame(left, fg_color="transparent")
-        path_row.pack(anchor="w", pady=(4, 0))
+        path_row.pack(anchor="w", pady=(theme.SP_SM, 0))
 
-        # Phase 7: input и button рядом — единая высота 36 px
-        # (раньше CTkEntry=28 + PillButton=32 + IconButton=30 в одной строке
-        # «ломали» визуальную линию). Шрифт 12 для лучшей читаемости.
+        # Phase 9: «soft input» — фон тот же, что у карточки-hover, без
+        # резкой границы. Focus-ring добавляется через FocusIn/Out.
         self.var_master_path = tk.StringVar()
+        self.var_master_path.trace_add("write", _refresh_pathline)
         self._ent_master = ctk.CTkEntry(
             path_row, textvariable=self.var_master_path,
-            width=320, height=theme.CTRL_H_LG,
-            fg_color=BG_INPUT, border_color=SOFT_BORDER, text_color=FG,
-            corner_radius=CORNER_SM, font=(sans_reg, 12),
+            width=340, height=theme.CTRL_H_LG,
+            fg_color=CARD_BG_HOVER, border_color=CARD_BG_HOVER,
+            text_color=FG, corner_radius=CORNER_MD,
+            font=(sans_reg, 12),
         )
         self._ent_master.pack(side="left")
 
-        # Phase 7: «...» → Phosphor folder-open IconButton того же роста.
+        # Focus-ring: динамическая accent-граница при фокусе.
+        def _ent_focus_in(_e):
+            try: self._ent_master.configure(border_color=ACCENT_DIM)
+            except Exception: pass
+        def _ent_focus_out(_e):
+            try: self._ent_master.configure(border_color=CARD_BG_HOVER)
+            except Exception: pass
+        self._ent_master.bind("<FocusIn>", _ent_focus_in, add="+")
+        self._ent_master.bind("<FocusOut>", _ent_focus_out, add="+")
+
+        # Browse-кнопка — рядом, тот же размер, Phosphor folder-open.
         btn_browse_m = IconButton(path_row, icon=theme.ICON_FOLDER,
                                     color=FG_LABEL,
                                     command=self._browse_master)
         btn_browse_m.pack(side="left", padx=(theme.SP_SM, 0))
         _bind_tip(btn_browse_m, "Выбрать путь к terminal64.exe мастера")
 
-        # Phase 7: master-actions — выровнены под единый CTRL_H_LG (36),
-        # корректные Phosphor-иконки (chart-line-up / x / warning),
-        # отступы из шкалы spacing (SP_XS вместо магического 2).
+        # Инициализация подписи (на случай если путь придёт позже).
+        _refresh_pathline()
+
+        # Master-actions: одинаковые 36×36, сгруппированы вплотную.
         actions = ctk.CTkFrame(body, fg_color="transparent")
         actions.pack(side="left", padx=(theme.SP_LG, 0))
         btn_open_master = IconButton(actions, icon=theme.ICON_CHART,
