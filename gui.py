@@ -175,17 +175,38 @@ class PillButton(ctk.CTkButton):
             fg, hover, txt = "transparent", BG_INPUT, FG_DIM
         else:
             fg, hover, txt = BG_INPUT, CARD_BG_HOVER, FG_LABEL
-        label = f"{icon}  {text}" if icon else text
+        # Phase 7 (UI Polish v2): убрали Unicode-иконку из заголовка.
+        # Современные приложения (Linear/Notion/Cursor) не ставят
+        # ▶/■ перед текстом primary-кнопок — это атавизм. icon kwarg
+        # сохраняем для обратной совместимости, но визуально игнорируем.
+        label = text
         self._variant = variant
         self._stored_text = label
+        # Phase 7: primary/danger выше и шире — visual hierarchy.
+        if variant in ("primary", "danger"):
+            btn_h = theme.CTRL_H_LG
+            min_w = theme.BTN_PRIMARY_MIN_W
+            font_size = 13
+        else:
+            btn_h = theme.CTRL_H_MD
+            min_w = None
+            font_size = 12
         kwargs = dict(
             master=master, text=label, command=command,
             fg_color=fg, hover_color=hover, text_color=txt,
-            corner_radius=CORNER_MD, height=32,
+            corner_radius=CORNER_MD, height=btn_h,
             border_width=0, border_color=ACCENT_DIM,
         )
         if width is not None:
             kwargs["width"] = width
+        elif min_w is not None:
+            kwargs["width"] = min_w
+        if "font" not in kw:
+            try:
+                sans_bold = theme.pick_font(theme.SANS_BOLD_PREFS)
+                kwargs["font"] = (sans_bold, font_size)
+            except Exception:
+                pass
         kwargs.update(kw)
         super().__init__(**kwargs)
 
@@ -224,12 +245,17 @@ class IconButton(ctk.CTkButton):
     """
 
     def __init__(self, master, glyph=None, command=None, color=FG_DIM,
-                 hover_color=None, size=34, icon=None, **kw):
+                 hover_color=None, size=None, icon=None, **kw):
+        # Phase 7: default 36 — синхронно с CTRL_H_LG и primary PillButton,
+        # чтобы в одной строке шапки/тулбара кнопки совпадали по росту.
+        if size is None:
+            size = theme.CTRL_H_LG
         sym = icon if icon is not None else (glyph or "")
         font = kw.pop("font", None)
         if font is None and icon is not None:
             icon_family = theme.pick_font(theme.ICON_PREFS)
-            font = (icon_family, max(12, int(size * 0.5)))
+            # Phase 7: чуть крупнее глиф (52% от размера кнопки).
+            font = (icon_family, max(14, int(size * 0.52)))
         kwargs = dict(
             master=master, text=sym, command=command,
             width=size, height=size,
@@ -1687,8 +1713,10 @@ class App(tk.Tk):
 
         title_box = ctk.CTkFrame(left, fg_color="transparent")
         title_box.pack(side="left")
-        version_suffix = f"  v{upd_mod.VERSION}" if _UPD_OK else ""
-        ctk.CTkLabel(title_box, text=f"FTH Trade Copier{version_suffix}",
+        # Phase 7 (UI Polish v2): убрали v1.1.0 — версия уже есть
+        # в title-bar окна Windows и в About-секции настроек. Дублировать
+        # в шапке = визуальный шум.
+        ctk.CTkLabel(title_box, text="FTH Trade Copier",
                      text_color=FG, font=(sans_bold, 15),
                      anchor="w").pack(anchor="w")
         ctk.CTkLabel(title_box, text="MT5 · Local copy engine",
@@ -1704,38 +1732,48 @@ class App(tk.Tk):
         right = ctk.CTkFrame(hdr, fg_color="transparent")
         right.pack(side="right", padx=14, pady=10)
 
+        # Phase 7 (UI Polish v2):
+        # 1. Phosphor codepoints перевели на ПРОВЕРЕННЫЕ значения
+        #    (ICON_GEAR=U+E270, ICON_INFO=U+E2CE) — раньше ⚙ был пустым,
+        #    а ℹ показывал «динамик».
+        # 2. Поменяли местами группы Копитрейдер / Терминалы: Копитрейдер
+        #    как primary action идёт ЛЕВЕЕ Терминалов.
+        # 3. PillButton (Старт/Стоп/Запустить/Закрыть) поднялись до 36 px и
+        #    стали шире (>= 108) — primary тяжелее служебных IconButton.
+        # При side="right" последний упакованный окажется самым левым,
+        # поэтому порядок ниже = инверсия визуальной последовательности.
         self.btn_info = IconButton(right, icon=theme.ICON_INFO,
                                      command=self._toggle_info)
-        self.btn_info.pack(side="right", padx=(8, 0))
+        self.btn_info.pack(side="right", padx=(theme.SP_SM, 0))
         _bind_tip(self.btn_info, "Режим подсказок")
 
         btn_settings = IconButton(right, icon=theme.ICON_GEAR,
                                    command=self._open_settings)
-        btn_settings.pack(side="right", padx=(8, 0))
+        btn_settings.pack(side="right", padx=(theme.SP_SM, 0))
         _bind_tip(btn_settings, "Настройки приложения")
 
+        terms = self._header_group(right, "ТЕРМИНАЛЫ", sans_bold)
+        terms.pack(side="right", padx=(theme.SP_LG, 0))
+        btn_launch = PillButton(terms.row, "Запустить",
+                                 variant="primary", command=self._launch_all)
+        btn_launch.pack(side="left", padx=theme.SP_XS)
+        _bind_tip(btn_launch, "Запустить все терминалы (свёрнутые)")
+        btn_shutdown = PillButton(terms.row, "Закрыть",
+                                   variant="danger", command=self._shutdown_all)
+        btn_shutdown.pack(side="left", padx=theme.SP_XS)
+        _bind_tip(btn_shutdown, "Завершить процессы всех терминалов")
+
         engine = self._header_group(right, "КОПИТРЕЙДЕР", sans_bold)
-        engine.pack(side="right", padx=(14, 0))
-        self.btn_start = PillButton(engine.row, "Старт", icon="▶",
+        engine.pack(side="right", padx=(theme.SP_LG, 0))
+        self.btn_start = PillButton(engine.row, "Старт",
                                      variant="primary", command=self._start)
-        self.btn_start.pack(side="left", padx=4)
+        self.btn_start.pack(side="left", padx=theme.SP_XS)
         _bind_tip(self.btn_start, "Запустить копирование сделок")
-        self.btn_stop = PillButton(engine.row, "Стоп", icon="■",
+        self.btn_stop = PillButton(engine.row, "Стоп",
                                     variant="danger", command=self._stop)
-        self.btn_stop.pack(side="left", padx=4)
+        self.btn_stop.pack(side="left", padx=theme.SP_XS)
         _bind_tip(self.btn_stop, "Остановить копирование")
         self.btn_stop.configure(state="disabled")
-
-        terms = self._header_group(right, "ТЕРМИНАЛЫ", sans_bold)
-        terms.pack(side="right", padx=(14, 0))
-        btn_launch = PillButton(terms.row, "Запустить", icon="▶",
-                                 variant="primary", command=self._launch_all)
-        btn_launch.pack(side="left", padx=4)
-        _bind_tip(btn_launch, "Запустить все терминалы (свёрнутые)")
-        btn_shutdown = PillButton(terms.row, "Закрыть", icon="■",
-                                   variant="danger", command=self._shutdown_all)
-        btn_shutdown.pack(side="left", padx=4)
-        _bind_tip(btn_shutdown, "Завершить процессы всех терминалов")
 
     def _header_group(self, parent, title, sans_bold):
         wrap = ctk.CTkFrame(parent, fg_color="transparent")
@@ -1770,39 +1808,44 @@ class App(tk.Tk):
         path_row = ctk.CTkFrame(left, fg_color="transparent")
         path_row.pack(anchor="w", pady=(4, 0))
 
+        # Phase 7: input и button рядом — единая высота 36 px
+        # (раньше CTkEntry=28 + PillButton=32 + IconButton=30 в одной строке
+        # «ломали» визуальную линию). Шрифт 12 для лучшей читаемости.
         self.var_master_path = tk.StringVar()
         self._ent_master = ctk.CTkEntry(
             path_row, textvariable=self.var_master_path,
-            width=320, height=28,
+            width=320, height=theme.CTRL_H_LG,
             fg_color=BG_INPUT, border_color=SOFT_BORDER, text_color=FG,
-            corner_radius=CORNER_SM, font=(sans_reg, 10),
+            corner_radius=CORNER_SM, font=(sans_reg, 12),
         )
         self._ent_master.pack(side="left")
 
-        btn_browse_m = PillButton(path_row, "...", width=42,
+        # Phase 7: «...» → Phosphor folder-open IconButton того же роста.
+        btn_browse_m = IconButton(path_row, icon=theme.ICON_FOLDER,
+                                    color=FG_LABEL,
                                     command=self._browse_master)
-        btn_browse_m.pack(side="left", padx=(6, 0))
+        btn_browse_m.pack(side="left", padx=(theme.SP_SM, 0))
         _bind_tip(btn_browse_m, "Выбрать путь к terminal64.exe мастера")
 
+        # Phase 7: master-actions — выровнены под единый CTRL_H_LG (36),
+        # корректные Phosphor-иконки (chart-line-up / x / warning),
+        # отступы из шкалы spacing (SP_XS вместо магического 2).
         actions = ctk.CTkFrame(body, fg_color="transparent")
-        actions.pack(side="left", padx=(14, 0))
+        actions.pack(side="left", padx=(theme.SP_LG, 0))
         btn_open_master = IconButton(actions, icon=theme.ICON_CHART,
                                        color=ACCENT,
-                                       command=self._open_master_terminal,
-                                       size=30)
-        btn_open_master.pack(side="left", padx=2)
+                                       command=self._open_master_terminal)
+        btn_open_master.pack(side="left", padx=theme.SP_XS)
         _bind_tip(btn_open_master, "Открыть терминал мастера")
         btn_close_master = IconButton(actions, icon=theme.ICON_X,
                                         color=RED_DIM,
-                                        command=self._close_all_master,
-                                        size=30)
-        btn_close_master.pack(side="left", padx=2)
+                                        command=self._close_all_master)
+        btn_close_master.pack(side="left", padx=theme.SP_XS)
         _bind_tip(btn_close_master, "Закрыть все сделки мастера")
         btn_test_master = IconButton(actions, icon=theme.ICON_WARNING,
                                        color=YELLOW,
-                                       command=self._test_master,
-                                       size=30)
-        btn_test_master.pack(side="left", padx=2)
+                                       command=self._test_master)
+        btn_test_master.pack(side="left", padx=theme.SP_XS)
         _bind_tip(btn_test_master, "Тест мастера")
 
         # 4 ячейки статов master'а в сетке 4×1: фиксированный шаг между

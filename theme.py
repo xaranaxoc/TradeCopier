@@ -97,6 +97,18 @@ RADIUS_CTRL = 10   # buttons, inputs, dropdowns
 RADIUS_CHIP = 6    # chips, badges, tags
 
 
+# ── CONTROL SIZE SYSTEM ────────────────────────────────────
+# Use a single height for inputs and buttons that sit next to each
+# other in a toolbar/header row. Mixing 28/30/32/34 px controls in
+# the same row looks broken (Vitaliy, 2026-06-15).
+CTRL_H_LG = 36     # primary buttons, header actions, master entry
+CTRL_H_MD = 32     # secondary controls in tighter rows
+CTRL_H_SM = 28     # chips, micro-toolbar
+
+# Default min width for primary text buttons. Linear/Notion-style.
+BTN_PRIMARY_MIN_W = 108
+
+
 # ── TYPOGRAPHY ─────────────────────────────────────────────
 # Logical sizes (px @ 96dpi); actual scaling is handled by
 # ctk.set_widget_scaling() applied at app startup.
@@ -128,26 +140,39 @@ T_MONO     = (11, "normal")  # numbers and log
 
 
 # ── PHOSPHOR ICON GLYPHS ───────────────────────────────────
-# Useful subset; codepoints from Phosphor Icons 2.x.
-# Use as IconButton(parent, glyph=ICON_GEAR).
-ICON_GEAR        = "\ue3a4"  # gear (settings)
-ICON_INFO        = "\ue450"  # info circle
-ICON_PLAY        = "\ue5b0"  # play
-ICON_STOP        = "\ue65c"  # stop (square)
-ICON_PLUS        = "\ue5bc"  # plus
-ICON_X           = "\ue19c"  # x
-ICON_TRASH       = "\ue6c4"  # trash
-ICON_CHART       = "\ue160"  # chart-line-up
-ICON_WARNING     = "\ue730"  # warning
-ICON_PENCIL      = "\ue598"  # pencil
-ICON_FOLDER      = "\ue3b8"  # folder-open
-ICON_DOWNLOAD    = "\ue2dc"  # download
-ICON_REFRESH     = "\ue05c"  # arrows-clockwise
-ICON_SEARCH      = "\ue608"  # magnifying-glass
-ICON_FILTER      = "\ue394"  # funnel
-ICON_DOTS        = "\ue2c4"  # dots-three-vertical
-ICON_CHEVRON_DN  = "\ue1c0"  # caret-down
-ICON_CHEVRON_RT  = "\ue1cc"  # caret-right
+# Phosphor Icons v2.1 (Tobias Fried & Helena Zhang, IcoMoon build).
+# Codepoints VERIFIED against @phosphor-icons/web@2.1.1 CSS mapping
+# AND against the bundled `img/fonts/Phosphor-Regular.ttf` cmap.
+# DO NOT GUESS — verify any new icon with:
+#     from fontTools.ttLib import TTFont
+#     0xXXXX in TTFont('img/fonts/Phosphor-Regular.ttf').getBestCmap()
+ICON_GEAR        = "\ue270"  # gear
+ICON_INFO        = "\ue2ce"  # info  (⚠ \ue450 is speaker-simple-high!)
+ICON_PLAY        = "\ue3d0"  # play
+ICON_STOP        = "\ue46c"  # stop
+ICON_PLUS        = "\ue3d4"  # plus
+ICON_X           = "\ue4f6"  # x
+ICON_TRASH       = "\ue4a6"  # trash
+ICON_CHART       = "\ue156"  # chart-line-up
+ICON_WARNING     = "\ue4e0"  # warning
+ICON_PENCIL      = "\ue3ae"  # pencil
+ICON_FOLDER      = "\ue256"  # folder-open
+ICON_DOWNLOAD    = "\ue20a"  # download
+ICON_REFRESH     = "\ue094"  # arrows-clockwise
+ICON_SEARCH      = "\ue30c"  # magnifying-glass
+ICON_FILTER      = "\ue266"  # funnel
+ICON_DOTS        = "\ue208"  # dots-three-vertical
+ICON_CHEVRON_DN  = "\ue136"  # caret-down
+ICON_CHEVRON_RT  = "\ue13a"  # caret-right
+ICON_COPY        = "\ue1ca"  # copy
+ICON_HOUSE       = "\ue2c2"  # house
+ICON_QUESTION    = "\ue3e8"  # question
+ICON_POWER       = "\ue3da"  # power
+ICON_SLIDERS     = "\ue434"  # sliders-horizontal
+ICON_SPARKLE     = "\ue6a2"  # sparkle
+ICON_TARGET      = "\ue47c"  # target
+ICON_LIGHTNING   = "\ue2de"  # lightning
+ICON_SIGN_OUT    = "\ue42a"  # sign-out
 
 
 # ── FONT REGISTRATION ──────────────────────────────────────
