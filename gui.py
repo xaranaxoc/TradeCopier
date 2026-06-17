@@ -1118,6 +1118,15 @@ class ActivationWindow(Toplevel):
         y = wt + ((wb - wt) - h) // 2
         x, y, w, h = ui_scaling.clamp_to_work_area(x, y, w, h, wa)
         self.geometry(f"{w}x{h}+{x}+{y}")
+        # Now that the window has its final width, set wraplength on the
+        # status label so long messages wrap inside the visible area.
+        self.update_idletasks()
+        try:
+            fw = self._status_frm.winfo_width()
+            if fw > 20:
+                self.lbl_status.config(wraplength=fw - 8)
+        except Exception:
+            pass
 
     def _set_status(self, text, fg=None):
         """Update status label (space is pre-reserved, wraplength is dynamic)."""
@@ -1192,14 +1201,13 @@ class ActivationWindow(Toplevel):
 
         self.lbl_status = Label(frm, text="", bg=p.BG_DEEP, fg=p.FG_DIM, font=f.SM)
         self.lbl_status.grid(row=6, column=0, columnspan=2, pady=(4, 0), sticky="ew")
-        # Auto-adjust wraplength to fit the actual available width so text
-        # never overflows; reserve 3 lines of height for status messages.
-        self.lbl_status.bind(
-            "<Configure>",
-            lambda e: e.widget.configure(wraplength=max(1, e.width - 2)))
+        # Reserve 3 lines of height so the window never resizes when status
+        # text appears. Actual wraplength is set in _center_on_screen once
+        # the window has its final width.
         import tkinter.font as tkfont
         _sm_h = tkfont.Font(font=f.SM).metrics("linespace")
         frm.grid_rowconfigure(6, minsize=_sm_h * 3 + 8)
+        self._status_frm = frm
 
     def _request_code(self):
         tg = self.var_tg_id.get().strip()
