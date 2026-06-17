@@ -44,8 +44,13 @@ _LABEL_MAP: Mapping[str, str] = {
 }
 
 # Options tk supports but CTk widgets don't — silently dropped.
+# NOTE: padx/pady are *kept* for Label — CTkLabel forwards them to its
+# inner tk.Label and they're what we need to restore the tk.Label
+# natural padding (~2 px) that CTkLabel removes (padx=0, pady=0 default).
+# Without that pad the rows look "broken / fonts too small" because the
+# text-only height is ~25 % shorter than tk.Label of the same font.
 _LABEL_DROP: Set[str] = {
-    "padx", "pady", "relief", "bd", "borderwidth", "cursor", "justify",
+    "relief", "bd", "borderwidth", "cursor",
     "highlightthickness", "highlightbackground", "highlightcolor",
     "activebackground", "activeforeground", "insertbackground",
     "selectbackground", "selectforeground",
@@ -128,6 +133,16 @@ class Label(ctk.CTkLabel):
 
     def __init__(self, master, **kwargs):
         kwargs.setdefault("corner_radius", 0)
+        # CTkLabel defaults to height=28 px which is ~2x taller than a
+        # tk.Label rendering the same font. Setting height=0 makes the
+        # CTkLabel shrink to its natural text height; pady=2/padx=1
+        # restores the natural tk.Label internal padding (CTkLabel sets
+        # padx=0, pady=0 on its inner tk.Label which gives a 13 px box
+        # for a 11pt font — tk.Label is 17 px).
+        kwargs.setdefault("height", 0)
+        kwargs.setdefault("width", 0)
+        kwargs.setdefault("pady", 2)
+        kwargs.setdefault("padx", 1)
         # CTkLabel default fg_color is theme-aware (gray). Keep labels
         # transparent unless an explicit bg/fg_color was passed — that
         # matches tk.Label's default of inheriting the parent's bg.
@@ -161,16 +176,19 @@ class Button(ctk.CTkButton):
         # char widths to pixels; if the caller didn't pass any width,
         # use a tight default that auto-grows with the text.
         if "width" in kwargs:
-            kwargs["width"] = _chars_to_px(kwargs["width"], px_per_char=8, pad=12)
+            kwargs["width"] = _chars_to_px(kwargs["width"], px_per_char=10, pad=14)
         else:
             kwargs.setdefault("width", 0)
-        if "height" not in kwargs:
-            kwargs.setdefault("height", 24)
+        # tk.Button with a 9pt font renders ~26 px tall by default.
+        # CTkButton defaults to 28 — close, but the slave-table icon
+        # buttons want a bit tighter look. 26 keeps row height
+        # consistent with the original tk UI.
+        kwargs.setdefault("height", 26)
         super().__init__(master, **_translate(kwargs, _BUTTON_MAP, _BUTTON_DROP))
 
     def configure(self, require_redraw: bool = False, **kwargs):
         if "width" in kwargs:
-            kwargs["width"] = _chars_to_px(kwargs["width"], px_per_char=8, pad=12)
+            kwargs["width"] = _chars_to_px(kwargs["width"], px_per_char=10, pad=14)
         return super().configure(
             require_redraw=require_redraw,
             **_translate(kwargs, _BUTTON_MAP, _BUTTON_DROP),
@@ -194,8 +212,9 @@ class Entry(ctk.CTkEntry):
         kwargs.setdefault("border_width", 1)
         if "width" in kwargs:
             kwargs["width"] = _chars_to_px(kwargs["width"], px_per_char=8, pad=14)
-        if "height" not in kwargs:
-            kwargs.setdefault("height", 24)
+        # tk.Entry with a 9pt font renders ~22 px tall (incl. 1px border).
+        # CTkEntry defaults to 28. 24 keeps the dialog input rows compact.
+        kwargs.setdefault("height", 24)
         super().__init__(master, **_translate(kwargs, _ENTRY_MAP, _ENTRY_DROP))
 
     def configure(self, require_redraw: bool = False, **kwargs):
