@@ -1093,7 +1093,12 @@ class ActivationWindow(Toplevel):
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         self.grab_set()
         self._build()
+        # Pre-reserve vertical space for 2-line status messages so the
+        # window never needs to grow after _center_on_screen locks the size.
+        self.lbl_status.config(text="X\nX")
+        self.update_idletasks()
         self._center_on_screen()
+        self.lbl_status.config(text="")
 
     def _on_close(self):
         # Закрытие окна активации без успешной активации = выход из всей программы.
@@ -1126,16 +1131,8 @@ class ActivationWindow(Toplevel):
         self.geometry(f"{w}x{h}+{x}+{y}")
 
     def _set_status(self, text, fg=None):
-        """Update status label and grow window if content no longer fits."""
+        """Update status label text (space is pre-reserved in __init__)."""
         self.lbl_status.config(text=text, fg=fg or p.FG_DIM)
-        self.update_idletasks()
-        needed_h = self.winfo_reqheight()
-        cur_h = self.winfo_height()
-        if needed_h > cur_h:
-            x = self.winfo_x()
-            y = self.winfo_y()
-            w = self.winfo_width()
-            self.geometry(f"{w}x{needed_h}+{x}+{y}")
 
     def _lbl(self, parent, text, **kw):
         return Label(parent, text=text, bg=p.BG_DEEP, fg=p.FG_LABEL, font=f.SM, **kw)
