@@ -1,0 +1,89 @@
+"""
+theme — global CustomTkinter appearance setup for the FTH Trade Copier.
+
+Includes a runtime patch of customtkinter's `_apply_font_scaling` so that
+positive font sizes in tuples (e.g. `("Segoe UI", 9)`) keep their tk
+"points" semantics instead of being silently converted to negative
+"pixels" — that conversion is what made every CTk widget render with a
+~25% smaller font than the equivalent tk widget on 96 DPI displays, and
+is the root cause of the "слишком маленькие шрифты" report from
+2026-06-17. We also lock widget/window scaling to 1.0 so the layout
+matches the original tk UI 1-to-1 regardless of system DPI.
+
+Centralising the appearance + colour scheme call here keeps gui.py free
+of CTk boilerplate and makes it easy to switch palettes later (e.g. a
+light mode toggle) without hunting through dialogs.
+
+Call ``apply_theme()`` **once, right after** the root ``ctk.CTk()`` /
+top-level Toplevel is created. Doing it before any Tk root exists, or
+before the App's ``super().__init__()`` finishes, raises a TclError
+inside customtkinter (see the regression notes in the user skill —
+this was rollback pitfall #2 during the previous CTk attempt).
+"""
+
+from __future__ import annotations
+
+import customtkinter as ctk
+from customtkinter import CTkFont
+from customtkinter.windows.widgets.scaling.scaling_base_class import (
+    CTkScalingBaseClass,
+)
+
+
+def _patched_apply_font_scaling(self, font):
+    """Drop CTk's automatic point→pixel font conversion.
+
+    The stock implementation does ``return font[0], -abs(round(size *
+    widget_scaling))`` which forces the inner ``tk.Label`` to interpret
+    the size as pixels. tk's natural reading of ``("Segoe UI", 9)`` is
+    9 *points* (≈12 px at 96 DPI), so the stock conversion makes every
+    label render ~25 % smaller than the tk.Label it replaces. We keep
+    the size positive and skip widget scaling (we lock that to 1.0
+    below), so CTk widgets render exactly as the original tk widgets.
+    """
+    if isinstance(font, tuple):
+        if len(font) == 1:
+            return font
+        if len(font) == 2:
+            return font[0], round(font[1])
+        return (font[0], round(font[1])) + tuple(font[2:])
+    if isinstance(font, CTkFont):
+        return font.create_scaled_tuple(1.0)
+    raise ValueError(
+        f"Can not scale font '{font}' of type {type(font)}. "
+        f"font needs to be tuple or instance of CTkFont"
+    )
+
+
+_PATCH_APPLIED = False
+
+
+def apply_theme() -> None:
+    """Install the FTH dark theme: dark appearance, dark-blue accents.
+
+    Must be called **after** a Tk root exists. Calling this multiple
+    times is safe — CTk's setters are idempotent.
+    """
+    global _PATCH_APPLIED
+    ctk.set_appearance_mode("dark")
+    ctk.set_default_color_theme("dark-blue")
+    # Lock scaling to 1.0 so layout matches the original tk-based UI
+    # 1-to-1 on any DPI; tk already honours system DPI via the font
+    # point sizes, so layering CTk's scaling on top double-scales and
+    # breaks the slave table / KPI cards.
+    try:
+        ctk.set_widget_scaling(1.0)
+        ctk.set_window_scaling(1.0)
+    except Exception:
+        pass
+    # Install the font-scaling patch once. Idempotent.
+    if not _PATCH_APPLIED:
+        CTkScalingBaseClass._apply_font_scaling = _patched_apply_font_scaling
+        _PATCH_APPLIED = True
+    # We don't ship a custom .json theme — the colour mapping in gui.py
+    # (BG, FG, ACCENT, etc.) is applied per-widget through `ctk_compat`,
+    # so the default dark-blue theme just provides reasonable fallbacks
+    # for any widget we forgot to colour explicitly.
+
+
+__all__ = ["apply_theme"]
