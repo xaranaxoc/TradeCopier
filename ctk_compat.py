@@ -179,13 +179,54 @@ class Button(ctk.CTkButton):
         # (measured under Xvfb on this sandbox, matches Windows default tk
         # rendering for those fonts). Matches the icon-button look from the
         # original tk UI: width=2 → 42 px, width=10 → 90 px.
+        #
+        # tk.Button(padx=N, pady=N) means N px of *internal* padding on each
+        # side; CTkButton has no padx/pady, so we pop them and turn them into
+        # extra width/height. Without this the text of accent/danger buttons
+        # (Старт/Стоп/+ Аккаунт/× Закрыть сделки …) sits flush against the
+        # button edges.
+        padx_arg = kwargs.pop("padx", None)
+        pady_arg = kwargs.pop("pady", None)
         if "width" in kwargs:
             kwargs["width"] = _chars_to_px(kwargs["width"], px_per_char=6, pad=30)
+            # If padx is also given (e.g. header info/settings: width=2 + padx=8),
+            # add it on top — tk.Button stacks padx on top of the char width.
+            if padx_arg is not None:
+                kwargs["width"] = int(kwargs["width"]) + 2 * int(padx_arg)
         else:
             kwargs.setdefault("width", 0)
-        # tk.Button with a 8-9pt font renders ~27 px tall. CTkButton
-        # defaults to 28 — 27 keeps the slave-row buttons identical to tk.
-        kwargs.setdefault("height", 27)
+            if padx_arg is not None:
+                # When no explicit width was given, the button auto-sizes to
+                # its text. tk would have added 2*padx on top of that; CTk
+                # doesn't, so set an explicit width = measured_text + 2*padx.
+                text = kwargs.get("text", "") or ""
+                if text:
+                    try:
+                        import tkinter.font as _tkfont
+                        font_spec = kwargs.get("font") or ("Segoe UI", 9)
+                        family = font_spec[0] if len(font_spec) > 0 else "Segoe UI"
+                        size = font_spec[1] if len(font_spec) > 1 else 9
+                        weight = font_spec[2] if len(font_spec) > 2 else "normal"
+                        f = _tkfont.Font(root=master, family=family,
+                                         size=size, weight=weight)
+                        text_w = f.measure(text)
+                    except Exception:
+                        # Fallback: rough char-width estimate.
+                        text_w = max(1, len(text)) * 7
+                    kwargs["width"] = text_w + 2 * int(padx_arg) + 4
+        # tk.Button height ≈ font_linespace + 2*pady + 6 (bd + internals).
+        # For Segoe UI 8-9pt on Windows that's ~26-27 px at pady=0. CTkButton
+        # defaults to 28; we want to track tk's height + pady.
+        if "height" not in kwargs:
+            # Width=2 icon buttons (no padx/pady) → 27 to match tk.Button(pady=0)
+            # for Segoe UI 8-9pt.
+            base_h = 27
+            if pady_arg is not None:
+                # tk doubles pady internally; the icon-button default is ~21
+                # at pady=0, so base + 2*pady tracks tk closely without
+                # overshooting (e.g. pady=3 → 27, matches tk reqh=25-27).
+                base_h = 21 + 2 * int(pady_arg)
+            kwargs["height"] = base_h
         super().__init__(master, **_translate(kwargs, _BUTTON_MAP, _BUTTON_DROP))
 
     def configure(self, require_redraw: bool = False, **kwargs):
