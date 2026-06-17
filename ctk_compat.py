@@ -110,12 +110,12 @@ def _translate(kwargs: dict, mapping: Mapping[str, str], drop: Set[str]) -> dict
 def _chars_to_px(width: Any, px_per_char: int = 8, pad: int = 10) -> Any:
     """Convert tk-style char width to CTk-style pixel width.
 
-    Heuristic: any integer 1..24 is treated as a tk character count
-    (matches the original `tk.Button(... width=2)` / `tk.Entry(width=20)`
+    Heuristic: any integer 1..48 is treated as a tk character count
+    (matches the original `tk.Button(... width=2)` / `tk.Entry(width=36)`
     call sites). Larger values are assumed to already be in pixels and
     are passed through unchanged. Non-int values pass through.
     """
-    if isinstance(width, int) and 1 <= width <= 24:
+    if isinstance(width, int) and 1 <= width <= 48:
         return width * px_per_char + pad
     return width
 
@@ -175,20 +175,22 @@ class Button(ctk.CTkButton):
         # small icon buttons (text="⚙" / "..." / "×"). Convert tk-style
         # char widths to pixels; if the caller didn't pass any width,
         # use a tight default that auto-grows with the text.
+        # tk.Button width=N renders as ~6*N + 30 px wide for Segoe UI 8-9pt
+        # (measured under Xvfb on this sandbox, matches Windows default tk
+        # rendering for those fonts). Matches the icon-button look from the
+        # original tk UI: width=2 → 42 px, width=10 → 90 px.
         if "width" in kwargs:
-            kwargs["width"] = _chars_to_px(kwargs["width"], px_per_char=10, pad=14)
+            kwargs["width"] = _chars_to_px(kwargs["width"], px_per_char=6, pad=30)
         else:
             kwargs.setdefault("width", 0)
-        # tk.Button with a 9pt font renders ~26 px tall by default.
-        # CTkButton defaults to 28 — close, but the slave-table icon
-        # buttons want a bit tighter look. 26 keeps row height
-        # consistent with the original tk UI.
-        kwargs.setdefault("height", 26)
+        # tk.Button with a 8-9pt font renders ~27 px tall. CTkButton
+        # defaults to 28 — 27 keeps the slave-row buttons identical to tk.
+        kwargs.setdefault("height", 27)
         super().__init__(master, **_translate(kwargs, _BUTTON_MAP, _BUTTON_DROP))
 
     def configure(self, require_redraw: bool = False, **kwargs):
         if "width" in kwargs:
-            kwargs["width"] = _chars_to_px(kwargs["width"], px_per_char=10, pad=14)
+            kwargs["width"] = _chars_to_px(kwargs["width"], px_per_char=6, pad=30)
         return super().configure(
             require_redraw=require_redraw,
             **_translate(kwargs, _BUTTON_MAP, _BUTTON_DROP),
@@ -210,16 +212,18 @@ class Entry(ctk.CTkEntry):
     def __init__(self, master, **kwargs):
         kwargs.setdefault("corner_radius", 0)
         kwargs.setdefault("border_width", 1)
+        # tk.Entry width=N renders as ~6*N + 6 px for Segoe UI 9pt
+        # (measured: width=10→66, width=28→174, width=36→222).
         if "width" in kwargs:
-            kwargs["width"] = _chars_to_px(kwargs["width"], px_per_char=8, pad=14)
+            kwargs["width"] = _chars_to_px(kwargs["width"], px_per_char=6, pad=6)
         # tk.Entry with a 9pt font renders ~22 px tall (incl. 1px border).
-        # CTkEntry defaults to 28. 24 keeps the dialog input rows compact.
-        kwargs.setdefault("height", 24)
+        # CTkEntry defaults to 28. 22 matches tk.
+        kwargs.setdefault("height", 22)
         super().__init__(master, **_translate(kwargs, _ENTRY_MAP, _ENTRY_DROP))
 
     def configure(self, require_redraw: bool = False, **kwargs):
         if "width" in kwargs:
-            kwargs["width"] = _chars_to_px(kwargs["width"], px_per_char=8, pad=14)
+            kwargs["width"] = _chars_to_px(kwargs["width"], px_per_char=6, pad=6)
         return super().configure(
             require_redraw=require_redraw,
             **_translate(kwargs, _ENTRY_MAP, _ENTRY_DROP),
@@ -240,6 +244,13 @@ class Frame(ctk.CTkFrame):
 
     def __init__(self, master, **kwargs):
         kwargs.setdefault("corner_radius", 0)
+        # CTkFrame defaults to width=200, height=200. tk.Frame defaults to
+        # 0/0 (size propagates from children). Without this override every
+        # bg_frame / KPI card / slave-row background forces a 200x200
+        # minimum into its grid cell, which made the slave table rows
+        # explode vertically (one account taking ~200 px instead of ~29).
+        kwargs.setdefault("width", 0)
+        kwargs.setdefault("height", 0)
         # tk.Frame(highlightthickness=1, highlightbackground=BORDER) is the
         # idiom used for the bordered cards in the FTH UI. Translate to
         # CTk's border_width / border_color so we keep the same look.
