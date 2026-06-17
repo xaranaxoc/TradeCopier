@@ -781,54 +781,56 @@ class AccountRow:
         bg = BG_ROW
         r = self._row
 
-        self._bg_frame = tk.Frame(self._parent, bg=bg, highlightbackground=BORDER,
-                                   highlightthickness=1 if not self._hover else 1)
+        self._bg_frame = Frame(self._parent, bg=bg, highlightbackground=BORDER,
+                               highlightthickness=1 if not self._hover else 1)
         self._bg_frame.grid(row=r, column=0, columnspan=12, sticky="nsew", pady=(1, 1))
         self._bg_frame.lower()
 
-        self._accent_strip = tk.Frame(self._bg_frame, bg=FG_DIM, width=3)
+        self._accent_strip = Frame(self._bg_frame, bg=FG_DIM, width=3)
         self._accent_strip.place(x=0, y=0, relheight=1.0)
 
         enabled = d.get("enabled", True)
         self.var_enabled = tk.BooleanVar(value=enabled)
-        self.lbl_check = tk.Label(self._parent, text="\u2611" if enabled else "\u2610",
-                                   bg=bg, fg=GREEN if enabled else FG_DIM,
-                                   font=FONT_BOLD, cursor="hand2")
+        self.lbl_check = Label(self._parent, text="\u2611" if enabled else "\u2610",
+                               bg=bg, fg=GREEN if enabled else FG_DIM,
+                               font=FONT_BOLD)
         self.lbl_check.grid(row=r, column=0, padx=(8, 2), pady=6, sticky="ew")
         self.lbl_check.bind("<Button-1>", lambda e: self._toggle())
         _bind_tip(self.lbl_check, "Включить / выключить аккаунт")
         self._widgets.append(self.lbl_check)
 
-        dot_frame = tk.Frame(self._parent, bg=bg, width=20, height=20)
+        dot_frame = Frame(self._parent, bg=bg, width=20, height=20)
         dot_frame.grid(row=r, column=1, padx=2, pady=6, sticky="")
+        # tk.Canvas kept as plain tk — CTk has no canvas equivalent and
+        # the status dot uses raw create_oval / itemconfigure.
         self._dot_canvas = tk.Canvas(dot_frame, width=14, height=14, bg=bg,
                                       highlightthickness=0, bd=0)
         self._dot_canvas.pack(padx=2, pady=2)
         self._dot_oval = self._dot_canvas.create_oval(3, 3, 11, 11, fill=FG_DIM, outline="")
         self._widgets.append(dot_frame)
 
-        self.lbl_name = tk.Label(self._parent, text=d.get("name", "\u2014"), bg=bg, fg=FG,
-                                  font=FONT_BOLD, anchor="w")
+        self.lbl_name = Label(self._parent, text=d.get("name", "\u2014"), bg=bg, fg=FG,
+                              font=FONT_BOLD, anchor="w")
         self.lbl_name.grid(row=r, column=2, padx=(4, 4), pady=6, sticky="ew")
         self._widgets.append(self.lbl_name)
 
-        self.lbl_login = tk.Label(self._parent, text="\u2014", bg=bg, fg=FG_DIM,
-                                   font=FONT_MONO_SM, anchor="w")
+        self.lbl_login = Label(self._parent, text="\u2014", bg=bg, fg=FG_DIM,
+                               font=FONT_MONO_SM, anchor="w")
         self.lbl_login.grid(row=r, column=3, padx=4, pady=6, sticky="ew")
         self._widgets.append(self.lbl_login)
 
-        self.lbl_balance = tk.Label(self._parent, text="\u2014", bg=bg, fg=FG,
-                                     font=FONT_VAL_BOLD, anchor="e")
+        self.lbl_balance = Label(self._parent, text="\u2014", bg=bg, fg=FG,
+                                 font=FONT_VAL_BOLD, anchor="e")
         self.lbl_balance.grid(row=r, column=4, padx=4, pady=6, sticky="ew")
         self._widgets.append(self.lbl_balance)
 
-        self.lbl_equity = tk.Label(self._parent, text="\u2014", bg=bg, fg=FG_DIM,
-                                    font=FONT_MONO_SM, anchor="e")
+        self.lbl_equity = Label(self._parent, text="\u2014", bg=bg, fg=FG_DIM,
+                                font=FONT_MONO_SM, anchor="e")
         self.lbl_equity.grid(row=r, column=5, padx=4, pady=6, sticky="ew")
         self._widgets.append(self.lbl_equity)
 
-        self.lbl_pnl = tk.Label(self._parent, text="\u2014", bg=bg, fg=FG_DIM,
-                                 font=FONT_VAL, anchor="e")
+        self.lbl_pnl = Label(self._parent, text="\u2014", bg=bg, fg=FG_DIM,
+                             font=FONT_VAL, anchor="e")
         self.lbl_pnl.grid(row=r, column=6, padx=4, pady=6, sticky="ew")
         self._widgets.append(self.lbl_pnl)
 
@@ -836,22 +838,22 @@ class AccountRow:
         sym_text = "  ".join(f"{k}\u2192{v}" for k, v in list(sym_map.items())[:3])
         if len(sym_map) > 3:
             sym_text += f" +{len(sym_map) - 3}"
-        self.lbl_symbols = tk.Label(self._parent, text=sym_text or "\u2014", bg=bg, fg=FG_DIM,
-                                     font=FONT_XS, anchor="w")
+        self.lbl_symbols = Label(self._parent, text=sym_text or "\u2014", bg=bg, fg=FG_DIM,
+                                 font=FONT_XS, anchor="w")
         self.lbl_symbols.grid(row=r, column=7, padx=4, pady=6, sticky="ew")
         self._widgets.append(self.lbl_symbols)
 
         rt = d.get("risk_type", "percent")
         rv = d.get("risk_value", 1.0)
         risk_text = f"{rv}{'%' if rt == 'percent' else '$'}"
-        self.lbl_risk = tk.Label(self._parent, text=risk_text, bg=bg, fg=YELLOW,
-                                  font=FONT_SM, anchor="e")
+        self.lbl_risk = Label(self._parent, text=risk_text, bg=bg, fg=YELLOW,
+                              font=FONT_SM, anchor="e")
         self.lbl_risk.grid(row=r, column=8, padx=4, pady=6, sticky="ew")
         self._widgets.append(self.lbl_risk)
 
         mtd = d.get("max_trades_per_day", 0)
-        self.lbl_trades_day = tk.Label(self._parent, text=str(mtd) if mtd else "\u2014",
-                                        bg=bg, fg=FG_DIM, font=FONT_SM, anchor="center")
+        self.lbl_trades_day = Label(self._parent, text=str(mtd) if mtd else "\u2014",
+                                    bg=bg, fg=FG_DIM, font=FONT_SM, anchor="center")
         self.lbl_trades_day.grid(row=r, column=9, padx=4, pady=6, sticky="ew")
         self._widgets.append(self.lbl_trades_day)
 
@@ -868,41 +870,36 @@ class AccountRow:
                                              fill=FG_DIM)
         self._widgets.append(self._loss_canvas)
 
-        bf = tk.Frame(self._parent, bg=bg)
+        bf = Frame(self._parent, bg=bg)
         bf.grid(row=r, column=11, padx=(2, 6), pady=6, sticky="e")
 
-        btn_open = tk.Button(bf, text="\U0001F4C8", command=self._open_terminal,
-                  bg=bg, fg=FG_DIM, relief="flat", font=FONT_SM,
-                  activebackground=BG_ROW_HOVER, activeforeground=ACCENT,
-                  cursor="hand2", width=2, highlightthickness=0)
+        btn_open = Button(bf, text="\U0001F4C8", command=self._open_terminal,
+                          bg=bg, fg=FG_DIM, font=FONT_SM,
+                          activebackground=BG_ROW_HOVER, width=2)
         btn_open.pack(side="left", padx=1)
         _bind_tip(btn_open, "Открыть терминал")
 
-        btn_close = tk.Button(bf, text="\u2716", command=self._close_all,
-                  bg=bg, fg=RED_DIM, relief="flat", font=FONT_SM,
-                  activebackground=BG_ROW_HOVER, activeforeground=RED,
-                  cursor="hand2", width=2, highlightthickness=0)
+        btn_close = Button(bf, text="\u2716", command=self._close_all,
+                           bg=bg, fg=RED_DIM, font=FONT_SM,
+                           activebackground=BG_ROW_HOVER, width=2)
         btn_close.pack(side="left", padx=1)
         _bind_tip(btn_close, "Закрыть все позиции")
 
-        btn_test = tk.Button(bf, text="\u26A0", command=self._test,
-                  bg=bg, fg=YELLOW, relief="flat", font=FONT_SM,
-                  activebackground=BG_ROW_HOVER, activeforeground=YELLOW,
-                  cursor="hand2", width=2, highlightthickness=0)
+        btn_test = Button(bf, text="\u26A0", command=self._test,
+                          bg=bg, fg=YELLOW, font=FONT_SM,
+                          activebackground=BG_ROW_HOVER, width=2)
         btn_test.pack(side="left", padx=1)
         _bind_tip(btn_test, "Тест: BUY 0.01 лот")
 
-        btn_edit = tk.Button(bf, text="\u2699", command=self._edit,
-                  bg=bg, fg=FG_DIM, relief="flat", font=FONT_SM,
-                  activebackground=BG_ROW_HOVER, activeforeground=ACCENT,
-                  cursor="hand2", width=2, highlightthickness=0)
+        btn_edit = Button(bf, text="\u2699", command=self._edit,
+                          bg=bg, fg=FG_DIM, font=FONT_SM,
+                          activebackground=BG_ROW_HOVER, width=2)
         btn_edit.pack(side="left", padx=1)
         _bind_tip(btn_edit, "Настройки")
 
-        btn_del = tk.Button(bf, text="\u2715", command=self._delete,
-                  bg=bg, fg=FG_DIM, relief="flat", font=FONT_SM,
-                  activebackground=BG_ROW_HOVER, activeforeground=RED,
-                  cursor="hand2", width=2, highlightthickness=0)
+        btn_del = Button(bf, text="\u2715", command=self._delete,
+                         bg=bg, fg=FG_DIM, font=FONT_SM,
+                         activebackground=BG_ROW_HOVER, width=2)
         btn_del.pack(side="left", padx=1)
         _bind_tip(btn_del, "Удалить аккаунт")
 

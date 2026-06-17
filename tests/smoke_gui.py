@@ -145,6 +145,33 @@ def _exercise_refresh(app: "gui.App") -> None:
     app._log("smoke-test: ok ✅", "ok")
 
 
+def _exercise_account_row(app: "gui.App") -> None:
+    """Add a fake slave so AccountRow widgets get built. Catches CTk-shim
+    regressions in the slave-row grid (bg_frame/accent_strip, labels,
+    canvas dot, action buttons, .config() calls on the labels)."""
+    fake_slave = {
+        "id": "smoke-1", "name": "Smoke", "path": "C:\\fake\\terminal64.exe",
+        "enabled": True, "symbol_map": {"EURUSD": "EURUSD.r"},
+        "risk_type": "percent", "risk_value": 1.5,
+        "max_trades_per_day": 3, "daily_loss_limit": 100.0, "default_lot": 0.01,
+    }
+    app._slaves.append(fake_slave)
+    noop = lambda *a, **kw: None
+    row = gui.AccountRow(
+        app._table_frame, app._next_row, fake_slave,
+        on_edit=noop, on_delete=noop, on_toggle=noop,
+        on_test=noop, on_open=noop, on_close_all=noop,
+    )
+    app._next_row += 1
+    app._rows.append(row)
+    app._update_slave_count()
+    # exercise the .config() paths on the row's labels (these go through
+    # ctk_compat.Label.configure -> CTkLabel.configure).
+    row.lbl_balance.config(text="$1234.56")
+    row.lbl_pnl.config(text="+$12", fg=gui.GREEN)
+    row.lbl_equity.config(text="$1230.00", fg=gui.FG_DIM)
+
+
 def _exercise_dialogs(app: "gui.App") -> None:
     # SlaveDialog: avoid MT5 calls by stubbing _load_symbols.
     gui.SlaveDialog._load_symbols = lambda self: None  # type: ignore[assignment]
@@ -167,6 +194,7 @@ def main() -> int:
     try:
         _check_attrs(app)
         _exercise_refresh(app)
+        _exercise_account_row(app)
         _exercise_dialogs(app)
         print("OK: gui smoke test passed")
         return 0
