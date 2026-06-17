@@ -210,9 +210,80 @@ def available_themes() -> list[str]:
     return sorted(THEMES.keys())
 
 
+# ── ttk style helper ─────────────────────────────────────────────────
+
+def apply_ttk_styles(
+    scale_fn=None,
+    *,
+    palette: Palette | None = None,
+    fonts: Fonts | None = None,
+) -> None:
+    """Configure ttk Treeview and Notebook styles from the active palette.
+
+    Call once after the Tk root exists.
+
+    Parameters
+    ----------
+    scale_fn : callable, optional
+        DPI-scaling function (e.g. ``ui_scaling.scale``).  If *None*,
+        raw pixel values are used.
+    palette / fonts : override the current theme (mainly for tests).
+    """
+    from tkinter import ttk
+
+    pal = palette or get_palette()
+    fnt = fonts or get_fonts()
+    s = scale_fn or (lambda x: x)
+
+    style = ttk.Style()
+    style.theme_use("clam")
+
+    # Treeview (trades table)
+    style.configure(
+        "T.Treeview",
+        background=pal.BG_ROW,
+        foreground=pal.FG,
+        fieldbackground=pal.BG_ROW,
+        font=fnt.MONO_SM,
+        rowheight=s(17),
+        borderwidth=0,
+    )
+    style.configure(
+        "T.Treeview.Heading",
+        background=pal.BG_INPUT,
+        foreground=pal.FG_DIM,
+        font=fnt.XS,
+        borderwidth=0,
+        relief="flat",
+    )
+    style.map(
+        "T.Treeview",
+        background=[("selected", pal.ACCENT)],
+        foreground=[("selected", pal.ACCENT_FG)],
+    )
+    style.map("T.Treeview.Heading", background=[("active", pal.BG_ROW_HOVER)])
+
+    # Notebook (bottom tabs: Сделки / Лог)
+    style.configure("TNotebook", background=pal.BG_DEEP, borderwidth=0)
+    style.configure(
+        "TNotebook.Tab",
+        background=pal.BG_INPUT,
+        foreground=pal.FG_DIM,
+        padding=[12, 3],
+        font=fnt.SM,
+        borderwidth=0,
+    )
+    style.map(
+        "TNotebook.Tab",
+        background=[("selected", pal.BG_ROW)],
+        foreground=[("selected", pal.FG)],
+    )
+
+
 __all__ = [
     "Palette", "Fonts", "Theme",
     "get_palette", "get_fonts", "set_theme",
     "get_theme_name", "available_themes",
+    "apply_ttk_styles",
     "NEON_CYAN", "WARM_DARK", "DEFAULT_FONTS",
 ]

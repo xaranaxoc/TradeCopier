@@ -92,7 +92,7 @@ IMG_DIR = os.path.join(_BUNDLE_DIR, "img")
 ICON_DEFAULT = os.path.join(IMG_DIR, "convertico-fth.ico")
 ICON_CYAN = os.path.join(IMG_DIR, "convertico-fth-cyan.ico")
 
-from palette import get_palette, get_fonts
+from palette import get_palette, get_fonts, apply_ttk_styles
 
 # ── Theme aliases (evaluated once at import time) ───────────────
 p = get_palette()
@@ -1026,16 +1026,7 @@ class TradesTable(tk.Frame):
         self._build()
 
     def _build(self):
-        style = ttk.Style()
-        style.theme_use("clam")
-        style.configure("T.Treeview", background=p.BG_ROW, foreground=p.FG,
-                        fieldbackground=p.BG_ROW, font=f.MONO_SM,
-                        rowheight=ui_scaling.scale(17), borderwidth=0)
-        style.configure("T.Treeview.Heading", background=p.BG_INPUT, foreground=p.FG_DIM,
-                        font=f.XS, borderwidth=0, relief="flat")
-        style.map("T.Treeview", background=[("selected", p.ACCENT)],
-                  foreground=[("selected", p.ACCENT_FG)])
-        style.map("T.Treeview.Heading", background=[("active", p.BG_ROW_HOVER)])
+        apply_ttk_styles(scale_fn=ui_scaling.scale)
 
         self.tree = ttk.Treeview(self, columns=self.COLS, show="headings",
                                   style="T.Treeview", height=6)
@@ -1717,13 +1708,8 @@ class App(ctk.CTk):
         self._next_row = 1
 
         # ── Notebook ────────────────────────────────────────
-        style = ttk.Style()
-        style.theme_use("clam")
-        style.configure("TNotebook", background=p.BG_DEEP, borderwidth=0)
-        style.configure("TNotebook.Tab", background=p.BG_INPUT, foreground=p.FG_DIM,
-                        padding=[12, 3], font=f.SM, borderwidth=0)
-        style.map("TNotebook.Tab", background=[("selected", p.BG_ROW)],
-                  foreground=[("selected", p.FG)])
+        # ttk styles are configured centrally via apply_ttk_styles()
+        # (called in TradesTable._build which runs before this point).
 
         nb_frame = tk.Frame(self._paned, bg=p.BG_DEEP)
         self._paned.add(nb_frame, minsize=ui_scaling.scale(60),
