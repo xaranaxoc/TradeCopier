@@ -92,7 +92,22 @@ IMG_DIR = os.path.join(_BUNDLE_DIR, "img")
 ICON_DEFAULT = os.path.join(IMG_DIR, "convertico-fth.ico")
 ICON_CYAN = os.path.join(IMG_DIR, "convertico-fth-cyan.ico")
 
-from palette import get_palette, get_fonts, apply_ttk_styles
+from palette import get_palette, get_fonts, apply_ttk_styles, set_theme, get_theme_name
+
+# ── Apply saved theme before building aliases ───────────────────
+def _apply_saved_theme():
+    """Read theme name from config.json and activate it (if valid)."""
+    try:
+        if os.path.exists(CONFIG_FILE):
+            with open(CONFIG_FILE, "r", encoding="utf-8") as _f:
+                _cfg = json.load(_f)
+            _name = _cfg.get("theme")
+            if _name:
+                set_theme(_name)
+    except Exception:
+        pass  # keep default theme on any error
+
+_apply_saved_theme()
 
 # ── Theme aliases (evaluated once at import time) ───────────────
 p = get_palette()
@@ -2016,17 +2031,17 @@ class App(ctk.CTk):
         for s in self._slaves:
             if not s.get("enabled", True):
                 continue
-            p = s.get("path", "")
-            if p and p not in paths:
-                paths.append(p)
+            pth = s.get("path", "")
+            if pth and pth not in paths:
+                paths.append(pth)
         launched = 0
-        for p in paths:
-            if not is_terminal_running(p):
+        for pth in paths:
+            if not is_terminal_running(pth):
                 try:
                     si = subprocess.STARTUPINFO()
                     si.dwFlags = subprocess.STARTF_USESHOWWINDOW
                     si.wShowWindow = 6  # SW_MINIMIZE
-                    subprocess.Popen([p], startupinfo=si)
+                    subprocess.Popen([pth], startupinfo=si)
                     launched += 1
                     self._log(f"\U0001F680 Запуск: {os.path.basename(os.path.dirname(p))}")
                 except Exception as e:
@@ -2049,19 +2064,19 @@ class App(ctk.CTk):
         for s in self._slaves:
             if not s.get("enabled", True):
                 continue
-            p = s.get("path", "")
-            if p and p not in paths:
-                paths.append(p)
+            pth = s.get("path", "")
+            if pth and pth not in paths:
+                paths.append(pth)
         killed = 0
-        for p in paths:
-            norm = os.path.normcase(os.path.abspath(p))
+        for pth in paths:
+            norm = os.path.normcase(os.path.abspath(pth))
             for proc in psutil.process_iter(['exe', 'pid']):
                 try:
                     exe = proc.info.get('exe')
                     if exe and os.path.normcase(exe) == norm:
                         proc.terminate()
                         killed += 1
-                        self._log(f"\u25A0 Завершён: {os.path.basename(os.path.dirname(p))}")
+                        self._log(f"\u25A0 Завершён: {os.path.basename(os.path.dirname(pth))}")
                 except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
                     pass
         if killed > 0:
@@ -2403,6 +2418,7 @@ class App(ctk.CTk):
             "profiles": self._profiles,
             "poll_interval_seconds": 1,
             "min_lot_mode": self._min_lot_mode,
+            "theme": get_theme_name(),
             "window": self._window_state,
         }
 
@@ -2502,9 +2518,9 @@ class App(ctk.CTk):
             return
 
         if "profiles" in cfg:
-            for i, p in enumerate(cfg["profiles"]):
+            for i, prof in enumerate(cfg["profiles"]):
                 if i < 5:
-                    self._profiles[i] = p
+                    self._profiles[i] = prof
             self._active_profile = cfg.get("active_profile", 0)
         else:
             self._profiles[0] = {
@@ -2521,14 +2537,14 @@ class App(ctk.CTk):
         self._update_slave_count()
 
     def _load_active_profile(self):
-        p = self._profiles[self._active_profile]
-        self.var_master_path.set(p.get("master", {}).get("path", ""))
+        prof = self._profiles[self._active_profile]
+        self.var_master_path.set(prof.get("master", {}).get("path", ""))
         self._slaves.clear()
         for r in self._rows:
             r.destroy()
         self._rows.clear()
         self._next_row = 1
-        for s in p.get("slaves", []):
+        for s in prof.get("slaves", []):
             if "id" not in s:
                 s["id"] = str(uuid.uuid4())[:8]
             if "max_drawdown" not in s:
