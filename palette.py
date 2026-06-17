@@ -118,65 +118,36 @@ NEON_CYAN = Palette(
 )
 
 LIGHT_PRO = Palette(
-    # Soft professional light theme — tuned for trading terminals.
-    # Uses Tailwind slate/cyan/emerald 600-level tones so accents are
-    # readable on white without feeling neon, and body text is slate-700
-    # rather than slate-900 to reduce harsh contrast.
-    BG_DEEP="#F4F6F9",      # page background (cool soft neutral)
-    BG="#F4F6F9",           # frames / panels
-    BG_ROW="#FFFFFF",       # cards / table rows (keeps subtle depth)
-    BG_ROW_HOVER="#EEF2F7", # hovered row — neutral, not cyan-tinted
-    BG_INPUT="#FBFCFD",     # off-white inputs (less harsh than pure #FFF)
-    BG_HEADER="#EEF1F5",    # column headers, tab strip
-    FG="#334155",           # primary text (slate-700 — soft yet legible)
-    FG_DIM="#64748B",       # secondary text (slate-500)
-    FG_LABEL="#64748B",     # field labels (slate-500)
-    FG_MUTED="#94A3B8",     # disabled / muted (slate-400)
-    ACCENT="#0891B2",       # cyan-600 — darker, calmer than neon #00B4D8
-    ACCENT_H="#0E7490",     # cyan-700 hover
-    ACCENT_DIM="#67E8F9",   # cyan-300 — disabled accent
-    ACCENT_FG="#FFFFFF",    # text on accent buttons
-    CYAN_GLOW="#ECFEFF",    # cyan-50 — soft badge background
-    GREEN="#059669",        # emerald-600 (profit, less harsh than #00A86B)
-    GREEN_DIM="#047857",    # emerald-700
-    GREEN_GLOW="#ECFDF5",   # emerald-50 — profit badge bg
-    RED="#DC2626",          # red-600 (loss, softer than #E53935)
-    RED_DIM="#B91C1C",      # red-700
-    RED_GLOW="#FEF2F2",     # red-50 — loss badge bg
-    YELLOW="#D97706",       # amber-600 (warning)
-    YELLOW_DIM="#B45309",   # amber-700
-    BORDER="#E2E8F0",       # slate-200 — subtle borders
-    BORDER_LIGHT="#F1F5F9", # slate-100 — even softer dividers
-    DIVIDER="#EEF1F5",
-)
-
-WARM_DARK = Palette(
-    BG_DEEP="#0D0A08",
-    BG="#12100E",
-    BG_ROW="#181614",
-    BG_ROW_HOVER="#201E1A",
-    BG_INPUT="#221F1B",
-    BG_HEADER="#100E0C",
-    FG="#E8E0D8",
-    FG_DIM="#7A7068",
-    FG_LABEL="#9A8E84",
-    FG_MUTED="#4A4038",
-    ACCENT="#E8963A",
-    ACCENT_H="#F0AA52",
-    ACCENT_DIM="#8A5A22",
-    ACCENT_FG="#FFFFFF",
-    CYAN_GLOW="#2A1A08",
-    GREEN="#4ADE80",
-    GREEN_DIM="#38B866",
-    GREEN_GLOW="#0A2A12",
-    RED="#F87171",
-    RED_DIM="#C55050",
-    RED_GLOW="#2A0E0E",
-    YELLOW="#FBBF24",
-    YELLOW_DIM="#C99A1C",
-    BORDER="#2A2420",
-    BORDER_LIGHT="#342E28",
-    DIVIDER="#1A1614",
+    # MetaTrader 5 styled light theme.
+    # Mirrors MT5's default look: Windows-gray chrome, white tables with
+    # black text, classic blue accent/selection, saturated green/red for
+    # bull/bear (profit/loss).
+    BG_DEEP="#F0F0F0",      # window chrome (Windows control gray)
+    BG="#F0F0F0",           # frames / panels
+    BG_ROW="#FFFFFF",       # market-watch / trade tables
+    BG_ROW_HOVER="#CCE4F7", # classic Windows light-blue selection
+    BG_INPUT="#FFFFFF",     # entry / combobox
+    BG_HEADER="#E5E5E5",    # column header bar
+    FG="#000000",           # primary text — black like MT5
+    FG_DIM="#555555",       # secondary text
+    FG_LABEL="#404040",     # field labels
+    FG_MUTED="#808080",     # disabled / muted
+    ACCENT="#2A5DB0",       # MT5 brand blue (toolbar / links)
+    ACCENT_H="#1E4A8F",     # darker blue on hover
+    ACCENT_DIM="#A8C5E8",   # disabled blue
+    ACCENT_FG="#FFFFFF",    # text on blue buttons
+    CYAN_GLOW="#DEECF9",    # light-blue badge background
+    GREEN="#008000",        # MT5 bull / profit (saturated green)
+    GREEN_DIM="#006400",    # darker green
+    GREEN_GLOW="#E6F5E6",   # profit badge background
+    RED="#C00000",          # MT5 bear / loss (saturated red)
+    RED_DIM="#A00000",      # darker red
+    RED_GLOW="#FCE6E6",     # loss badge background
+    YELLOW="#C08000",       # amber / warning (MT5-style)
+    YELLOW_DIM="#A06800",
+    BORDER="#CCCCCC",       # standard Windows border
+    BORDER_LIGHT="#DDDDDD",
+    DIVIDER="#E5E5E5",
 )
 
 # ── Built-in font sets ──────────────────────────────────────────────
@@ -203,15 +174,13 @@ class Theme:
 
 THEMES: Dict[str, Theme] = {
     "neon_cyan": Theme(palette=NEON_CYAN, fonts=DEFAULT_FONTS),
-    "warm_dark": Theme(palette=WARM_DARK, fonts=DEFAULT_FONTS),
     "light_pro": Theme(palette=LIGHT_PRO, fonts=DEFAULT_FONTS),
 }
 
 # Human-readable names for the theme picker UI.
 THEME_LABELS: Dict[str, str] = {
     "neon_cyan": "Neon Cyan (тёмная)",
-    "warm_dark": "Warm Dark (тёмная)",
-    "light_pro": "Light Pro (светлая)",
+    "light_pro": "Light Pro (MetaTrader 5)",
 }
 
 DEFAULT_THEME = "neon_cyan"
@@ -326,6 +295,6 @@ __all__ = [
     "get_palette", "get_fonts", "set_theme",
     "get_theme_name", "available_themes",
     "apply_ttk_styles",
-    "NEON_CYAN", "WARM_DARK", "LIGHT_PRO", "DEFAULT_FONTS",
+    "NEON_CYAN", "LIGHT_PRO", "DEFAULT_FONTS",
     "THEME_LABELS",
 ]
