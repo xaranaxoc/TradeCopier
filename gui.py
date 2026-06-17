@@ -1127,7 +1127,7 @@ class ActivationWindow(Toplevel):
 
     def _set_status(self, text, fg=None):
         """Update status label and grow window if content no longer fits."""
-        self._set_status(text, fg=fg or p.FG_DIM)
+        self.lbl_status.config(text=text, fg=fg or p.FG_DIM)
         self.update_idletasks()
         needed_h = self.winfo_reqheight()
         cur_h = self.winfo_height()
