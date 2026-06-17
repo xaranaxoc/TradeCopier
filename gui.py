@@ -99,8 +99,8 @@ def _apply_saved_theme():
     """Read theme name from config.json and activate it (if valid)."""
     try:
         if os.path.exists(CONFIG_FILE):
-            with open(CONFIG_FILE, "r", encoding="utf-8") as _f:
-                _cfg = json.load(_f)
+            with open(CONFIG_FILE, "r", encoding="utf-8") as fh:
+                _cfg = json.load(fh)
             _name = _cfg.get("theme")
             if _name:
                 set_theme(_name)
@@ -121,14 +121,14 @@ def _save_trade(trade: Dict):
         os.makedirs(APP_DATA_DIR, exist_ok=True)
         trades = []
         if os.path.exists(TRADES_FILE):
-            with open(TRADES_FILE, "r", encoding="utf-8") as f:
-                trades = json.load(f)
+            with open(TRADES_FILE, "r", encoding="utf-8") as fh:
+                trades = json.load(fh)
         trade["date"] = datetime.now().strftime("%Y-%m-%d")
         trades.append(trade)
         cutoff = (datetime.now() - timedelta(days=TRADES_KEEP_DAYS)).strftime("%Y-%m-%d")
         trades = [t for t in trades if t.get("date", "") >= cutoff]
-        with open(TRADES_FILE, "w", encoding="utf-8") as f:
-            json.dump(trades, f, ensure_ascii=False, indent=1)
+        with open(TRADES_FILE, "w", encoding="utf-8") as fh:
+            json.dump(trades, fh, ensure_ascii=False, indent=1)
     except Exception:
         pass
 
@@ -137,8 +137,8 @@ def _load_trades() -> List[Dict]:
     if not os.path.exists(TRADES_FILE):
         return []
     try:
-        with open(TRADES_FILE, "r", encoding="utf-8") as f:
-            trades = json.load(f)
+        with open(TRADES_FILE, "r", encoding="utf-8") as fh:
+            trades = json.load(fh)
         cutoff = (datetime.now() - timedelta(days=TRADES_KEEP_DAYS)).strftime("%Y-%m-%d")
         return [t for t in trades if t.get("date", "") >= cutoff]
     except Exception:
@@ -390,9 +390,9 @@ class SlaveDialog(Toplevel):
         bg = p.ACCENT if accent else p.BG_INPUT
         fg = p.ACCENT_FG if accent else p.FG_DIM
         abg = p.ACCENT_H if accent else p.BG_ROW_HOVER
-        f = (f.BOLD if accent else f.SM) if not small else f.XS
+        fnt = f.XS if small else (f.BOLD if accent else f.SM)
         return Button(parent, text=text, command=cmd, bg=bg, fg=fg,
-                      font=f, activebackground=abg, padx=10, pady=2)
+                      font=fnt, activebackground=abg, padx=10, pady=2)
 
     def _build(self, data: Dict):
         pad = {"padx": 12, "pady": 3}
@@ -2370,8 +2370,8 @@ class App(ctk.CTk):
             os.makedirs(LOGS_DIR, exist_ok=True)
             date_str = datetime.now().strftime("%Y-%m-%d")
             log_file = os.path.join(LOGS_DIR, f"{date_str}.log")
-            with open(log_file, "a", encoding="utf-8") as f:
-                f.write(msg + "\n")
+            with open(log_file, "a", encoding="utf-8") as fh:
+                fh.write(msg + "\n")
         except Exception:
             pass
 
@@ -2496,8 +2496,8 @@ class App(ctk.CTk):
     def _save_config(self):
         try:
             os.makedirs(APP_DATA_DIR, exist_ok=True)
-            with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-                json.dump(self._build_full_config(), f, ensure_ascii=False, indent=2)
+            with open(CONFIG_FILE, "w", encoding="utf-8") as fh:
+                json.dump(self._build_full_config(), fh, ensure_ascii=False, indent=2)
         except Exception as e:
             self._log(f"\u26A0\uFE0F Ошибка конфига: {e}", "warn")
 
@@ -2511,8 +2511,8 @@ class App(ctk.CTk):
             self._update_slave_count()
             return
         try:
-            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-                cfg = json.load(f)
+            with open(CONFIG_FILE, "r", encoding="utf-8") as fh:
+                cfg = json.load(fh)
         except Exception:
             self._update_slave_count()
             return
