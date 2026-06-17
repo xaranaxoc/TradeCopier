@@ -29,6 +29,8 @@ from customtkinter.windows.widgets.scaling.scaling_base_class import (
     CTkScalingBaseClass,
 )
 
+from palette import get_theme_appearance
+
 
 def _patched_apply_font_scaling(self, font):
     """Drop CTk's automatic point→pixel font conversion.
@@ -59,13 +61,21 @@ _PATCH_APPLIED = False
 
 
 def apply_theme() -> None:
-    """Install the FTH dark theme: dark appearance, dark-blue accents.
+    """Install the FTH theme.
 
-    Must be called **after** a Tk root exists. Calling this multiple
-    times is safe — CTk's setters are idempotent.
+    Reads ``get_theme_appearance()`` from ``palette`` so the CTk
+    appearance mode follows the active theme — switching to LIGHT_PRO
+    flips CTk's internal light/dark switch so the few widgets we don't
+    override per-colour (dropdown panels, etc.) follow suit.
+
+    Must be called **after** a Tk root exists.  Safe to call multiple
+    times — used both at startup and after every hot theme switch.
     """
     global _PATCH_APPLIED
-    ctk.set_appearance_mode("dark")
+    appearance = get_theme_appearance()
+    if appearance not in ("dark", "light"):
+        appearance = "dark"
+    ctk.set_appearance_mode(appearance)
     ctk.set_default_color_theme("dark-blue")
     # Lock scaling to 1.0 so layout matches the original tk-based UI
     # 1-to-1 on any DPI; tk already honours system DPI via the font

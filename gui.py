@@ -92,12 +92,30 @@ IMG_DIR = os.path.join(_BUNDLE_DIR, "img")
 ICON_DEFAULT = os.path.join(IMG_DIR, "convertico-fth.ico")
 ICON_CYAN = os.path.join(IMG_DIR, "convertico-fth-cyan.ico")
 
+import palette as _palette_mod
 from palette import (
     get_palette, get_fonts, apply_ttk_styles,
     set_theme, get_theme_name, available_themes, THEME_LABELS,
+    palette_proxy, fonts_proxy,
+    load_custom_themes, save_custom_themes,
+    build_remap, remap_widget_colors,
 )
 
-# ── Apply saved theme before building aliases ───────────────────
+# ── Custom themes + saved theme ─────────────────────────────────
+# Custom (user-defined) themes live next to config.json so they survive
+# upgrades.  Loading them BEFORE _apply_saved_theme() means a config
+# pointing at a user theme will resolve correctly on startup.
+CUSTOM_THEMES_FILE = os.path.join(APP_DATA_DIR, "custom_themes.json")
+
+
+def _load_custom_themes():
+    """Pull user-defined themes from disk (no-op if file missing/invalid)."""
+    try:
+        load_custom_themes(CUSTOM_THEMES_FILE)
+    except Exception:
+        pass
+
+
 def _apply_saved_theme():
     """Read theme name from config.json and activate it (if valid)."""
     try:
@@ -110,11 +128,16 @@ def _apply_saved_theme():
     except Exception:
         pass  # keep default theme on any error
 
+
+_load_custom_themes()
 _apply_saved_theme()
 
-# ── Theme aliases (evaluated once at import time) ───────────────
-p = get_palette()
-f = get_fonts()
+# ── Theme aliases: lazy proxies ─────────────────────────────────
+# Every ``p.X`` / ``f.X`` access is resolved against the CURRENT theme,
+# so widgets built after a hot theme switch transparently pick up the
+# new colours and fonts without any rebinding.
+p = palette_proxy
+f = fonts_proxy
 
 
 # ── Persistence: trades ─────────────────────────────────────
@@ -1335,7 +1358,7 @@ class SettingsDialog(Toplevel):
         om.pack(side="left", padx=(8, 0))
 
         self._lbl_theme_hint = Label(
-            frm, text="Изменение темы применится после перезапуска приложения.",
+            frm, text="Тема применяется мгновенно, без перезапуска.",
             bg=p.BG, fg=p.FG_DIM, font=f.SM,
         )
         self._lbl_theme_hint.pack(anchor="w", pady=(2, 0))
@@ -1349,7 +1372,7 @@ class SettingsDialog(Toplevel):
             new_name = self._ent_name.get().strip()
             if new_name:
                 self._app._profiles[self._active]["name"] = new_name
-            # Persist theme choice if changed (takes effect on restart).
+            # Resolve chosen theme by label → internal name.
             chosen_label = self._var_theme.get()
             chosen_name = self._initial_theme
             for _n in self._theme_names:
@@ -1357,22 +1380,30 @@ class SettingsDialog(Toplevel):
                     chosen_name = _n
                     break
             theme_changed = chosen_name != self._initial_theme
+
+            # Apply theme LIVE (hot-swap), capturing old palette first so we
+            # can remap every widget colour in the running UI.
             if theme_changed:
+                from palette import get_palette as _gp
+                old_pal = _gp()
                 try:
                     set_theme(chosen_name)
                 except Exception:
-                    pass
+                    theme_changed = False
+                if theme_changed:
+                    try:
+                        self._app._apply_runtime_theme(old_pal)
+                    except Exception:
+                        pass
+
             self._app._switch_profile(self._active)
+
             if theme_changed:
+                # Persist new theme into config.json.
                 try:
                     self._app._save_config()
                 except Exception:
                     pass
-                messagebox.showinfo(
-                    "Тема изменена",
-                    "Новая тема будет применена после перезапуска приложения.",
-                    parent=self._app,
-                )
             self.destroy()
 
         btn_switch = Button(btn_row, text="Сохранить", command=switch_profile,
@@ -2569,6 +2600,72 @@ class App(ctk.CTk):
                 json.dump(self._build_full_config(), fh, ensure_ascii=False, indent=2)
         except Exception as e:
             self._log(f"\u26A0\uFE0F Ошибка конфига: {e}", "warn")
+
+    # ── Hot theme switch ────────────────────────────────────────
+    def _apply_runtime_theme(self, old_palette) -> int:
+        """Repaint the running UI after ``set_theme(...)`` has been called.
+
+        * Re-applies the CTk light/dark appearance mode so dropdowns and
+          system widgets follow the new theme.
+        * Rebuilds ttk Treeview / Notebook styles.
+        * Walks every widget under ``self`` (and every orphan toplevel)
+          and remaps any colour attribute that matches a slot in
+          *old_palette* to the same slot in the new palette.
+        * Updates the CTk root's ``fg_color`` explicitly (root windows
+          don't always show up in the widget walk for ``fg_color``).
+
+        Returns the number of widget attribute writes performed —
+        useful in logs to confirm the walk did something.
+        """
+        from palette import get_palette as _gp
+        new_pal = _gp()
+        # CTk appearance + default colour theme
+        try:
+            apply_theme()
+        except Exception:
+            pass
+        # ttk styles (Treeview / Notebook)
+        try:
+            apply_ttk_styles(scale_fn=ui_scaling.scale)
+        except Exception:
+            pass
+        # Walk the widget tree
+        changes = 0
+        try:
+            remap = build_remap(old_palette, new_pal)
+            changes = remap_widget_colors(self, remap)
+        except Exception:
+            pass
+        # Update CTk root background (covered by walk too, but belt-and-braces)
+        try:
+            self.configure(fg_color=new_pal.BG_DEEP)
+        except Exception:
+            pass
+        # Force redraw on Treeviews — ttk style changes propagate but a
+        # ``selection clear`` nudge avoids stale-row-paint glitches.
+        try:
+            for w in self.winfo_children():
+                for sub in self._iter_widgets(w):
+                    if sub.winfo_class() == "Treeview":
+                        try:
+                            sub.event_generate("<<TreeviewThemeChanged>>")
+                        except Exception:
+                            pass
+        except Exception:
+            pass
+        return changes
+
+    @staticmethod
+    def _iter_widgets(root):
+        """Generator: every descendant widget of *root* (root excluded)."""
+        stack = list(getattr(root, "winfo_children", lambda: [])())
+        while stack:
+            w = stack.pop()
+            yield w
+            try:
+                stack.extend(w.winfo_children())
+            except Exception:
+                pass
 
     def _load_config(self):
         self._profiles = []

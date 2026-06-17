@@ -3,25 +3,47 @@ palette — centralised colour & font definitions for FTH Trade Copier themes.
 
 Every UI colour and font tuple used by the application is defined here as
 a field on a frozen dataclass.  The rest of the code reads the *current*
-palette/fonts through the module-level accessors ``get_palette()`` and
-``get_fonts()``.  Switching to another theme is a single call to
-``set_theme(name)`` (takes effect on next app startup — runtime
-hot-switch is not yet supported).
+palette/fonts either through:
 
-Adding a new theme
-------------------
-1. Create a new ``Palette(...)`` instance in ``PALETTES``.
-2. Optionally create a matching ``Fonts(...)`` in ``FONTS`` (or reuse the
-   default).
-3. Register both in ``THEMES``.
+  * ``palette_proxy`` / ``fonts_proxy`` — lazy proxies whose attribute
+    access forwards to the *currently active* theme.  This is what
+    ``gui.py`` binds to ``p`` / ``f`` so widgets built later transparently
+    pick up the active theme.
+  * ``get_palette()`` / ``get_fonts()`` — return the current dataclass
+    instance (use this when you need to enumerate fields).
 
-That's it — the rest of the app picks up the new colours automatically.
+Switching themes
+----------------
+``set_theme(name)`` activates a theme.  After it returns, every future
+``p.X`` access yields the new value, but widgets already on screen still
+carry the OLD colours.  To repaint them, call::
+
+    old = get_palette()
+    set_theme(new_name)
+    apply_ttk_styles(scale_fn=...)
+    remap_widget_colors(root, build_remap(old, get_palette()))
+
+Adding a builtin theme
+----------------------
+Declare a ``Palette(...)`` instance, then ``register_theme("my_name",
+my_palette, label="My Name", appearance="dark" or "light")``.
+
+Custom (user-defined) themes
+----------------------------
+``register_theme`` is also the entry point for runtime/user-defined
+themes.  Persisted custom themes are stored as JSON via
+``save_custom_themes(path)`` / ``load_custom_themes(path)``.  Only
+non-builtin themes are persisted; builtins live in code.
 """
 
 from __future__ import annotations
 
+import dataclasses
+import json
+import os
 from dataclasses import dataclass
-from typing import Dict, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
+
 
 # ── Palette dataclass ────────────────────────────────────────────────
 
@@ -170,11 +192,12 @@ DEFAULT_FONTS = Fonts(
 class Theme:
     palette: Palette
     fonts: Fonts
+    appearance: str = "dark"  # "dark" or "light" — drives ctk.set_appearance_mode
 
 
 THEMES: Dict[str, Theme] = {
-    "neon_cyan": Theme(palette=NEON_CYAN, fonts=DEFAULT_FONTS),
-    "light_pro": Theme(palette=LIGHT_PRO, fonts=DEFAULT_FONTS),
+    "neon_cyan": Theme(palette=NEON_CYAN, fonts=DEFAULT_FONTS, appearance="dark"),
+    "light_pro": Theme(palette=LIGHT_PRO, fonts=DEFAULT_FONTS, appearance="light"),
 }
 
 # Human-readable names for the theme picker UI.
@@ -185,39 +208,363 @@ THEME_LABELS: Dict[str, str] = {
 
 DEFAULT_THEME = "neon_cyan"
 
-# ── Global state & accessors ────────────────────────────────────────
+# Built-ins cannot be unregistered or overwritten via custom-themes JSON.
+_BUILTIN_THEMES = frozenset({"neon_cyan", "light_pro"})
+
+# ── Global state ────────────────────────────────────────────────────
 
 _current_theme_name: str = DEFAULT_THEME
+_listeners: List[Callable[[], None]] = []
 
+
+# ── Listener / pub-sub ──────────────────────────────────────────────
+
+def add_listener(callback: Callable[[], None]) -> None:
+    """Register a no-arg callback fired after every theme change or
+    register/unregister event. Idempotent for the same callable."""
+    if callable(callback) and callback not in _listeners:
+        _listeners.append(callback)
+
+
+def remove_listener(callback: Callable[[], None]) -> None:
+    if callback in _listeners:
+        _listeners.remove(callback)
+
+
+def _notify_listeners() -> None:
+    for cb in list(_listeners):
+        try:
+            cb()
+        except Exception:
+            pass  # never let a bad listener break theme changes
+
+
+# ── Active theme accessors ──────────────────────────────────────────
 
 def set_theme(name: str) -> None:
-    """Select the active theme by name.  Call before building the UI."""
+    """Select the active theme by name.
+
+    Note: switching at runtime updates the value returned by future
+    ``get_palette()`` / ``palette_proxy`` accesses, but does NOT repaint
+    already-built widgets.  Use ``remap_widget_colors(...)`` plus
+    ``apply_ttk_styles(...)`` after this call to live-refresh the UI.
+    """
     global _current_theme_name
     if name not in THEMES:
         raise ValueError(
-            f"Unknown theme '{name}'. Available: {', '.join(THEMES)}"
+            f"Unknown theme '{name}'. Available: {', '.join(sorted(THEMES))}"
         )
     _current_theme_name = name
+    _notify_listeners()
 
 
 def get_theme_name() -> str:
-    """Return the name of the currently active theme."""
     return _current_theme_name
 
 
 def get_palette() -> Palette:
-    """Return the active colour palette."""
     return THEMES[_current_theme_name].palette
 
 
 def get_fonts() -> Fonts:
-    """Return the active font set."""
     return THEMES[_current_theme_name].fonts
 
 
-def available_themes() -> list[str]:
-    """Return a sorted list of registered theme names."""
+def get_theme_appearance() -> str:
+    """Return ``"dark"`` or ``"light"`` for the active theme."""
+    return THEMES[_current_theme_name].appearance
+
+
+def available_themes() -> List[str]:
+    """Return a sorted list of registered theme names (builtins + custom)."""
     return sorted(THEMES.keys())
+
+
+def is_builtin_theme(name: str) -> bool:
+    return name in _BUILTIN_THEMES
+
+
+# ── Lazy proxies ────────────────────────────────────────────────────
+#
+# Bind these to ``p`` and ``f`` in the UI code instead of caching the
+# result of ``get_palette()`` / ``get_fonts()``.  Every attribute access
+# is resolved against the *current* theme, so newly built widgets after
+# a ``set_theme()`` call use the new colours/fonts automatically.
+
+class _PaletteProxy:
+    __slots__ = ()
+
+    def __getattr__(self, name: str):
+        return getattr(get_palette(), name)
+
+    def __dir__(self):
+        return list(super().__dir__()) + [f.name for f in dataclasses.fields(Palette)]
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return f"<PaletteProxy theme={_current_theme_name}>"
+
+
+class _FontsProxy:
+    __slots__ = ()
+
+    def __getattr__(self, name: str):
+        return getattr(get_fonts(), name)
+
+    def __dir__(self):
+        return list(super().__dir__()) + [f.name for f in dataclasses.fields(Fonts)]
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return f"<FontsProxy theme={_current_theme_name}>"
+
+
+palette_proxy = _PaletteProxy()
+fonts_proxy = _FontsProxy()
+
+
+# ── Theme registration ──────────────────────────────────────────────
+
+def register_theme(
+    name: str,
+    palette: Palette,
+    *,
+    fonts: Optional[Fonts] = None,
+    label: Optional[str] = None,
+    appearance: str = "dark",
+) -> None:
+    """Register or override a theme by name.
+
+    Built-ins cannot be overwritten — pass a different *name*.
+    Notifies listeners so any open theme picker can refresh.
+    """
+    if name in _BUILTIN_THEMES and name in THEMES:
+        raise ValueError(f"'{name}' is a built-in theme and cannot be overridden")
+    if appearance not in ("dark", "light"):
+        raise ValueError("appearance must be 'dark' or 'light'")
+    THEMES[name] = Theme(palette=palette, fonts=fonts or DEFAULT_FONTS, appearance=appearance)
+    if label is not None:
+        THEME_LABELS[name] = label
+    elif name not in THEME_LABELS:
+        THEME_LABELS[name] = name
+    _notify_listeners()
+
+
+def unregister_theme(name: str) -> bool:
+    """Remove a user-defined theme.
+
+    Returns True if the theme was removed, False if it was a built-in
+    or didn't exist.  If the active theme is removed, falls back to
+    ``DEFAULT_THEME``.
+    """
+    if name in _BUILTIN_THEMES or name not in THEMES:
+        return False
+    THEMES.pop(name, None)
+    THEME_LABELS.pop(name, None)
+    global _current_theme_name
+    if _current_theme_name == name:
+        _current_theme_name = DEFAULT_THEME
+    _notify_listeners()
+    return True
+
+
+def custom_themes() -> Dict[str, dict]:
+    """Return all non-builtin themes as ``{name: {label, appearance, colors}}``."""
+    out: Dict[str, dict] = {}
+    for n, th in THEMES.items():
+        if n in _BUILTIN_THEMES:
+            continue
+        out[n] = {
+            "label": THEME_LABELS.get(n, n),
+            "appearance": th.appearance,
+            "colors": palette_to_dict(th.palette),
+        }
+    return out
+
+
+# ── Palette ↔ dict ──────────────────────────────────────────────────
+
+def palette_to_dict(p: Palette) -> Dict[str, str]:
+    """Serialize a ``Palette`` to a plain dict suitable for JSON."""
+    return {f.name: getattr(p, f.name) for f in dataclasses.fields(Palette)}
+
+
+def palette_from_dict(d: Dict[str, str], *, base: Optional[Palette] = None) -> Palette:
+    """Build a ``Palette`` from a dict.  Missing fields fall back to *base*
+    (defaults to ``NEON_CYAN``)."""
+    base = base or NEON_CYAN
+    kwargs: Dict[str, str] = {}
+    for f in dataclasses.fields(Palette):
+        v = d.get(f.name)
+        kwargs[f.name] = v if isinstance(v, str) and v else getattr(base, f.name)
+    return Palette(**kwargs)
+
+
+# ── Persistence for custom themes ───────────────────────────────────
+
+def load_custom_themes(path: str) -> int:
+    """Load user-defined themes from a JSON file. Returns # loaded.
+
+    Robust to malformed files / missing path — returns 0 silently.
+    Built-in theme names in the file are skipped.
+    """
+    if not path or not os.path.exists(path):
+        return 0
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+    except Exception:
+        return 0
+    if not isinstance(data, dict):
+        return 0
+    items = data.get("themes", data)
+    if not isinstance(items, dict):
+        return 0
+    n = 0
+    for name, entry in items.items():
+        if not isinstance(name, str) or name in _BUILTIN_THEMES:
+            continue
+        if not isinstance(entry, dict):
+            continue
+        try:
+            colors = entry.get("colors") or {}
+            label = entry.get("label") or name
+            appearance = entry.get("appearance") or "dark"
+            if appearance not in ("dark", "light"):
+                appearance = "dark"
+            pal = palette_from_dict(colors)
+            register_theme(name, pal, label=label, appearance=appearance)
+            n += 1
+        except Exception:
+            continue
+    return n
+
+
+def save_custom_themes(path: str) -> bool:
+    """Persist user-defined themes to a JSON file.  Built-ins are not saved."""
+    try:
+        d = os.path.dirname(path)
+        if d:
+            os.makedirs(d, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump({"themes": custom_themes()}, fh, ensure_ascii=False, indent=2)
+        return True
+    except Exception:
+        return False
+
+
+# ── Widget-tree colour remap (hot reload) ───────────────────────────
+
+# CTk widget colour keys — passed through ``configure(...)`` and read via
+# ``cget(...)``.  Not every widget supports every key; missing keys raise
+# and are caught in the walker.
+_CTK_COLOR_KEYS = (
+    "fg_color", "bg_color", "hover_color",
+    "text_color", "text_color_disabled",
+    "border_color",
+    "button_color", "button_hover_color",
+    "checkmark_color", "progress_color",
+    "placeholder_text_color",
+    "scrollbar_button_color", "scrollbar_button_hover_color",
+    "selected_color", "selected_hover_color",
+    "label_text_color",
+    "dropdown_fg_color", "dropdown_hover_color", "dropdown_text_color",
+    "argument_text_color",
+)
+
+# Standard tk widget colour keys.
+_TK_COLOR_KEYS = (
+    "bg", "background", "fg", "foreground",
+    "activebackground", "activeforeground",
+    "selectbackground", "selectforeground",
+    "highlightbackground", "highlightcolor",
+    "insertbackground", "readonlybackground",
+    "disabledforeground", "disabledbackground",
+    "troughcolor",
+)
+
+
+def build_remap(old: Palette, new: Palette) -> Dict[str, str]:
+    """Map every hex string in *old* palette → corresponding hex in *new* palette."""
+    out: Dict[str, str] = {}
+    for f in dataclasses.fields(Palette):
+        ov = getattr(old, f.name)
+        nv = getattr(new, f.name)
+        if isinstance(ov, str) and ov.startswith("#"):
+            out[ov.lower()] = nv
+    return out
+
+
+def _normalize_color(v) -> Optional[str]:
+    """Return a lowercase ``#rrggbb`` if *v* looks like a hex colour, else None.
+    Accepts CTk-style ``(light, dark)`` tuples — uses the first element."""
+    if isinstance(v, (tuple, list)):
+        if not v:
+            return None
+        v = v[0]
+    if not isinstance(v, str):
+        return None
+    if not v.startswith("#"):
+        return None
+    return v.lower()
+
+
+def remap_widget_colors(root, remap: Dict[str, str]) -> int:
+    """Walk a widget tree starting at *root* and replace any colour
+    attribute whose current value appears in *remap*.
+
+    Works for both classic tk widgets (bg/fg/etc.) and CustomTkinter
+    widgets (fg_color/text_color/etc.).  Returns the number of attribute
+    writes performed.
+    """
+    keys = _CTK_COLOR_KEYS + _TK_COLOR_KEYS
+    count = 0
+
+    def visit(w) -> None:
+        nonlocal count
+        for k in keys:
+            try:
+                cur = w.cget(k)
+            except Exception:
+                continue
+            n = _normalize_color(cur)
+            if n is None or n not in remap:
+                continue
+            new = remap[n]
+            if new.lower() == n:
+                continue
+            try:
+                w.configure(**{k: new})
+                count += 1
+            except Exception:
+                continue
+
+    def walk(w) -> None:
+        visit(w)
+        try:
+            kids = w.winfo_children()
+        except Exception:
+            kids = []
+        for c in kids:
+            walk(c)
+
+    # Also visit any orphan toplevels (e.g. tooltip overlays) that share
+    # the tk interpreter but aren't in *root*.winfo_children().
+    visited = set()
+    walk(root)
+    visited.add(str(root))
+    try:
+        for name in root.tk.eval("winfo children .").split():
+            try:
+                w = root.nametowidget(name)
+            except Exception:
+                continue
+            if str(w) in visited:
+                continue
+            walk(w)
+            visited.add(str(w))
+    except Exception:
+        pass
+
+    return count
 
 
 # ── ttk style helper ─────────────────────────────────────────────────
@@ -225,19 +572,13 @@ def available_themes() -> list[str]:
 def apply_ttk_styles(
     scale_fn=None,
     *,
-    palette: Palette | None = None,
-    fonts: Fonts | None = None,
+    palette: Optional[Palette] = None,
+    fonts: Optional[Fonts] = None,
 ) -> None:
     """Configure ttk Treeview and Notebook styles from the active palette.
 
-    Call once after the Tk root exists.
-
-    Parameters
-    ----------
-    scale_fn : callable, optional
-        DPI-scaling function (e.g. ``ui_scaling.scale``).  If *None*,
-        raw pixel values are used.
-    palette / fonts : override the current theme (mainly for tests).
+    Safe to re-call after a theme change — ttk styles are replaced in
+    place and refresh open Treeview/Notebook widgets automatically.
     """
     from tkinter import ttk
 
@@ -246,7 +587,10 @@ def apply_ttk_styles(
     s = scale_fn or (lambda x: x)
 
     style = ttk.Style()
-    style.theme_use("clam")
+    try:
+        style.theme_use("clam")
+    except Exception:
+        pass
 
     # Treeview (trades table)
     style.configure(
@@ -292,9 +636,20 @@ def apply_ttk_styles(
 
 __all__ = [
     "Palette", "Fonts", "Theme",
-    "get_palette", "get_fonts", "set_theme",
-    "get_theme_name", "available_themes",
-    "apply_ttk_styles",
+    # accessors
+    "get_palette", "get_fonts", "get_theme_name", "get_theme_appearance",
+    "set_theme", "available_themes", "is_builtin_theme",
+    # proxies
+    "palette_proxy", "fonts_proxy",
+    # theme management
+    "register_theme", "unregister_theme", "custom_themes",
+    "palette_to_dict", "palette_from_dict",
+    "load_custom_themes", "save_custom_themes",
+    # listeners
+    "add_listener", "remove_listener",
+    # ttk + hot-reload
+    "apply_ttk_styles", "build_remap", "remap_widget_colors",
+    # builtins
     "NEON_CYAN", "LIGHT_PRO", "DEFAULT_FONTS",
-    "THEME_LABELS",
+    "THEMES", "THEME_LABELS", "DEFAULT_THEME",
 ]
