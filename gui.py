@@ -1,5 +1,22 @@
 """
-MT5 Local Copy Trader — GUI (tkinter)
+MT5 Local Copy Trader — GUI (customtkinter)
+
+This module mixes CTk and tk on purpose:
+
+* Top-level windows and most container/control widgets use customtkinter
+  via the wrappers in `ctk_compat` (Frame/Label/Button/Entry/Toplevel).
+  Those wrappers translate tk-style kwargs (``bg=``/``fg=``/``width=N``-chars)
+  to CTk-style kwargs, so the existing FTH palette and idioms keep
+  working without rewriting every call site.
+* Plain tk/ttk widgets are kept where CTk has no equivalent or where
+  emulation would change behaviour: `_Tip` (overrideredirect tooltip),
+  the slave table `ttk.Treeview`, the bottom `ttk.Notebook` tabs,
+  `tk.PanedWindow`, `tk.Listbox`, `tk.Text` (log), `tk.Canvas` (status
+  dot in AccountRow), `tk.Menu`, and all `tk.*Var` variables.
+* `theme.apply_theme()` is called **after** the root `ctk.CTk()` is
+  created — calling it earlier raises a TclError inside CTk (this was
+  one of the regressions during the previous CTk attempt; see the
+  rollback notes).
 """
 
 import os
@@ -10,9 +27,13 @@ import subprocess
 import threading
 import ctypes
 import tkinter as tk
+import customtkinter as ctk
 from datetime import datetime, timedelta
 from tkinter import ttk, filedialog, messagebox
 from typing import Dict, List, Optional
+
+from ctk_compat import Label, Button, Entry, Frame, Toplevel
+from theme import apply_theme
 
 try:
     import MetaTrader5 as mt5
@@ -224,19 +245,22 @@ COL_SPEC = [
 
 # ── SymbolPickerDialog ──────────────────────────────────────
 
-class SymbolPickerDialog(tk.Toplevel):
+class SymbolPickerDialog(Toplevel):
     def __init__(self, parent, symbols: List[str], title_text: str = "Выбор символа"):
         super().__init__(parent)
         self.selected: Optional[str] = None
         self._all_symbols = symbols
         self.title(title_text)
-        self.configure(bg=BG)
+        self.configure(fg_color=BG)
         self.resizable(False, False)
         icon = ICON_CYAN if (hasattr(parent, '_parent_app') and
             getattr(parent._parent_app, '_trader', None) and
             parent._parent_app._trader.is_running()) else ICON_DEFAULT
         if os.path.exists(icon):
-            self.iconbitmap(icon)
+            try:
+                self.after(250, lambda: self.iconbitmap(icon))
+            except Exception:
+                pass
         self.grab_set()
         self._build()
         self._center(parent)
@@ -256,22 +280,24 @@ class SymbolPickerDialog(tk.Toplevel):
         self.geometry(f"{w}x{h}+{x}+{y}")
 
     def _build(self):
-        frm = tk.Frame(self, bg=BG)
+        frm = Frame(self, bg=BG)
         frm.pack(fill="x", padx=10, pady=8)
         self.var_search = tk.StringVar()
         self.var_search.trace_add("write", lambda *_: self._filter())
-        ent = tk.Entry(frm, textvariable=self.var_search, width=28,
-                       bg=BG_INPUT, fg=FG, insertbackground=FG, relief="flat",
-                       font=FONT, highlightthickness=1,
-                       highlightbackground=BORDER, highlightcolor=ACCENT)
+        ent = Entry(frm, textvariable=self.var_search, width=28,
+                    bg=BG_INPUT, fg=FG, font=FONT,
+                    highlightthickness=1,
+                    highlightbackground=BORDER, highlightcolor=ACCENT)
         ent.pack(fill="x")
         ent.focus_set()
 
-        frm_list = tk.Frame(self, bg=BG)
+        frm_list = Frame(self, bg=BG)
         frm_list.pack(fill="both", expand=True, padx=10, pady=(0, 4))
+        # tk.Listbox stays — CTk has no equivalent.
         self.listbox = tk.Listbox(frm_list, bg=BG_ROW, fg=FG, font=FONT,
                                    selectbackground=ACCENT, selectforeground="white",
-                                   relief="flat", highlightthickness=0, activestyle="none")
+                                   relief="flat", highlightthickness=0, activestyle="none",
+                                   borderwidth=0)
         sb = ttk.Scrollbar(frm_list, orient="vertical", command=self.listbox.yview)
         self.listbox.configure(yscrollcommand=sb.set)
         sb.pack(side="right", fill="y")
@@ -281,7 +307,7 @@ class SymbolPickerDialog(tk.Toplevel):
         for s in self._all_symbols:
             self.listbox.insert("end", s)
 
-        btn_frame = tk.Frame(self, bg=BG)
+        btn_frame = Frame(self, bg=BG)
         btn_frame.pack(fill="x", padx=10, pady=(0, 8))
         self._btn(btn_frame, "Выбрать", self._pick, accent=True).pack(side="left", padx=(0, 6))
         self._btn(btn_frame, "Отмена", self.destroy).pack(side="left")
@@ -290,10 +316,9 @@ class SymbolPickerDialog(tk.Toplevel):
         bg = ACCENT if accent else BG_INPUT
         fg = "white" if accent else FG_DIM
         abg = ACCENT_H if accent else BG_ROW_HOVER
-        return tk.Button(parent, text=text, command=cmd, bg=bg, fg=fg, relief="flat",
-                         font=FONT_BOLD if accent else FONT,
-                         activebackground=abg, activeforeground=fg,
-                         cursor="hand2", padx=12, pady=2)
+        return Button(parent, text=text, command=cmd, bg=bg, fg=fg,
+                      font=FONT_BOLD if accent else FONT,
+                      activebackground=abg, padx=12, pady=2)
 
     def _filter(self):
         query = self.var_search.get().strip().upper()
@@ -311,7 +336,7 @@ class SymbolPickerDialog(tk.Toplevel):
 
 # ── SlaveDialog ─────────────────────────────────────────────
 
-class SlaveDialog(tk.Toplevel):
+class SlaveDialog(Toplevel):
     def __init__(self, parent, slave_data: Optional[Dict] = None):
         super().__init__(parent)
         self.result: Optional[Dict] = None
@@ -330,11 +355,16 @@ class SlaveDialog(tk.Toplevel):
         # the layout's requested size so the dialog can never be shrunk
         # smaller than what fits its widgets.
         self.resizable(True, False)
-        self.configure(bg=BG)
+        self.configure(fg_color=BG)
         self.withdraw()
         icon = ICON_CYAN if getattr(parent, '_trader', None) and parent._trader.is_running() else ICON_DEFAULT
         if os.path.exists(icon):
-            self.iconbitmap(icon)
+            # CTkToplevel sets its own icon late, overriding any earlier
+            # iconbitmap. Defer ours so it sticks.
+            try:
+                self.after(250, lambda: self.iconbitmap(icon))
+            except Exception:
+                pass
         data = slave_data or {}
         self._build(data)
         self._center(parent)
@@ -365,26 +395,25 @@ class SlaveDialog(tk.Toplevel):
         self.geometry(f"{w}x{h}+{x}+{y}")
 
     def _lbl(self, parent, text, **kw):
-        return tk.Label(parent, text=text, bg=BG, fg=FG_LABEL, font=FONT_SM, **kw)
+        return Label(parent, text=text, bg=BG, fg=FG_LABEL, font=FONT_SM, **kw)
 
     def _ent(self, parent, var=None, width=28, **kw):
-        return tk.Entry(parent, textvariable=var, width=width,
-                        bg=BG_INPUT, fg=FG, insertbackground=FG, relief="flat",
-                        font=FONT, highlightthickness=1, highlightbackground=BORDER,
-                        highlightcolor=ACCENT, **kw)
+        return Entry(parent, textvariable=var, width=width,
+                     bg=BG_INPUT, fg=FG, font=FONT,
+                     highlightthickness=1, highlightbackground=BORDER,
+                     highlightcolor=ACCENT, **kw)
 
     def _btn(self, parent, text, cmd, accent=False, small=False):
         bg = ACCENT if accent else BG_INPUT
         fg = "white" if accent else FG_DIM
         abg = ACCENT_H if accent else BG_ROW_HOVER
         f = (FONT_BOLD if accent else FONT_SM) if not small else FONT_XS
-        return tk.Button(parent, text=text, command=cmd, bg=bg, fg=fg, relief="flat",
-                         font=f, activebackground=abg, activeforeground=fg,
-                         cursor="hand2", padx=10, pady=2)
+        return Button(parent, text=text, command=cmd, bg=bg, fg=fg,
+                      font=f, activebackground=abg, padx=10, pady=2)
 
     def _build(self, data: Dict):
         pad = {"padx": 12, "pady": 3}
-        frm_top = tk.Frame(self, bg=BG)
+        frm_top = Frame(self, bg=BG)
         frm_top.pack(fill="x", **pad)
         # Make the input column take all extra horizontal space when the user
         # widens the dialog (so the "Имя" / "terminal64.exe" entries stretch
@@ -397,26 +426,26 @@ class SlaveDialog(tk.Toplevel):
 
         self._lbl(frm_top, "terminal64.exe").grid(row=1, column=0, sticky="w", pady=2)
         self.var_path = tk.StringVar(value=data.get("path", ""))
-        path_frame = tk.Frame(frm_top, bg=BG)
+        path_frame = Frame(frm_top, bg=BG)
         path_frame.grid(row=1, column=1, sticky="ew", padx=(6, 0), pady=2)
         self._ent(path_frame, self.var_path, 20).pack(side="left", fill="x", expand=True)
         btn_browse_s = self._btn(path_frame, "...", self._browse, small=True)
         btn_browse_s.pack(side="left", padx=(4, 0))
         _bind_tip(btn_browse_s, "Выбрать путь к terminal64.exe слейва")
 
-        tk.Frame(self, bg=DIVIDER, height=1).pack(fill="x", padx=12, pady=6)
+        Frame(self, bg=DIVIDER, height=1).pack(fill="x", padx=12, pady=6)
 
-        sym_header = tk.Frame(self, bg=BG)
+        sym_header = Frame(self, bg=BG)
         sym_header.pack(fill="x", padx=12, pady=(2, 0))
         self._lbl(sym_header, "Символы (мастер \u2192 слейв)").pack(side="left")
         btn_load = self._btn(sym_header, "\u21E9 Загрузить", self._load_symbols, small=True)
         btn_load.pack(side="right")
         _bind_tip(btn_load, "Загрузить символы из запущенных терминалов")
 
-        self.lbl_sym_status = tk.Label(self, text="", bg=BG, fg=FG_DIM, font=FONT_XS)
+        self.lbl_sym_status = Label(self, text="", bg=BG, fg=FG_DIM, font=FONT_XS)
         self.lbl_sym_status.pack(anchor="w", padx=12)
 
-        self.sym_frame = tk.Frame(self, bg=BG)
+        self.sym_frame = Frame(self, bg=BG)
         self.sym_frame.pack(fill="x", padx=12, pady=2)
 
         symbol_map = data.get("symbol_map", {})
@@ -427,10 +456,10 @@ class SlaveDialog(tk.Toplevel):
         btn_add_sym.pack(anchor="w", padx=12, pady=(0, 2))
         _bind_tip(btn_add_sym, "Добавить строку маппинга символов")
 
-        tk.Frame(self, bg=DIVIDER, height=1).pack(fill="x", padx=12, pady=6)
+        Frame(self, bg=DIVIDER, height=1).pack(fill="x", padx=12, pady=6)
 
         # ── Риск ─────────────────────────────────────────────
-        frm_risk = tk.Frame(self, bg=BG)
+        frm_risk = Frame(self, bg=BG)
         frm_risk.pack(fill="x", padx=12, pady=2)
 
         self.var_risk_type = tk.StringVar(value=data.get("risk_type", "percent"))
@@ -439,20 +468,20 @@ class SlaveDialog(tk.Toplevel):
         risk_type = data.get("risk_type", "percent")
 
         self._lbl(frm_risk, "Риск %").grid(row=0, column=0, sticky="w", pady=2)
-        pct_frame = tk.Frame(frm_risk, bg=BG)
+        pct_frame = Frame(frm_risk, bg=BG)
         pct_frame.grid(row=0, column=1, sticky="w", padx=(6, 0), pady=2)
         self.var_risk_pct = tk.StringVar(
             value=str(risk_value) if risk_type == "percent" else "")
         self._ent(pct_frame, self.var_risk_pct, 8).pack(side="left")
 
         self._lbl(frm_risk, "Риск $").grid(row=1, column=0, sticky="w", pady=2)
-        doll_frame = tk.Frame(frm_risk, bg=BG)
+        doll_frame = Frame(frm_risk, bg=BG)
         doll_frame.grid(row=1, column=1, sticky="w", padx=(6, 0), pady=2)
         self.var_risk_doll = tk.StringVar(
             value=str(risk_value) if risk_type == "fixed" else "")
         self._ent(doll_frame, self.var_risk_doll, 8).pack(side="left")
 
-        self.lbl_risk_hint = tk.Label(frm_risk, text="", bg=BG, fg=FG_DIM, font=FONT_XS)
+        self.lbl_risk_hint = Label(frm_risk, text="", bg=BG, fg=FG_DIM, font=FONT_XS)
         self.lbl_risk_hint.grid(row=2, column=0, columnspan=2, sticky="w", pady=(2, 0))
 
         self.var_risk_pct.trace_add("write", lambda *_: self._sync_risk("percent"))
@@ -465,24 +494,24 @@ class SlaveDialog(tk.Toplevel):
         self._lbl(frm_risk, "Макс. просадка %").grid(row=4, column=0, sticky="w", pady=2)
         self.var_max_drawdown = tk.StringVar(value=str(data.get("max_drawdown", 0)))
         self._ent(frm_risk, self.var_max_drawdown, 8).grid(row=4, column=1, sticky="w", padx=(6, 0), pady=2)
-        tk.Label(frm_risk, text="0 = выкл", bg=BG, fg=FG_DIM, font=FONT_XS).grid(
+        Label(frm_risk, text="0 = выкл", bg=BG, fg=FG_DIM, font=FONT_XS).grid(
             row=5, column=1, sticky="w", padx=(6, 0))
 
         self._lbl(frm_risk, "Макс. сделок/день").grid(row=6, column=0, sticky="w", pady=2)
         self.var_max_trades = tk.StringVar(value=str(data.get("max_trades_per_day", 0)))
         self._ent(frm_risk, self.var_max_trades, 8).grid(row=6, column=1, sticky="w", padx=(6, 0), pady=2)
-        tk.Label(frm_risk, text="0 = выкл", bg=BG, fg=FG_DIM, font=FONT_XS).grid(
+        Label(frm_risk, text="0 = выкл", bg=BG, fg=FG_DIM, font=FONT_XS).grid(
             row=7, column=1, sticky="w", padx=(6, 0))
 
         self._lbl(frm_risk, "Макс. убыт/день $").grid(row=8, column=0, sticky="w", pady=2)
         self.var_daily_loss = tk.StringVar(value=str(data.get("daily_loss_limit", 0)))
         self._ent(frm_risk, self.var_daily_loss, 8).grid(row=8, column=1, sticky="w", padx=(6, 0), pady=2)
-        tk.Label(frm_risk, text="0 = выкл", bg=BG, fg=FG_DIM, font=FONT_XS).grid(
+        Label(frm_risk, text="0 = выкл", bg=BG, fg=FG_DIM, font=FONT_XS).grid(
             row=9, column=1, sticky="w", padx=(6, 0))
 
-        tk.Frame(self, bg=DIVIDER, height=1).pack(fill="x", padx=12, pady=6)
+        Frame(self, bg=DIVIDER, height=1).pack(fill="x", padx=12, pady=6)
 
-        btn_frame = tk.Frame(self, bg=BG)
+        btn_frame = Frame(self, bg=BG)
         btn_frame.pack(pady=(0, 10))
         btn_save = self._btn(btn_frame, "Сохранить", self._save, accent=True)
         btn_save.pack(side="left", padx=6)
@@ -611,7 +640,7 @@ class SlaveDialog(tk.Toplevel):
         return ""
 
     def _add_symbol_row(self, master_sym: str = "", slave_sym: str = ""):
-        row_frame = tk.Frame(self.sym_frame, bg=BG)
+        row_frame = Frame(self.sym_frame, bg=BG)
         row_frame.pack(fill="x", pady=1)
         var_master = tk.StringVar(value=master_sym)
         var_slave = tk.StringVar(value=slave_sym)
@@ -631,7 +660,7 @@ class SlaveDialog(tk.Toplevel):
         btn_pick_m = self._btn(row_frame, "...", pick_m, small=True)
         btn_pick_m.pack(side="left", padx=1)
         _bind_tip(btn_pick_m, "Выбрать символ мастера из списка")
-        tk.Label(row_frame, text="\u2192", bg=BG, fg=FG_DIM, font=FONT_SM).pack(side="left", padx=3)
+        Label(row_frame, text="\u2192", bg=BG, fg=FG_DIM, font=FONT_SM).pack(side="left", padx=3)
         self._ent(row_frame, var_slave, 8).pack(side="left", fill="x", expand=True)
 
         def pick_s():
@@ -1078,14 +1107,17 @@ class TradesTable(tk.Frame):
 
 # ── ActivationWindow ──────────────────────────────────────────
 
-class ActivationWindow(tk.Toplevel):
+class ActivationWindow(Toplevel):
     def __init__(self, parent):
         super().__init__(parent)
         self.title("FTH Trade Copier — Активация")
-        self.configure(bg=BG_DEEP)
+        self.configure(fg_color=BG_DEEP)
         self.resizable(False, False)
         if os.path.exists(ICON_DEFAULT):
-            self.iconbitmap(ICON_DEFAULT)
+            try:
+                self.after(250, lambda: self.iconbitmap(ICON_DEFAULT))
+            except Exception:
+                pass
         self._activated = False
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         self.grab_set()
@@ -1123,7 +1155,7 @@ class ActivationWindow(tk.Toplevel):
         self.geometry(f"{w}x{h}+{x}+{y}")
 
     def _lbl(self, parent, text, **kw):
-        return tk.Label(parent, text=text, bg=BG_DEEP, fg=FG_LABEL, font=FONT_SM, **kw)
+        return Label(parent, text=text, bg=BG_DEEP, fg=FG_LABEL, font=FONT_SM, **kw)
 
     def _paste(self, event=None):
         try:
@@ -1143,52 +1175,54 @@ class ActivationWindow(tk.Toplevel):
             return self._paste(event)
 
     def _ent(self, parent, var=None, width=28):
-        e = tk.Entry(parent, textvariable=var, width=width,
-                     bg=BG_INPUT, fg=FG, insertbackground=FG, relief="flat",
-                     font=FONT, highlightthickness=1, highlightbackground=BORDER,
-                     highlightcolor=ACCENT)
+        e = Entry(parent, textvariable=var, width=width,
+                  bg=BG_INPUT, fg=FG, font=FONT,
+                  highlightthickness=1, highlightbackground=BORDER,
+                  highlightcolor=ACCENT)
         e.bind("<Control-v>", self._paste)
         e.bind("<Control-V>", self._paste)
         e.bind("<Control-KeyPress>", self._on_ctrl_key)
         return e
 
     def _build(self):
-        frm = tk.Frame(self, bg=BG_DEEP, padx=30, pady=20)
-        frm.pack(fill="both", expand=True)
+        # tk.Frame's padx/pady set internal padding; CTkFrame doesn't have that
+        # so we apply the padding to the .pack() call instead.
+        frm = Frame(self, bg=BG_DEEP)
+        frm.pack(fill="both", expand=True, padx=30, pady=20)
 
         logo_path = os.path.join(IMG_DIR, "convertico-fth_48x48.png")
         if os.path.exists(logo_path):
             try:
                 img = tk.PhotoImage(file=logo_path)
-                lbl_logo = tk.Label(frm, image=img, bg=BG_DEEP)
+                lbl_logo = Label(frm, image=img, bg=BG_DEEP, text="")
                 lbl_logo.image = img
                 lbl_logo.grid(row=0, column=0, columnspan=2, pady=(0, 10))
             except Exception:
                 pass
 
-        tk.Label(frm, text="Активация", bg=BG_DEEP, fg=ACCENT,
-                 font=FONT_TITLE).grid(row=1, column=0, columnspan=2, pady=(0, 15))
+        Label(frm, text="Активация", bg=BG_DEEP, fg=ACCENT,
+              font=FONT_TITLE).grid(row=1, column=0, columnspan=2, pady=(0, 15))
 
         self._lbl(frm, "Telegram ID").grid(row=2, column=0, sticky="w", pady=3)
         self.var_tg_id = tk.StringVar()
         self._ent(frm, self.var_tg_id, 22).grid(row=2, column=1, sticky="ew", padx=(8, 0), pady=3)
 
-        btn_code = tk.Button(frm, text="Получить код", command=self._request_code,
-                             bg=ACCENT, fg="white", relief="flat", font=FONT_BOLD,
-                             activebackground=ACCENT_H, cursor="hand2", padx=12, pady=3)
+        btn_code = Button(frm, text="Получить код", command=self._request_code,
+                          bg=ACCENT, fg="white", font=FONT_BOLD,
+                          activebackground=ACCENT_H, padx=12, pady=3)
         btn_code.grid(row=3, column=0, columnspan=2, pady=(8, 4))
 
         self._lbl(frm, "Код из Telegram").grid(row=4, column=0, sticky="w", pady=3)
         self.var_code = tk.StringVar()
         self._ent(frm, self.var_code, 22).grid(row=4, column=1, sticky="ew", padx=(8, 0), pady=3)
 
-        btn_verify = tk.Button(frm, text="Подтвердить", command=self._verify,
-                               bg=GREEN_DIM, fg="white", relief="flat", font=FONT_BOLD,
-                               activebackground=GREEN, cursor="hand2", padx=12, pady=3)
+        btn_verify = Button(frm, text="Подтвердить", command=self._verify,
+                            bg=GREEN_DIM, fg="white", font=FONT_BOLD,
+                            activebackground=GREEN, padx=12, pady=3)
         btn_verify.grid(row=5, column=0, columnspan=2, pady=(8, 4))
 
-        self.lbl_status = tk.Label(frm, text="", bg=BG_DEEP, fg=FG_DIM, font=FONT_SM,
-                                   wraplength=280)
+        self.lbl_status = Label(frm, text="", bg=BG_DEEP, fg=FG_DIM, font=FONT_SM,
+                                wraplength=280)
         self.lbl_status.grid(row=6, column=0, columnspan=2, pady=(4, 0))
 
     def _request_code(self):
@@ -1244,54 +1278,54 @@ class ActivationWindow(tk.Toplevel):
 
 # ── SettingsDialog ───────────────────────────────────────────
 
-class SettingsDialog(tk.Toplevel):
+class SettingsDialog(Toplevel):
     def __init__(self, parent: 'App'):
         super().__init__(parent)
         self.title("Настройки")
-        self.configure(bg=BG)
+        self.configure(fg_color=BG)
         self.resizable(False, False)
         self.transient(parent)
         self.grab_set()
         if os.path.exists(ICON_DEFAULT):
-            self.iconbitmap(ICON_DEFAULT)
-            self.wm_iconbitmap(ICON_DEFAULT)
+            try:
+                self.after(250, lambda: self.iconbitmap(ICON_DEFAULT))
+            except Exception:
+                pass
         self._app = parent
         self._active = parent._active_profile
 
-        frm = tk.Frame(self, bg=BG, padx=16, pady=12)
-        frm.pack(fill="both", expand=True)
+        frm = Frame(self, bg=BG)
+        frm.pack(fill="both", expand=True, padx=16, pady=12)
 
-        tk.Label(frm, text="ПРОФИЛИ", bg=BG, fg=FG_DIM, font=FONT_BOLD).pack(anchor="w", pady=(0, 6))
+        Label(frm, text="ПРОФИЛИ", bg=BG, fg=FG_DIM, font=FONT_BOLD).pack(anchor="w", pady=(0, 6))
 
-        tabs_f = tk.Frame(frm, bg=BG)
+        tabs_f = Frame(frm, bg=BG)
         tabs_f.pack(fill="x")
         self._profile_btns = []
         self._profile_names = []
         for i in range(5):
             name = parent._profiles[i].get("name", f"Профиль {i + 1}")
             self._profile_names.append(tk.StringVar(value=name))
-            btn = tk.Button(tabs_f, text=f" {name} ", command=lambda idx=i: self._select(idx),
-                            bg=BG_INPUT if i != self._active else ACCENT,
-                            fg="white" if i == self._active else FG_DIM,
-                            relief="flat", font=FONT_SM, cursor="hand2",
-                            activebackground=ACCENT_H, padx=6, pady=3)
+            btn = Button(tabs_f, text=f" {name} ", command=lambda idx=i: self._select(idx),
+                         bg=BG_INPUT if i != self._active else ACCENT,
+                         fg="white" if i == self._active else FG_DIM,
+                         font=FONT_SM, activebackground=ACCENT_H, padx=6, pady=3)
             btn.pack(side="left", padx=2)
             self._profile_btns.append(btn)
 
-        tk.Frame(frm, bg=DIVIDER, height=1).pack(fill="x", pady=8)
+        Frame(frm, bg=DIVIDER, height=1).pack(fill="x", pady=8)
 
-        row_name = tk.Frame(frm, bg=BG)
+        row_name = Frame(frm, bg=BG)
         row_name.pack(fill="x", pady=(0, 4))
-        tk.Label(row_name, text="Имя профиля:", bg=BG, fg=FG, font=FONT).pack(side="left")
-        self._ent_name = tk.Entry(row_name, bg=BG_INPUT, fg=FG, insertbackground=FG,
-                                   relief="flat", font=FONT, width=24)
+        Label(row_name, text="Имя профиля:", bg=BG, fg=FG, font=FONT).pack(side="left")
+        self._ent_name = Entry(row_name, bg=BG_INPUT, fg=FG, font=FONT, width=24)
         self._ent_name.pack(side="left", padx=(8, 0))
         self._ent_name.insert(0, self._profile_names[self._active].get())
         self._ent_name.bind("<KeyRelease>", self._on_name_change)
 
-        tk.Frame(frm, bg=DIVIDER, height=1).pack(fill="x", pady=8)
+        Frame(frm, bg=DIVIDER, height=1).pack(fill="x", pady=8)
 
-        btn_row = tk.Frame(frm, bg=BG)
+        btn_row = Frame(frm, bg=BG)
         btn_row.pack(fill="x")
 
         def switch_profile():
@@ -1301,9 +1335,9 @@ class SettingsDialog(tk.Toplevel):
             self._app._switch_profile(self._active)
             self.destroy()
 
-        btn_switch = tk.Button(btn_row, text="Сохранить", command=switch_profile,
-                               bg=ACCENT, fg="white", relief="flat", font=FONT_BOLD,
-                               activebackground=ACCENT_H, cursor="hand2", padx=16, pady=4)
+        btn_switch = Button(btn_row, text="Сохранить", command=switch_profile,
+                            bg=ACCENT, fg="white", font=FONT_BOLD,
+                            activebackground=ACCENT_H, padx=16, pady=4)
         btn_switch.pack(side="left")
         _bind_tip(btn_switch, "Сохранить и переключиться на профиль")
 
@@ -1321,10 +1355,10 @@ class SettingsDialog(tk.Toplevel):
                     parent=self,
                 )
 
-        btn_open_cfg = tk.Button(
+        btn_open_cfg = Button(
             btn_row, text="\U0001F4C2 Папка config", command=open_config_folder,
-            bg=BG_INPUT, fg=FG_DIM, relief="flat", font=FONT,
-            activebackground=BG_ROW_HOVER, cursor="hand2", padx=10, pady=4,
+            bg=BG_INPUT, fg=FG_DIM, font=FONT,
+            activebackground=BG_ROW_HOVER, padx=10, pady=4,
         )
         btn_open_cfg.pack(side="left", padx=(8, 0))
         _bind_tip(btn_open_cfg, f"Открыть папку с config.json в проводнике\n({APP_DATA_DIR})")
@@ -1333,15 +1367,15 @@ class SettingsDialog(tk.Toplevel):
             self.destroy()
             parent._check_update(force=True)
 
-        btn_update = tk.Button(btn_row, text="\U0001F504 Проверить обновления", command=check_updates,
-                               bg=BG_INPUT, fg=FG_DIM, relief="flat", font=FONT,
-                               activebackground=BG_ROW_HOVER, cursor="hand2", padx=10, pady=4)
+        btn_update = Button(btn_row, text="\U0001F504 Проверить обновления", command=check_updates,
+                            bg=BG_INPUT, fg=FG_DIM, font=FONT,
+                            activebackground=BG_ROW_HOVER, padx=10, pady=4)
         btn_update.pack(side="right")
         _bind_tip(btn_update, "Проверить наличие новой версии")
 
-        btn_close = tk.Button(btn_row, text="Закрыть", command=self.destroy,
-                              bg=BG_INPUT, fg=FG_DIM, relief="flat", font=FONT,
-                              activebackground=BG_ROW_HOVER, cursor="hand2", padx=10, pady=4)
+        btn_close = Button(btn_row, text="Закрыть", command=self.destroy,
+                           bg=BG_INPUT, fg=FG_DIM, font=FONT,
+                           activebackground=BG_ROW_HOVER, padx=10, pady=4)
         btn_close.pack(side="right", padx=6)
 
         self.update_idletasks()
