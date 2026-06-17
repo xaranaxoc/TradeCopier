@@ -1125,6 +1125,18 @@ class ActivationWindow(Toplevel):
         x, y, w, h = ui_scaling.clamp_to_work_area(x, y, w, h, wa)
         self.geometry(f"{w}x{h}+{x}+{y}")
 
+    def _set_status(self, text, fg=None):
+        """Update status label and grow window if content no longer fits."""
+        self._set_status(text, fg=fg or p.FG_DIM)
+        self.update_idletasks()
+        needed_h = self.winfo_reqheight()
+        cur_h = self.winfo_height()
+        if needed_h > cur_h:
+            x = self.winfo_x()
+            y = self.winfo_y()
+            w = self.winfo_width()
+            self.geometry(f"{w}x{needed_h}+{x}+{y}")
+
     def _lbl(self, parent, text, **kw):
         return Label(parent, text=text, bg=p.BG_DEEP, fg=p.FG_LABEL, font=f.SM, **kw)
 
@@ -1199,52 +1211,52 @@ class ActivationWindow(Toplevel):
     def _request_code(self):
         tg = self.var_tg_id.get().strip()
         if not tg:
-            self.lbl_status.config(text="Введите Telegram ID", fg=p.RED)
+            self._set_status("Введите Telegram ID", fg=p.RED)
             return
         try:
             tg_id = int(tg)
         except ValueError:
-            self.lbl_status.config(text="Telegram ID — только цифры", fg=p.RED)
+            self._set_status("Telegram ID — только цифры", fg=p.RED)
             return
         if not _LIC_OK:
-            self.lbl_status.config(text="Модуль лицензии не найден", fg=p.RED)
+            self._set_status("Модуль лицензии не найден", fg=p.RED)
             return
-        self.lbl_status.config(text="Отправка кода...", fg=p.FG_DIM)
+        self._set_status("Отправка кода...", fg=p.FG_DIM)
         self.update()
         ok, msg = lic_mod.request_code(tg_id)
         if ok:
-            self.lbl_status.config(text="Код отправлен в Telegram. Проверьте личные сообщения.", fg=p.GREEN_DIM)
+            self._set_status("Код отправлен в Telegram. Проверьте личные сообщения.", fg=p.GREEN_DIM)
         else:
-            self.lbl_status.config(text=f"Ошибка: {msg}", fg=p.RED)
+            self._set_status(f"Ошибка: {msg}", fg=p.RED)
 
     def _verify(self):
         tg = self.var_tg_id.get().strip()
         code = self.var_code.get().strip()
         if not tg or not code:
-            self.lbl_status.config(text="Заполните оба поля", fg=p.RED)
+            self._set_status("Заполните оба поля", fg=p.RED)
             return
         try:
             tg_id = int(tg)
         except ValueError:
-            self.lbl_status.config(text="Telegram ID — только цифры", fg=p.RED)
+            self._set_status("Telegram ID — только цифры", fg=p.RED)
             return
         if not _LIC_OK:
-            self.lbl_status.config(text="Модуль лицензии не найден", fg=p.RED)
+            self._set_status("Модуль лицензии не найден", fg=p.RED)
             return
-        self.lbl_status.config(text="Проверка...", fg=p.FG_DIM)
+        self._set_status("Проверка...", fg=p.FG_DIM)
         self.update()
         ok, result = lic_mod.verify_code(tg_id, code)
         if ok:
-            self.lbl_status.config(text="Активация успешна!", fg=p.GREEN_DIM)
+            self._set_status("Активация успешна!", fg=p.GREEN_DIM)
             self._activated = True  # успешная активация закрывает только окно, не прогу
             self.after(500, self.destroy)
         elif result and result.startswith("device_limit"):
             max_d = result.split(":")[-1]
-            self.lbl_status.config(
-                text=f"Лимит устройств ({max_d}) превышён.\nИспользуйте /reset в боте для сброса.",
+            self._set_status(
+                f"Лимит устройств ({max_d}) превышён.\nИспользуйте /reset в боте для сброса.",
                 fg=p.RED)
         else:
-            self.lbl_status.config(text=f"Ошибка: {result}", fg=p.RED)
+            self._set_status(f"Ошибка: {result}", fg=p.RED)
 
 
 # ── SettingsDialog ───────────────────────────────────────────
