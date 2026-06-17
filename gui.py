@@ -92,7 +92,10 @@ IMG_DIR = os.path.join(_BUNDLE_DIR, "img")
 ICON_DEFAULT = os.path.join(IMG_DIR, "convertico-fth.ico")
 ICON_CYAN = os.path.join(IMG_DIR, "convertico-fth-cyan.ico")
 
-from palette import get_palette, get_fonts, apply_ttk_styles, set_theme, get_theme_name
+from palette import (
+    get_palette, get_fonts, apply_ttk_styles,
+    set_theme, get_theme_name, available_themes, THEME_LABELS,
+)
 
 # ── Apply saved theme before building aliases ───────────────────
 def _apply_saved_theme():
@@ -1309,6 +1312,36 @@ class SettingsDialog(Toplevel):
 
         Frame(frm, bg=p.DIVIDER, height=1).pack(fill="x", pady=8)
 
+        # ── Theme picker ───────────────────────────────────────────
+        Label(frm, text="ТЕМА", bg=p.BG, fg=p.FG_DIM, font=f.BOLD).pack(anchor="w", pady=(0, 6))
+
+        row_theme = Frame(frm, bg=p.BG)
+        row_theme.pack(fill="x", pady=(0, 4))
+        Label(row_theme, text="Оформление:", bg=p.BG, fg=p.FG, font=f.DEFAULT).pack(side="left")
+
+        self._theme_names = available_themes()
+        self._initial_theme = get_theme_name()
+        labels = [THEME_LABELS.get(n, n) for n in self._theme_names]
+        cur_label = THEME_LABELS.get(self._initial_theme, self._initial_theme)
+        self._var_theme = tk.StringVar(value=cur_label)
+
+        om = tk.OptionMenu(row_theme, self._var_theme, *labels)
+        om.config(bg=p.BG_INPUT, fg=p.FG, font=f.DEFAULT,
+                  activebackground=p.BG_ROW_HOVER, activeforeground=p.FG,
+                  highlightthickness=0, bd=0, relief="flat")
+        om["menu"].config(bg=p.BG_INPUT, fg=p.FG, font=f.DEFAULT,
+                          activebackground=p.ACCENT, activeforeground=p.ACCENT_FG,
+                          bd=0)
+        om.pack(side="left", padx=(8, 0))
+
+        self._lbl_theme_hint = Label(
+            frm, text="Изменение темы применится после перезапуска приложения.",
+            bg=p.BG, fg=p.FG_DIM, font=f.SM,
+        )
+        self._lbl_theme_hint.pack(anchor="w", pady=(2, 0))
+
+        Frame(frm, bg=p.DIVIDER, height=1).pack(fill="x", pady=8)
+
         btn_row = Frame(frm, bg=p.BG)
         btn_row.pack(fill="x")
 
@@ -1316,7 +1349,30 @@ class SettingsDialog(Toplevel):
             new_name = self._ent_name.get().strip()
             if new_name:
                 self._app._profiles[self._active]["name"] = new_name
+            # Persist theme choice if changed (takes effect on restart).
+            chosen_label = self._var_theme.get()
+            chosen_name = self._initial_theme
+            for _n in self._theme_names:
+                if THEME_LABELS.get(_n, _n) == chosen_label:
+                    chosen_name = _n
+                    break
+            theme_changed = chosen_name != self._initial_theme
+            if theme_changed:
+                try:
+                    set_theme(chosen_name)
+                except Exception:
+                    pass
             self._app._switch_profile(self._active)
+            if theme_changed:
+                try:
+                    self._app._save_config()
+                except Exception:
+                    pass
+                messagebox.showinfo(
+                    "Тема изменена",
+                    "Новая тема будет применена после перезапуска приложения.",
+                    parent=self._app,
+                )
             self.destroy()
 
         btn_switch = Button(btn_row, text="Сохранить", command=switch_profile,

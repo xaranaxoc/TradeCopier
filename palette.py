@@ -117,6 +117,37 @@ NEON_CYAN = Palette(
     DIVIDER="#111120",
 )
 
+LIGHT_PRO = Palette(
+    # Professional light theme tuned for trading terminals.
+    # Slightly cool palette so the cyan accent stays cohesive.
+    BG_DEEP="#F5F8FB",      # main app background
+    BG="#F5F8FB",           # frames / panels
+    BG_ROW="#FFFFFF",       # table rows, cards
+    BG_ROW_HOVER="#F0FAFD", # hovered row (very pale cyan tint)
+    BG_INPUT="#FFFFFF",     # entry / combobox background
+    BG_HEADER="#EEF3F7",    # column headers, tab strip
+    FG="#1E293B",           # primary text
+    FG_DIM="#64748B",       # secondary text / labels
+    FG_LABEL="#64748B",     # field labels
+    FG_MUTED="#94A3B8",     # disabled / muted text
+    ACCENT="#00B4D8",       # primary accent (cyan)
+    ACCENT_H="#009FC0",     # hover state (darker cyan on light bg)
+    ACCENT_DIM="#7FD9EB",   # disabled accent
+    ACCENT_FG="#FFFFFF",    # text on accent-coloured buttons
+    CYAN_GLOW="#E1F8FC",    # accent badge / soft glow
+    GREEN="#00A86B",        # profit / success
+    GREEN_DIM="#00875A",
+    GREEN_GLOW="#E7F8F0",   # profit badge background
+    RED="#E53935",          # loss / danger
+    RED_DIM="#B71C1C",
+    RED_GLOW="#FDECEC",     # loss badge background
+    YELLOW="#F59E0B",       # warning
+    YELLOW_DIM="#C97E08",
+    BORDER="#D8E3EA",
+    BORDER_LIGHT="#E2E8F0",
+    DIVIDER="#EEF3F7",
+)
+
 WARM_DARK = Palette(
     BG_DEEP="#0D0A08",
     BG="#12100E",
@@ -171,6 +202,14 @@ class Theme:
 THEMES: Dict[str, Theme] = {
     "neon_cyan": Theme(palette=NEON_CYAN, fonts=DEFAULT_FONTS),
     "warm_dark": Theme(palette=WARM_DARK, fonts=DEFAULT_FONTS),
+    "light_pro": Theme(palette=LIGHT_PRO, fonts=DEFAULT_FONTS),
+}
+
+# Human-readable names for the theme picker UI.
+THEME_LABELS: Dict[str, str] = {
+    "neon_cyan": "Neon Cyan (тёмная)",
+    "warm_dark": "Warm Dark (тёмная)",
+    "light_pro": "Light Pro (светлая)",
 }
 
 DEFAULT_THEME = "neon_cyan"
@@ -285,5 +324,6 @@ __all__ = [
     "get_palette", "get_fonts", "set_theme",
     "get_theme_name", "available_themes",
     "apply_ttk_styles",
-    "NEON_CYAN", "WARM_DARK", "DEFAULT_FONTS",
+    "NEON_CYAN", "WARM_DARK", "LIGHT_PRO", "DEFAULT_FONTS",
+    "THEME_LABELS",
 ]
