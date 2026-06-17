@@ -823,22 +823,27 @@ class AccountRow:
         self.lbl_name.grid(row=r, column=2, padx=(4, 4), pady=6, sticky="ew")
         self._widgets.append(self.lbl_name)
 
-        self.lbl_login = Label(self._parent, text="\u2014", bg=bg, fg=p.FG_DIM,
+        # Empty-state placeholders are blank strings rather than em-dashes
+        # so the row reads cleaner against a light background (em-dashes
+        # in slim Segoe UI look like multiple underscores on Light Pro).
+        # Values are populated from MT5 polling as soon as the slave
+        # connects; columns that never get filled simply stay blank.
+        self.lbl_login = Label(self._parent, text="", bg=bg, fg=p.FG_DIM,
                                font=f.MONO_SM, anchor="w")
         self.lbl_login.grid(row=r, column=3, padx=4, pady=6, sticky="ew")
         self._widgets.append(self.lbl_login)
 
-        self.lbl_balance = Label(self._parent, text="\u2014", bg=bg, fg=p.FG,
+        self.lbl_balance = Label(self._parent, text="", bg=bg, fg=p.FG,
                                  font=f.VAL_BOLD, anchor="e")
         self.lbl_balance.grid(row=r, column=4, padx=4, pady=6, sticky="ew")
         self._widgets.append(self.lbl_balance)
 
-        self.lbl_equity = Label(self._parent, text="\u2014", bg=bg, fg=p.FG_DIM,
+        self.lbl_equity = Label(self._parent, text="", bg=bg, fg=p.FG_DIM,
                                 font=f.MONO_SM, anchor="e")
         self.lbl_equity.grid(row=r, column=5, padx=4, pady=6, sticky="ew")
         self._widgets.append(self.lbl_equity)
 
-        self.lbl_pnl = Label(self._parent, text="\u2014", bg=bg, fg=p.FG_DIM,
+        self.lbl_pnl = Label(self._parent, text="", bg=bg, fg=p.FG_DIM,
                              font=f.VAL, anchor="e")
         self.lbl_pnl.grid(row=r, column=6, padx=4, pady=6, sticky="ew")
         self._widgets.append(self.lbl_pnl)
@@ -847,7 +852,7 @@ class AccountRow:
         sym_text = "  ".join(f"{k}\u2192{v}" for k, v in list(sym_map.items())[:3])
         if len(sym_map) > 3:
             sym_text += f" +{len(sym_map) - 3}"
-        self.lbl_symbols = Label(self._parent, text=sym_text or "\u2014", bg=bg, fg=p.FG_DIM,
+        self.lbl_symbols = Label(self._parent, text=sym_text, bg=bg, fg=p.FG_DIM,
                                  font=f.XS, anchor="w")
         self.lbl_symbols.grid(row=r, column=7, padx=4, pady=6, sticky="ew")
         self._widgets.append(self.lbl_symbols)
@@ -861,7 +866,7 @@ class AccountRow:
         self._widgets.append(self.lbl_risk)
 
         mtd = d.get("max_trades_per_day", 0)
-        self.lbl_trades_day = Label(self._parent, text=str(mtd) if mtd else "\u2014",
+        self.lbl_trades_day = Label(self._parent, text=str(mtd) if mtd else "",
                                     bg=bg, fg=p.FG_DIM, font=f.SM, anchor="center")
         self.lbl_trades_day.grid(row=r, column=9, padx=4, pady=6, sticky="ew")
         self._widgets.append(self.lbl_trades_day)
@@ -872,7 +877,7 @@ class AccountRow:
                                        bg=p.BG_INPUT, highlightthickness=0, bd=0)
         self._loss_canvas.grid(row=r, column=10, padx=4, pady=6, sticky="ew")
         self._loss_fill = self._loss_canvas.create_rectangle(0, 0, 0, 16, fill="", outline="")
-        self._loss_text = self._loss_canvas.create_text(bar_w // 2, 8, text="\u2014",
+        self._loss_text = self._loss_canvas.create_text(bar_w // 2, 8, text="",
                                                          fill=p.FG_DIM, font=f.XS)
         if dll > 0:
             self._loss_canvas.itemconfigure(self._loss_text, text=f"${dll:.0f}",
@@ -1735,19 +1740,19 @@ class App(ctk.CTk):
         btn_test_master.grid(row=0, column=5, padx=2)
         _bind_tip(btn_test_master, "Тест: BUY 0.01 лот на мастере")
 
-        self.lbl_master_login = Label(master_f, text="\u2014", bg=p.BG_ROW, fg=p.FG_DIM,
+        self.lbl_master_login = Label(master_f, text="", bg=p.BG_ROW, fg=p.FG_DIM,
                                       font=f.MONO_SM, anchor="w")
         self.lbl_master_login.grid(row=0, column=6, padx=6, sticky="ew")
 
-        self.lbl_master_bal = Label(master_f, text="\u2014", bg=p.BG_ROW, fg=p.FG,
+        self.lbl_master_bal = Label(master_f, text="", bg=p.BG_ROW, fg=p.FG,
                                     font=f.VAL_BOLD, anchor="e")
         self.lbl_master_bal.grid(row=0, column=7, padx=4, sticky="ew")
 
-        self.lbl_master_eq = Label(master_f, text="\u2014", bg=p.BG_ROW, fg=p.FG_DIM,
+        self.lbl_master_eq = Label(master_f, text="", bg=p.BG_ROW, fg=p.FG_DIM,
                                    font=f.MONO_SM, anchor="e")
         self.lbl_master_eq.grid(row=0, column=8, padx=4, sticky="ew")
 
-        self.lbl_master_pnl = Label(master_f, text="\u2014", bg=p.BG_ROW, fg=p.FG_DIM,
+        self.lbl_master_pnl = Label(master_f, text="", bg=p.BG_ROW, fg=p.FG_DIM,
                                     font=f.VAL, anchor="e")
         self.lbl_master_pnl.grid(row=0, column=9, padx=4, sticky="ew")
 
@@ -2603,61 +2608,156 @@ class App(ctk.CTk):
 
     # ── Hot theme switch ────────────────────────────────────────
     def _apply_runtime_theme(self, old_palette) -> int:
-        """Repaint the running UI after ``set_theme(...)`` has been called.
+        """Hot-swap theme by REBUILDING the UI in-place.
 
-        * Re-applies the CTk light/dark appearance mode so dropdowns and
-          system widgets follow the new theme.
-        * Rebuilds ttk Treeview / Notebook styles.
-        * Walks every widget under ``self`` (and every orphan toplevel)
-          and remaps any colour attribute that matches a slot in
-          *old_palette* to the same slot in the new palette.
-        * Updates the CTk root's ``fg_color`` explicitly (root windows
-          don't always show up in the widget walk for ``fg_color``).
+        The earlier widget-tree-remap path had blind spots — some CTk
+        widgets (notably the header bar and CTk Buttons in the toolbars)
+        don't reliably repaint when their ``fg_color`` is changed via
+        ``configure()`` from outside CTk's own initialization path.
 
-        Returns the number of widget attribute writes performed —
-        useful in logs to confirm the walk did something.
+        Rebuild is bullet-proof: every widget is re-constructed using
+        the ``p`` / ``f`` proxies, which read from the *active* theme,
+        so the new palette and fonts are applied uniformly.
+
+        Volatile state (master-path entry, log text, paned sash
+        positions, active notebook tab, trader-running state) is
+        captured before destroying widgets and restored after rebuild.
+        Persistent state (profiles, slaves, trades, window geometry)
+        lives in ``config.json`` / ``trades.json`` and is reloaded by
+        the standard ``_load_config()`` / trades-restore paths called
+        from ``_build_ui``.
         """
         from palette import get_palette as _gp
-        new_pal = _gp()
-        # CTk appearance + default colour theme
+
+        # 1. Snapshot volatile widget-bound state.
+        saved_master_path = ""
+        try:
+            saved_master_path = self.var_master_path.get()
+        except Exception:
+            pass
+
+        saved_log = ""
+        if hasattr(self, "log_text"):
+            try:
+                saved_log = self.log_text.get("1.0", "end-1c")
+            except Exception:
+                pass
+
+        saved_sash: list = []
+        if hasattr(self, "_paned"):
+            try:
+                # PanedWindow exposes sash coordinates per gap.
+                for i in range(max(0, len(self._paned.panes()) - 1)):
+                    try:
+                        saved_sash.append(self._paned.sash_coord(i)[1])
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+        saved_active_tab = 0
+        if hasattr(self, "notebook"):
+            try:
+                saved_active_tab = self.notebook.index(self.notebook.select())
+            except Exception:
+                pass
+
+        # 2. Persist current config so the rebuild re-creates the same
+        #    profile/slaves layout out of disk.
+        try:
+            self._save_config()
+        except Exception:
+            pass
+
+        # 3. Re-apply CTk appearance for the NEW theme (light/dark mode).
         try:
             apply_theme()
         except Exception:
             pass
-        # ttk styles (Treeview / Notebook)
+
+        # 4. Tear down every child widget of the root.
+        self._rows = []
+        self._next_row = 1
+        for child in list(self.winfo_children()):
+            try:
+                child.destroy()
+            except Exception:
+                pass
+
+        # 5. Bring the CTk root background up to date (the root canvas
+        #    isn't re-created, so explicitly set its fg_color).
+        try:
+            new_pal = _gp()
+            self.configure(fg_color=new_pal.BG_DEEP)
+        except Exception:
+            pass
+
+        # 6. Re-apply ttk styles (Treeview / Notebook) for the new theme
+        #    BEFORE _build_ui so TradesTable picks up the right palette.
         try:
             apply_ttk_styles(scale_fn=ui_scaling.scale)
         except Exception:
             pass
-        # Walk the widget tree
-        changes = 0
+
+        # 7. Rebuild the whole UI from scratch.
         try:
-            remap = build_remap(old_palette, new_pal)
-            changes = remap_widget_colors(self, remap)
+            self._build_ui()
         except Exception:
             pass
-        # Update CTk root background (covered by walk too, but belt-and-braces)
+
+        # 8. Restore state.
         try:
-            self.configure(fg_color=new_pal.BG_DEEP)
+            self.var_master_path.set(saved_master_path)
         except Exception:
             pass
-        # Force redraw on Treeviews — ttk style changes propagate but a
-        # ``selection clear`` nudge avoids stale-row-paint glitches.
         try:
-            for w in self.winfo_children():
-                for sub in self._iter_widgets(w):
-                    if sub.winfo_class() == "Treeview":
-                        try:
-                            sub.event_generate("<<TreeviewThemeChanged>>")
-                        except Exception:
-                            pass
+            self._load_config()
         except Exception:
             pass
-        return changes
+
+        # 9. Restore log buffer.
+        if saved_log and hasattr(self, "log_text"):
+            try:
+                self.log_text.configure(state="normal")
+                self.log_text.insert("1.0", saved_log)
+                self.log_text.configure(state="disabled")
+                self.log_text.see("end")
+            except Exception:
+                pass
+
+        # 10. Restore paned sash positions (after geometry settles).
+        if hasattr(self, "_paned") and saved_sash:
+            try:
+                self.update_idletasks()
+                for i, y in enumerate(saved_sash):
+                    try:
+                        self._paned.sash_place(i, 0, y)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+        # 11. Restore active notebook tab.
+        if hasattr(self, "notebook"):
+            try:
+                self.notebook.select(saved_active_tab)
+            except Exception:
+                pass
+
+        # 12. Re-derive trader running state on Start/Stop buttons.
+        if getattr(self, "_trader", None) is not None and getattr(self._trader, "is_running", lambda: False)():
+            try:
+                self.btn_start.configure(state="disabled")
+                self.btn_stop.configure(state="normal")
+            except Exception:
+                pass
+
+        return 1
 
     @staticmethod
     def _iter_widgets(root):
-        """Generator: every descendant widget of *root* (root excluded)."""
+        """Generator: every descendant widget of *root* (root excluded).
+        Kept as a small util for callers that want a flat walk."""
         stack = list(getattr(root, "winfo_children", lambda: [])())
         while stack:
             w = stack.pop()
