@@ -1083,6 +1083,7 @@ class ActivationWindow(Toplevel):
         super().__init__(parent)
         self.title("FTH Trade Copier — Активация")
         self.configure(fg_color=p.BG_DEEP)
+        self.resizable(False, False)
         if os.path.exists(ICON_DEFAULT):
             try:
                 self.after(250, lambda: self.iconbitmap(ICON_DEFAULT))
@@ -1116,17 +1117,11 @@ class ActivationWindow(Toplevel):
         x = wl + ((wr - wl) - w) // 2
         y = wt + ((wb - wt) - h) // 2
         x, y, w, h = ui_scaling.clamp_to_work_area(x, y, w, h, wa)
-        # Set position only — do NOT bake explicit height into geometry
-        # so the window manager can grow the window when status text appears.
-        self.geometry(f"+{x}+{y}")
-        # Lock width but allow vertical growth for status messages.
-        self.minsize(w, h)
-        self.maxsize(w, wb - wt)
+        self.geometry(f"{w}x{h}+{x}+{y}")
 
     def _set_status(self, text, fg=None):
-        """Update status label and let the window grow vertically if needed."""
+        """Update status label (space is pre-reserved, wraplength is dynamic)."""
         self.lbl_status.config(text=text, fg=fg or p.FG_DIM)
-        self.update_idletasks()
 
     def _lbl(self, parent, text, **kw):
         return Label(parent, text=text, bg=p.BG_DEEP, fg=p.FG_LABEL, font=f.SM, **kw)
@@ -1195,9 +1190,16 @@ class ActivationWindow(Toplevel):
                             activebackground=p.GREEN, padx=12, pady=3)
         btn_verify.grid(row=5, column=0, columnspan=2, pady=(8, 4))
 
-        self.lbl_status = Label(frm, text="", bg=p.BG_DEEP, fg=p.FG_DIM, font=f.SM,
-                                wraplength=280)
-        self.lbl_status.grid(row=6, column=0, columnspan=2, pady=(4, 0))
+        self.lbl_status = Label(frm, text="", bg=p.BG_DEEP, fg=p.FG_DIM, font=f.SM)
+        self.lbl_status.grid(row=6, column=0, columnspan=2, pady=(4, 0), sticky="ew")
+        # Auto-adjust wraplength to fit the actual available width so text
+        # never overflows; reserve 3 lines of height for status messages.
+        self.lbl_status.bind(
+            "<Configure>",
+            lambda e: e.widget.configure(wraplength=max(1, e.width - 2)))
+        import tkinter.font as tkfont
+        _sm_h = tkfont.Font(font=f.SM).metrics("linespace")
+        frm.grid_rowconfigure(6, minsize=_sm_h * 3 + 8)
 
     def _request_code(self):
         tg = self.var_tg_id.get().strip()
