@@ -1083,7 +1083,6 @@ class ActivationWindow(Toplevel):
         super().__init__(parent)
         self.title("FTH Trade Copier — Активация")
         self.configure(fg_color=p.BG_DEEP)
-        self.resizable(False, False)
         if os.path.exists(ICON_DEFAULT):
             try:
                 self.after(250, lambda: self.iconbitmap(ICON_DEFAULT))
@@ -1093,12 +1092,7 @@ class ActivationWindow(Toplevel):
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         self.grab_set()
         self._build()
-        # Pre-reserve vertical space for 2-line status messages so the
-        # window never needs to grow after _center_on_screen locks the size.
-        self.lbl_status.config(text="X\nX")
-        self.update_idletasks()
         self._center_on_screen()
-        self.lbl_status.config(text="")
 
     def _on_close(self):
         # Закрытие окна активации без успешной активации = выход из всей программы.
@@ -1115,24 +1109,24 @@ class ActivationWindow(Toplevel):
 
     def _center_on_screen(self):
         self.update_idletasks()
-        # Fall back to requested size if the window isn't fully mapped yet —
-        # otherwise winfo_width()/height() can briefly return 1 and the dialog
-        # opens as a 1×1 strip.
         w = max(self.winfo_reqwidth(), self.winfo_width())
         h = max(self.winfo_reqheight(), self.winfo_height())
-        # Use the work area of the parent monitor (multi-monitor safe) instead
-        # of the absolute screen origin, which lands the dialog on the primary
-        # display even when the parent is on a secondary one.
         wa = ui_scaling.get_work_area_for_window(self.master or self)
         wl, wt, wr, wb = wa
         x = wl + ((wr - wl) - w) // 2
         y = wt + ((wb - wt) - h) // 2
         x, y, w, h = ui_scaling.clamp_to_work_area(x, y, w, h, wa)
-        self.geometry(f"{w}x{h}+{x}+{y}")
+        # Set position only — do NOT bake explicit height into geometry
+        # so the window manager can grow the window when status text appears.
+        self.geometry(f"+{x}+{y}")
+        # Lock width but allow vertical growth for status messages.
+        self.minsize(w, h)
+        self.maxsize(w, wb - wt)
 
     def _set_status(self, text, fg=None):
-        """Update status label text (space is pre-reserved in __init__)."""
+        """Update status label and let the window grow vertically if needed."""
         self.lbl_status.config(text=text, fg=fg or p.FG_DIM)
+        self.update_idletasks()
 
     def _lbl(self, parent, text, **kw):
         return Label(parent, text=text, bg=p.BG_DEEP, fg=p.FG_LABEL, font=f.SM, **kw)
