@@ -118,34 +118,36 @@ NEON_CYAN = Palette(
 )
 
 LIGHT_PRO = Palette(
-    # Professional light theme tuned for trading terminals.
-    # Slightly cool palette so the cyan accent stays cohesive.
-    BG_DEEP="#F5F8FB",      # main app background
-    BG="#F5F8FB",           # frames / panels
-    BG_ROW="#FFFFFF",       # table rows, cards
-    BG_ROW_HOVER="#F0FAFD", # hovered row (very pale cyan tint)
-    BG_INPUT="#FFFFFF",     # entry / combobox background
-    BG_HEADER="#EEF3F7",    # column headers, tab strip
-    FG="#1E293B",           # primary text
-    FG_DIM="#64748B",       # secondary text / labels
-    FG_LABEL="#64748B",     # field labels
-    FG_MUTED="#94A3B8",     # disabled / muted text
-    ACCENT="#00B4D8",       # primary accent (cyan)
-    ACCENT_H="#009FC0",     # hover state (darker cyan on light bg)
-    ACCENT_DIM="#7FD9EB",   # disabled accent
-    ACCENT_FG="#FFFFFF",    # text on accent-coloured buttons
-    CYAN_GLOW="#E1F8FC",    # accent badge / soft glow
-    GREEN="#00A86B",        # profit / success
-    GREEN_DIM="#00875A",
-    GREEN_GLOW="#E7F8F0",   # profit badge background
-    RED="#E53935",          # loss / danger
-    RED_DIM="#B71C1C",
-    RED_GLOW="#FDECEC",     # loss badge background
-    YELLOW="#F59E0B",       # warning
-    YELLOW_DIM="#C97E08",
-    BORDER="#D8E3EA",
-    BORDER_LIGHT="#E2E8F0",
-    DIVIDER="#EEF3F7",
+    # Soft professional light theme — tuned for trading terminals.
+    # Uses Tailwind slate/cyan/emerald 600-level tones so accents are
+    # readable on white without feeling neon, and body text is slate-700
+    # rather than slate-900 to reduce harsh contrast.
+    BG_DEEP="#F4F6F9",      # page background (cool soft neutral)
+    BG="#F4F6F9",           # frames / panels
+    BG_ROW="#FFFFFF",       # cards / table rows (keeps subtle depth)
+    BG_ROW_HOVER="#EEF2F7", # hovered row — neutral, not cyan-tinted
+    BG_INPUT="#FBFCFD",     # off-white inputs (less harsh than pure #FFF)
+    BG_HEADER="#EEF1F5",    # column headers, tab strip
+    FG="#334155",           # primary text (slate-700 — soft yet legible)
+    FG_DIM="#64748B",       # secondary text (slate-500)
+    FG_LABEL="#64748B",     # field labels (slate-500)
+    FG_MUTED="#94A3B8",     # disabled / muted (slate-400)
+    ACCENT="#0891B2",       # cyan-600 — darker, calmer than neon #00B4D8
+    ACCENT_H="#0E7490",     # cyan-700 hover
+    ACCENT_DIM="#67E8F9",   # cyan-300 — disabled accent
+    ACCENT_FG="#FFFFFF",    # text on accent buttons
+    CYAN_GLOW="#ECFEFF",    # cyan-50 — soft badge background
+    GREEN="#059669",        # emerald-600 (profit, less harsh than #00A86B)
+    GREEN_DIM="#047857",    # emerald-700
+    GREEN_GLOW="#ECFDF5",   # emerald-50 — profit badge bg
+    RED="#DC2626",          # red-600 (loss, softer than #E53935)
+    RED_DIM="#B91C1C",      # red-700
+    RED_GLOW="#FEF2F2",     # red-50 — loss badge bg
+    YELLOW="#D97706",       # amber-600 (warning)
+    YELLOW_DIM="#B45309",   # amber-700
+    BORDER="#E2E8F0",       # slate-200 — subtle borders
+    BORDER_LIGHT="#F1F5F9", # slate-100 — even softer dividers
+    DIVIDER="#EEF1F5",
 )
 
 WARM_DARK = Palette(
