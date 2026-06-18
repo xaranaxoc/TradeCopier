@@ -26,6 +26,20 @@ import uuid
 import subprocess
 import threading
 import ctypes
+import warnings
+
+# Silence CustomTkinter's noisy HighDPI warning about tk.PhotoImage. We
+# use tk.PhotoImage in a handful of places (header logo, slave-row
+# avatars, etc.) where the loss of HighDPI scaling is irrelevant —
+# converting them all to CTkImage would pull Pillow into the import
+# graph for no visible benefit, and the warning floods the console when
+# running gui.py from py.exe.
+warnings.filterwarnings(
+    "ignore",
+    message=r".*Given image is not CTkImage.*",
+    category=UserWarning,
+)
+
 import tkinter as tk
 import customtkinter as ctk
 from datetime import datetime, timedelta
