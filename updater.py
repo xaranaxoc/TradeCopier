@@ -2,7 +2,7 @@ import threading
 import requests
 
 API_URL = "http://2.26.142.85:8000"
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 
 
 def check_update(callback=None, no_update=None):

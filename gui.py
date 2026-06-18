@@ -1363,7 +1363,7 @@ class SettingsDialog(Toplevel):
         om.pack(side="left", padx=(8, 0))
 
         self._lbl_theme_hint = Label(
-            frm, text="Тема применяется мгновенно, без перезапуска.",
+            frm, text="Сохраните чтобы применить тему.",
             bg=p.BG, fg=p.FG_DIM, font=f.SM,
         )
         self._lbl_theme_hint.pack(anchor="w", pady=(2, 0))
@@ -1715,9 +1715,13 @@ class App(ctk.CTk):
         Label(master_f, text="МАСТЕР", bg=p.BG_ROW, fg=p.ACCENT, font=f.BOLD).grid(row=0, column=0, padx=(4, 8))
 
         self.var_master_path = tk.StringVar()
+        # Path is set via the "..." browse button; keeping the entry
+        # read-only avoids accidental edits to a value that needs to
+        # point at a real terminal64.exe on disk.
         Entry(master_f, textvariable=self.var_master_path, width=36,
               bg=p.BG_INPUT, fg=p.FG, font=f.SM, highlightthickness=1,
-              highlightbackground=p.BORDER, highlightcolor=p.ACCENT).grid(row=0, column=1, padx=4, sticky="ew")
+              highlightbackground=p.BORDER, highlightcolor=p.ACCENT,
+              state="readonly").grid(row=0, column=1, padx=4, sticky="ew")
         btn_browse_m = self._make_btn(master_f, "...", self._browse_master)
         btn_browse_m.grid(row=0, column=2, padx=2)
         _bind_tip(btn_browse_m, "Выбрать путь к terminal64.exe мастера")
@@ -1876,7 +1880,9 @@ class App(ctk.CTk):
         self.lbl_stats = Label(stats_f, text="", bg=p.BG_DEEP, fg=p.FG_DIM, font=f.SM)
         self.lbl_stats.pack(side="left")
         if _UPD_OK:
-            Label(stats_f, text=f"v{upd_mod.VERSION}", bg=p.BG_DEEP, fg=p.FG_MUTED,
+            # Version uses the theme ACCENT color (cyan on Neon, blue on
+            # Light Pro) so the build tag has a bit of brand identity.
+            Label(stats_f, text=f"v{upd_mod.VERSION}", bg=p.BG_DEEP, fg=p.ACCENT,
                   font=f.SM).pack(side="right")
 
     # ── Info toggle ─────────────────────────────────────────
@@ -1884,9 +1890,13 @@ class App(ctk.CTk):
     def _toggle_info(self):
         _Tip.enabled = not _Tip.enabled
         if _Tip.enabled:
-            self.btn_info.configure(bg=p.ACCENT, fg=p.ACCENT_FG)
+            # When info-mode is ON, the button stays solid-accent on hover
+            # so the active state remains obvious (no fade-to-row-hover).
+            self.btn_info.configure(bg=p.ACCENT, fg=p.ACCENT_FG,
+                                    activebackground=p.ACCENT)
         else:
-            self.btn_info.configure(bg=p.BG_INPUT, fg=p.FG_DIM)
+            self.btn_info.configure(bg=p.BG_INPUT, fg=p.FG_DIM,
+                                    activebackground=p.BG_ROW_HOVER)
             _Tip.hide()
 
     # ── Мастер ──────────────────────────────────────────────
