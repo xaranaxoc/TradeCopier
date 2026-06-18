@@ -1488,23 +1488,16 @@ class SettingsDialog(Toplevel):
 class App(ctk.CTk):
     def __init__(self):
         super().__init__()
-        # Triple-lock the window during __init__ so Windows can never
-        # display it at the default CTk size before our saved geometry
-        # takes effect. This is the same approach native apps (MT5,
-        # Notepad++, IDEs) use: keep the HWND hidden, set its size via
-        # the Win32 API directly, then ShowWindow it once everything is
-        # ready.
-        #   (1) Tk-level withdraw so Tk thinks the window is hidden.
-        #   (2) layered-window alpha=0 so even a transient map is
-        #       invisible.
-        #   (3) (later, after we know the saved geometry) Win32
-        #       SetWindowPos with SWP_HIDEWINDOW to size the HWND at OS
-        #       level — this is the critical step that suppresses the
-        #       CW_USEDEFAULT first-map flash.
-        try:
-            self.withdraw()
-        except Exception:
-            pass
+        # Variant B (off-screen pre-map): we let Tk map the window
+        # naturally, but at a position far off-screen and at the saved
+        # *size*, so Windows can never show it at the CW_USEDEFAULT
+        # placeholder size. Once everything is built we move it to the
+        # actual saved position in _first_show. Alpha=0 is kept as
+        # belt-and-braces in case any code path briefly maps before our
+        # off-screen geometry is set. We deliberately do NOT call
+        # self.withdraw() — that prevented the window from ever showing
+        # in earlier attempts because CTk's titlebar dance in mainloop
+        # ends up leaving us withdrawn (see d3beffb for details).
         try:
             self.attributes("-alpha", 0.0)
         except Exception:
@@ -1544,7 +1537,6 @@ class App(ctk.CTk):
                     mw_ = ui_scaling.scale(960)
                     mh_ = ui_scaling.scale(640)
                     sw_ = max(sw_, mw_); sh_ = max(sh_, mh_)
-                    self.geometry(f"{sw_}x{sh_}+{sx_}+{sy_}")
                     initial_geom = (sx_, sy_, sw_, sh_)
                 except Exception:
                     saved_window = None  # fall through to adaptive
@@ -1559,21 +1551,31 @@ class App(ctk.CTk):
             w, h, x, y = ui_scaling.compute_initial_geometry(
                 work_area, frac=0.78, min_w=960, min_h=640, max_w=1400, max_h=900
             )
-            self.geometry(f"{w}x{h}+{x}+{y}")
             initial_geom = (x, y, w, h)
 
-        # Remember the resolved initial geometry for _first_show (where
-        # we re-assert it at the Win32 level just before showing) and for
-        # the Win32 SetWindowPos call we make right now.
+        # Remember the resolved initial geometry for _first_show — that
+        # callback will move the window from off-screen to this real
+        # position once everything is built.
         self._initial_geom: Optional[Tuple[int, int, int, int]] = initial_geom
-        # Win32-level: size + position the HWND BEFORE the first
-        # ShowWindow so Windows uses our saved geometry on the very
-        # first frame, exactly the way MT5 does it. Without this, the
-        # OS briefly shows the window at CW_USEDEFAULT before Tk applies
-        # our requested geometry — that's the "small window" flash the
-        # user kept reporting.
-        if initial_geom is not None:
-            self._native_set_window_pos(*initial_geom, show=False)
+        # Variant B: place the window at the saved *size* but far
+        # off-screen so any first-map activity (Tk's, CTk's, Windows'
+        # CW_USEDEFAULT placeholder, anything) happens out of sight.
+        # We pick a coordinate well past any conceivable virtual-screen
+        # bottom-right so it's invisible on multimonitor setups too.
+        sx_, sy_, sw_, sh_ = initial_geom
+        try:
+            screen_w = self.winfo_screenwidth()
+            screen_h = self.winfo_screenheight()
+        except Exception:
+            screen_w, screen_h = 1920, 1080
+        off_x = screen_w + 2000
+        off_y = screen_h + 2000
+        try:
+            self.geometry(f"{sw_}x{sh_}+{off_x}+{off_y}")
+        except Exception:
+            # Fall back to in-place geometry if the off-screen string is
+            # rejected — alpha=0 will still mask any flash.
+            self.geometry(f"{sw_}x{sh_}+{sx_}+{sy_}")
 
         # Zoomed state has to be applied AFTER initial geometry so Tk
         # remembers the un-zoomed size for the user's next restore.
@@ -1636,64 +1638,32 @@ class App(ctk.CTk):
         self.after(500, self._schedule_check)
         self.after(800, self._check_update)
 
-    def _native_set_window_pos(self, x: int, y: int, w: int, h: int,
-                                show: bool = False) -> None:
-        """Set the top-level HWND's size and position via Win32
-        ``user32.SetWindowPos`` so the OS uses our saved geometry for
-        the very first ``ShowWindow`` call — eliminating the Windows
-        CW_USEDEFAULT first-map flash that pure-Tk fixes can't suppress.
-
-        ``show=False`` (used during ``__init__``) keeps the HWND hidden.
-        ``show=True`` (used by :py:meth:`_first_show`) reveals it.
-
-        No-op on non-Windows platforms or if the HWND can't be resolved.
-        """
-        if not sys.platform.startswith("win"):
-            return
-        try:
-            user32 = ctypes.windll.user32
-            SWP_NOACTIVATE = 0x0010
-            SWP_NOZORDER   = 0x0004
-            SWP_SHOWWINDOW = 0x0040
-            SWP_HIDEWINDOW = 0x0080
-            SWP_NOREDRAW   = 0x0008
-            flags = SWP_NOACTIVATE | SWP_NOZORDER
-            flags |= SWP_SHOWWINDOW if show else (SWP_HIDEWINDOW | SWP_NOREDRAW)
-            # Tk's winfo_id() returns the inner client-area XID; the real
-            # top-level HWND is its Win32 parent.
-            hwnd = user32.GetParent(self.winfo_id())
-            if hwnd:
-                user32.SetWindowPos(hwnd, 0, int(x), int(y), int(w), int(h),
-                                    flags)
-        except Exception:
-            pass
-
     def _first_show(self) -> None:
-        """Idle-queue callback that performs the final reveal: re-asserts
-        the saved geometry at the Win32 level, calls ShowWindow via
-        ``SetWindowPos(SWP_SHOWWINDOW)``, Tk-deiconifies as a fallback,
-        and restores alpha=1.0.
+        """Idle-queue callback that teleports the off-screen window to
+        its real saved position and fades it in.
 
-        Running on the first idle of the event loop guarantees that CTk's
-        internal ``_windows_set_titlebar_color`` dance in ``mainloop()``
-        has already finished — so nothing can re-withdraw us after we
-        show. See the long comment in ``__init__`` for why this is needed.
+        Variant B: ``__init__`` mapped the window at the saved size but
+        far past the bottom-right corner of every monitor, so the user
+        never saw the initial frame. Now that the event loop is running
+        and layout has settled we move it to the actual saved position
+        and set alpha back to 1.0.
         """
         # Re-prime the CTk titlebar-restore attribute in case the
         # appearance mode is changed later (mode change re-runs the
-        # titlebar dance and saves/restores around it).
+        # titlebar dance, which saves/restores around it).
         try:
             self._state_before_windows_set_titlebar_color = "normal"
         except Exception:
             pass
-        # Native ShowWindow at the correct size — this is the show that
-        # the user actually sees, and it happens at the saved geometry.
         geom = getattr(self, "_initial_geom", None)
         if geom is not None:
-            self._native_set_window_pos(*geom, show=True)
-        # Tk-level fallback: if CTk's titlebar restore left us withdrawn
-        # (e.g. on first run when its state attribute was still None
-        # before our prime), deiconify so the widget tree gets shown.
+            x, y, w, h = geom
+            try:
+                self.geometry(f"{w}x{h}+{x}+{y}")
+            except Exception:
+                pass
+        # If anything left us in withdrawn state, deiconify so the
+        # widget tree gets shown.
         try:
             if str(self.state()) == "withdrawn":
                 self.deiconify()
