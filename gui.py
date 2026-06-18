@@ -47,7 +47,7 @@ from tkinter import ttk, filedialog, messagebox
 from typing import Dict, List, Optional, Tuple
 
 from ctk_compat import Label, Button, Entry, Frame, Toplevel
-from theme import apply_theme
+from theme import apply_theme, init_scaling as _init_ctk_scaling
 
 try:
     import MetaTrader5 as mt5
@@ -1501,6 +1501,14 @@ class SettingsDialog(Toplevel):
 
 class App(ctk.CTk):
     def __init__(self):
+        # Lock CTk widget/window scaling to 1.0 BEFORE the root window
+        # exists. If we do this after super().__init__(), CTk's
+        # _set_scaling callback pins wm minsize/maxsize to its internal
+        # default 600x500 and schedules after(1000ms,
+        # _set_scaled_min_max) to restore — that 1-second clamp window
+        # is what users were seeing as "okno of wrong size that resizes
+        # after a second". See theme.init_scaling docstring for details.
+        _init_ctk_scaling()
         super().__init__()
         # Hide the window during __init__ via withdraw() + alpha=0 so
         # nothing ever flashes at the wrong size. Both are needed:
