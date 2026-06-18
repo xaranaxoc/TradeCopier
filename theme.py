@@ -29,6 +29,8 @@ from customtkinter.windows.widgets.scaling.scaling_base_class import (
     CTkScalingBaseClass,
 )
 
+from palette import get_theme_appearance
+
 
 def _patched_apply_font_scaling(self, font):
     """Drop CTk's automatic point→pixel font conversion.
@@ -56,34 +58,74 @@ def _patched_apply_font_scaling(self, font):
 
 
 _PATCH_APPLIED = False
+_SCALING_LOCKED = False
 
 
-def apply_theme() -> None:
-    """Install the FTH dark theme: dark appearance, dark-blue accents.
+def init_scaling() -> None:
+    """Lock CTk widget/window scaling to 1.0 and install the font
+    scaling patch.
 
-    Must be called **after** a Tk root exists. Calling this multiple
-    times is safe — CTk's setters are idempotent.
+    **Must be called BEFORE the root ``ctk.CTk()`` window exists.** If
+    called after, ``ScalingTracker.update_scaling_callbacks_all()`` will
+    fire ``CTk._set_scaling`` on the already-registered root, and that
+    callback does:
+
+        super().minsize(_current_w, _current_h)   # 600x500 at init
+        super().maxsize(_current_w, _current_h)   # 600x500 at init
+        super().geometry("600x500")
+        after(1000, _set_scaled_min_max)          # restores real max
+
+    i.e. it forcibly clamps wm geometry to CTk's internal default
+    600x500 for one full second before restoring the user's intended
+    min/max. That 1-second clamp is exactly the "small window flash"
+    users see on startup — the window maps at clamped size, then a
+    second later un-clamps to the saved geometry.
+
+    By doing the scaling lock here (before super().__init__()), no
+    window is registered with the ScalingTracker yet, so the callback
+    is a no-op and our root is born with the correct scaling baked in.
+
+    Idempotent: subsequent calls do nothing.
     """
-    global _PATCH_APPLIED
-    ctk.set_appearance_mode("dark")
-    ctk.set_default_color_theme("dark-blue")
-    # Lock scaling to 1.0 so layout matches the original tk-based UI
-    # 1-to-1 on any DPI; tk already honours system DPI via the font
-    # point sizes, so layering CTk's scaling on top double-scales and
-    # breaks the slave table / KPI cards.
+    global _PATCH_APPLIED, _SCALING_LOCKED
+    if _SCALING_LOCKED:
+        return
     try:
         ctk.set_widget_scaling(1.0)
         ctk.set_window_scaling(1.0)
     except Exception:
         pass
-    # Install the font-scaling patch once. Idempotent.
     if not _PATCH_APPLIED:
         CTkScalingBaseClass._apply_font_scaling = _patched_apply_font_scaling
         _PATCH_APPLIED = True
+    _SCALING_LOCKED = True
+
+
+def apply_theme() -> None:
+    """Install the FTH theme.
+
+    Reads ``get_theme_appearance()`` from ``palette`` so the CTk
+    appearance mode follows the active theme — switching to LIGHT_PRO
+    flips CTk's internal light/dark switch so the few widgets we don't
+    override per-colour (dropdown panels, etc.) follow suit.
+
+    Must be called **after** a Tk root exists. Safe to call multiple
+    times — used both at startup and after every hot theme switch.
+
+    Note: this function intentionally does NOT touch CTk's scaling —
+    that's a one-shot startup concern handled by ``init_scaling()``
+    before the root window is created (see that docstring for the
+    1-second flash explanation).
+    """
+    appearance = get_theme_appearance()
+    if appearance not in ("dark", "light"):
+        appearance = "dark"
+    ctk.set_appearance_mode(appearance)
+    ctk.set_default_color_theme("dark-blue")
     # We don't ship a custom .json theme — the colour mapping in gui.py
     # (BG, FG, ACCENT, etc.) is applied per-widget through `ctk_compat`,
     # so the default dark-blue theme just provides reasonable fallbacks
     # for any widget we forgot to colour explicitly.
 
 
-__all__ = ["apply_theme"]
+__all__ = ["init_scaling", "apply_theme"]
