@@ -1502,16 +1502,17 @@ class SettingsDialog(Toplevel):
 class App(ctk.CTk):
     def __init__(self):
         super().__init__()
-        # Variant B (off-screen pre-map): we let Tk map the window
-        # naturally, but at a position far off-screen and at the saved
-        # *size*, so Windows can never show it at the CW_USEDEFAULT
-        # placeholder size. Once everything is built we move it to the
-        # actual saved position in _first_show. Alpha=0 is kept as
-        # belt-and-braces in case any code path briefly maps before our
-        # off-screen geometry is set. We deliberately do NOT call
-        # self.withdraw() — that prevented the window from ever showing
-        # in earlier attempts because CTk's titlebar dance in mainloop
-        # ends up leaving us withdrawn (see d3beffb for details).
+        # Hide the window during __init__ via withdraw() + alpha=0 so
+        # nothing ever flashes at the wrong size. Both are needed:
+        #   - withdraw() removes the window from the screen completely;
+        #   - alpha=0 covers any code path that re-maps it (CTk's
+        #     internal titlebar dance, for example).
+        # We re-show in _first_show after _build_ui / _load_config /
+        # _apply_window_state have settled on the final geometry.
+        try:
+            self.withdraw()
+        except Exception:
+            pass
         try:
             self.attributes("-alpha", 0.0)
         except Exception:
@@ -1567,29 +1568,15 @@ class App(ctk.CTk):
             )
             initial_geom = (x, y, w, h)
 
-        # Remember the resolved initial geometry for _first_show — that
-        # callback will move the window from off-screen to this real
-        # position once everything is built.
+        # Remember the resolved initial geometry for _first_show.
         self._initial_geom: Optional[Tuple[int, int, int, int]] = initial_geom
-        # Variant B: place the window at the saved *size* but far
-        # off-screen so any first-map activity (Tk's, CTk's, Windows'
-        # CW_USEDEFAULT placeholder, anything) happens out of sight.
-        # We pick a coordinate well past any conceivable virtual-screen
-        # bottom-right so it's invisible on multimonitor setups too.
+        # Apply the saved geometry now so Tk knows the right size on
+        # first map. Window is withdrawn → nothing visible yet.
         sx_, sy_, sw_, sh_ = initial_geom
         try:
-            screen_w = self.winfo_screenwidth()
-            screen_h = self.winfo_screenheight()
-        except Exception:
-            screen_w, screen_h = 1920, 1080
-        off_x = screen_w + 2000
-        off_y = screen_h + 2000
-        try:
-            self.geometry(f"{sw_}x{sh_}+{off_x}+{off_y}")
-        except Exception:
-            # Fall back to in-place geometry if the off-screen string is
-            # rejected — alpha=0 will still mask any flash.
             self.geometry(f"{sw_}x{sh_}+{sx_}+{sy_}")
+        except Exception:
+            pass
 
         # Zoomed state has to be applied AFTER initial geometry so Tk
         # remembers the un-zoomed size for the user's next restore.
@@ -1653,40 +1640,26 @@ class App(ctk.CTk):
         self.after(800, self._check_update)
 
     def _first_show(self) -> None:
-        """Idle-queue callback that teleports the off-screen window to
-        its real saved position and fades it in.
+        """Idle-queue callback that deiconifies the root window and
+        fades it back to full opacity once layout has settled.
 
-        Variant B: ``__init__`` mapped the window at the saved size but
-        far past the bottom-right corner of every monitor, so the user
-        never saw the initial frame. Now that the event loop is running
-        and layout has settled we move it to the actual saved position
-        and set alpha back to 1.0.
+        Order of operations matters:
+          1. Re-prime the CTk titlebar-restore attribute so any later
+             appearance-mode change doesn't accidentally withdraw us.
+          2. ``deiconify()`` — unmap → map at the saved geometry that
+             ``__init__`` already set on Tk.
+          3. ``attributes("-alpha", 1.0)`` — make the contents visible.
+             Doing this after deiconify guarantees Windows doesn't
+             show the title bar before the contents come up.
         """
-        # Re-prime the CTk titlebar-restore attribute in case the
-        # appearance mode is changed later (mode change re-runs the
-        # titlebar dance, which saves/restores around it).
         try:
             self._state_before_windows_set_titlebar_color = "normal"
         except Exception:
             pass
-        geom = getattr(self, "_initial_geom", None)
-        if geom is not None:
-            x, y, w, h = geom
-            try:
-                self.geometry(f"{w}x{h}+{x}+{y}")
-            except Exception:
-                pass
-        # If anything left us in withdrawn state, deiconify so the
-        # widget tree gets shown.
         try:
-            if str(self.state()) == "withdrawn":
-                self.deiconify()
+            self.deiconify()
         except Exception:
-            try:
-                self.deiconify()
-            except Exception:
-                pass
-        # Restore visibility of the layered-window contents.
+            pass
         try:
             self.attributes("-alpha", 1.0)
         except Exception:
