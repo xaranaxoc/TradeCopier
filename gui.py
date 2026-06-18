@@ -1488,14 +1488,21 @@ class SettingsDialog(Toplevel):
 class App(ctk.CTk):
     def __init__(self):
         super().__init__()
-        # Hide the window for the entire __init__ so the user never sees
-        # the default 600x500 CTk size flash before our saved geometry
-        # takes effect. CTk's withdraw() sets
-        # _withdraw_called_before_window_exists = True, which suppresses
-        # the implicit deiconify inside CTk.mainloop() — we deiconify()
-        # explicitly at the end of __init__, after _build_ui /
-        # _load_config / _apply_window_state have finished.
-        self.withdraw()
+        # Make the window fully transparent for the entire __init__ so
+        # Windows' first-map flash (CW_USEDEFAULT placeholder at the
+        # default 600x500 CTk size before our saved geometry takes
+        # effect) isn't visible. We restore alpha=1.0 on the first idle
+        # of the event loop, after layout has settled at the final size.
+        # We deliberately do NOT call self.withdraw() here — withdraw +
+        # deiconify still triggers the Windows first-map flicker, and it
+        # also entangles with CTk's internal _windows_set_titlebar_color
+        # dance in mainloop(), which on first start leaves the window
+        # withdrawn because its restore branch reads an uninitialised
+        # _state_before_windows_set_titlebar_color attribute.
+        try:
+            self.attributes("-alpha", 0.0)
+        except Exception:
+            pass
         # Install CTk appearance/theme *after* super().__init__() — calling
         # ctk.set_appearance_mode("dark") before a Tk root exists raises a
         # TclError. This was rollback pitfall #2 during the previous CTk
@@ -1584,17 +1591,9 @@ class App(ctk.CTk):
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         # Flush pending layout so the first paint happens at the final size.
         self.update_idletasks()
-        # CTk's mainloop() runs an internal titlebar-color dance that calls
-        # super().withdraw() + super().update() and then tries to restore
-        # the previous state via self._state_before_windows_set_titlebar_color.
-        # When we withdraw the window ourselves during __init__, that
-        # attribute is never populated (the populate branch only runs when
-        # _window_exists is already True), so CTk's restore chain falls
-        # through to self.state(None) and leaves the window withdrawn.
-        # Prime the attribute so CTk's restore deiconifies us, and also
-        # schedule an explicit deiconify on the idle queue as a safety net
-        # — that runs *after* mainloop has finished its titlebar dance.
-        self._state_before_windows_set_titlebar_color = "normal"
+        # Restore visibility once the event loop is running and CTk's
+        # internal titlebar dance has finished. See _first_show for the
+        # mainloop interactions this guards against.
         self.after(0, self._first_show)
         # Defer all blocking start-up tasks (MT5 polling, license check,
         # update check, tray init) until *after* mainloop has started.
@@ -1608,25 +1607,26 @@ class App(ctk.CTk):
         self.after(800, self._check_update)
 
     def _first_show(self) -> None:
-        """Idle-queue callback that ensures the root window is visible
-        on the first paint. See the note in __init__ about CTk's titlebar
-        dance for why an explicit deiconify is needed even after we set
-        _state_before_windows_set_titlebar_color = "normal"."""
+        """Idle-queue callback that fades the root window in once Tk's
+        first-map flicker is past. We started __init__ with alpha=0 and
+        kept the window mapped (never withdrawn) so Windows wouldn't
+        play its CW_USEDEFAULT first-show animation. By the time this
+        runs the event loop has processed the initial Map/Configure
+        events and the window is sitting at the saved geometry — we
+        just need to make it visible again."""
         try:
-            # If CTk's titlebar dance happens to run again later (e.g. on
-            # appearance-mode change) we want it to remember that we're
-            # visible, not withdrawn.
-            self._state_before_windows_set_titlebar_color = "normal"
-            if self.state() != "zoomed":
-                self.deiconify()
-            else:
-                # Re-assert zoomed in case the titlebar dance dropped it.
-                self.state("zoomed")
+            # If we're zoomed, keep that state; alpha works on top of it.
+            self.attributes("-alpha", 1.0)
         except Exception:
-            try:
+            pass
+        try:
+            # Some Windows builds need a final deiconify if any earlier
+            # code path (CTk's titlebar dance, an iconify, etc.) left us
+            # in a non-normal state.
+            if str(self.state()) == "withdrawn":
                 self.deiconify()
-            except Exception:
-                pass
+        except Exception:
+            pass
 
     def _paste_global(self, event=None):
         try:
