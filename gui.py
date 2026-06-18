@@ -1488,6 +1488,14 @@ class SettingsDialog(Toplevel):
 class App(ctk.CTk):
     def __init__(self):
         super().__init__()
+        # Hide the window for the entire __init__ so the user never sees
+        # the default 600x500 CTk size flash before our saved geometry
+        # takes effect. CTk's withdraw() sets
+        # _withdraw_called_before_window_exists = True, which suppresses
+        # the implicit deiconify inside CTk.mainloop() — we deiconify()
+        # explicitly at the end of __init__, after _build_ui /
+        # _load_config / _apply_window_state have finished.
+        self.withdraw()
         # Install CTk appearance/theme *after* super().__init__() — calling
         # ctk.set_appearance_mode("dark") before a Tk root exists raises a
         # TclError. This was rollback pitfall #2 during the previous CTk
@@ -1574,6 +1582,11 @@ class App(ctk.CTk):
         self._apply_window_state()
         self._bind_paste()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
+        # Now that geometry + UI are fully prepared, show the window.
+        # update_idletasks() flushes the pending layout so the first
+        # paint happens at the final size with no visible reflow.
+        self.update_idletasks()
+        self.deiconify()
         # Defer all blocking start-up tasks (MT5 polling, license check,
         # update check, tray init) until *after* mainloop has started.
         # Running these synchronously inside __init__ would block the Tk
