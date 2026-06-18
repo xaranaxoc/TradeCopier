@@ -2262,7 +2262,9 @@ class App(ctk.CTk):
 
     # ── Запуск/остановка терминалов ─────────────────────────
 
-    def _launch_all(self):
+    def _collect_terminal_paths(self):
+        """Master + every enabled slave's terminal path, de-duplicated,
+        preserving order (master first)."""
         paths = []
         master_path = self.var_master_path.get().strip()
         if master_path:
@@ -2273,22 +2275,42 @@ class App(ctk.CTk):
             pth = s.get("path", "")
             if pth and pth not in paths:
                 paths.append(pth)
+        return paths
+
+    def _spawn_terminals_minimized(self, paths, verbose=True):
+        """Fire-and-forget Popen of every closed terminal with
+        SW_MINIMIZE. Each Popen returns immediately, so all terminals
+        boot in parallel — the OS schedules them, we don't wait.
+
+        Returns (launched_count, already_running_count). When verbose
+        is False, only the summary line is logged (used by ``_start``
+        which already logs «Копитрейдер запущен» right after).
+        """
         launched = 0
+        already = 0
         for pth in paths:
-            if not is_terminal_running(pth):
-                try:
-                    si = subprocess.STARTUPINFO()
-                    si.dwFlags = subprocess.STARTF_USESHOWWINDOW
-                    si.wShowWindow = 6  # SW_MINIMIZE
-                    subprocess.Popen([pth], startupinfo=si)
-                    launched += 1
-                    self._log(f"\U0001F680 Запуск: {os.path.basename(os.path.dirname(p))}")
-                except Exception as e:
-                    self._log(f"\u274C Ошибка запуска {p}: {e}", "err")
-            else:
-                self._log(f"\u2705 Уже запущен: {os.path.basename(os.path.dirname(p))}")
+            if is_terminal_running(pth):
+                already += 1
+                if verbose:
+                    self._log(f"\u2705 Уже запущен: {os.path.basename(os.path.dirname(pth))}")
+                continue
+            try:
+                si = subprocess.STARTUPINFO()
+                si.dwFlags = subprocess.STARTF_USESHOWWINDOW
+                si.wShowWindow = 6  # SW_MINIMIZE
+                subprocess.Popen([pth], startupinfo=si)
+                launched += 1
+                if verbose:
+                    self._log(f"\U0001F680 Запуск: {os.path.basename(os.path.dirname(pth))}")
+            except Exception as e:
+                self._log(f"\u274C Ошибка запуска {pth}: {e}", "err")
+        return launched, already
+
+    def _launch_all(self):
+        paths = self._collect_terminal_paths()
+        launched, _ = self._spawn_terminals_minimized(paths, verbose=True)
         if launched > 0:
-            self._log(f"\u2705 Запущено {launched} терминалов", "ok")
+            self._log(f"\u2705 Запущено {launched} терминалов (свёрнуто)", "ok")
         else:
             self._log("Все терминалы уже запущены")
 
@@ -2490,6 +2512,19 @@ class App(ctk.CTk):
         if not _COPIER_OK:
             messagebox.showerror("Ошибка", "Не найден copier.py", parent=self)
             return
+        # Pre-launch every closed master/slave terminal in parallel and
+        # minimized BEFORE handing control to CopyTrader. Otherwise
+        # CopyTrader._cycle ends up calling mt5.initialize(path=...) on
+        # each missing terminal in sequence — and MT5's own auto-spawn
+        # opens them one-by-one in a normal (un-minimized) window. The
+        # "Запустить" button already does this for the same set of
+        # terminals; reusing the helper keeps both code paths in sync.
+        paths_to_launch = self._collect_terminal_paths()
+        launched, _already = self._spawn_terminals_minimized(
+            paths_to_launch, verbose=False
+        )
+        if launched > 0:
+            self._log(f"\U0001F680 Стартуем {launched} терминалов (свёрнуто)", "ok")
         self._trader = CopyTrader(
             config=self._build_config(),
             state_file=STATE_FILE,
