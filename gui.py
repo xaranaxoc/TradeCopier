@@ -1500,15 +1500,51 @@ class App(ctk.CTk):
         self.title(f"FTH Trade Copier v{upd_mod.VERSION}" if _UPD_OK else "FTH Trade Copier")
         self.configure(fg_color=p.BG_DEEP)
         self.resizable(True, True)
-        # Adaptive initial geometry: 78% of the work area on the monitor under
-        # the cursor, clamped to a sensible range and DPI-scaled. minsize is
-        # lowered so 1366x768 laptops (~728 px usable height) actually fit.
-        work_area = ui_scaling.get_cursor_work_area(self)
-        w, h, x, y = ui_scaling.compute_initial_geometry(
-            work_area, frac=0.78, min_w=960, min_h=640, max_w=1400, max_h=900
-        )
         self.minsize(ui_scaling.scale(960), ui_scaling.scale(640))
-        self.geometry(f"{w}x{h}+{x}+{y}")
+
+        # Resolve the window geometry to use for the *first* mapping of the
+        # window. If we have a saved geometry on disk (from a previous
+        # run) we want to use it immediately — otherwise the user sees
+        # the adaptive default size flash up before _apply_window_state
+        # resizes the window to its remembered size.
+        saved_window = self._peek_saved_window_state()
+        if saved_window and saved_window.get("geometry"):
+            import re as _re
+            geom = saved_window["geometry"]
+            m = _re.match(r"^(\d+)x(\d+)([+\-]\d+)([+\-]\d+)$", geom)
+            if m:
+                try:
+                    sw_ = int(m.group(1)); sh_ = int(m.group(2))
+                    sx_ = int(m.group(3)); sy_ = int(m.group(4))
+                    wa = ui_scaling.get_cursor_work_area(self)
+                    sx_, sy_, sw_, sh_ = ui_scaling.clamp_to_work_area(
+                        sx_, sy_, sw_, sh_, wa)
+                    mw_ = ui_scaling.scale(960)
+                    mh_ = ui_scaling.scale(640)
+                    sw_ = max(sw_, mw_); sh_ = max(sh_, mh_)
+                    self.geometry(f"{sw_}x{sh_}+{sx_}+{sy_}")
+                except Exception:
+                    saved_window = None  # fall through to adaptive
+            else:
+                saved_window = None
+        if not saved_window or not saved_window.get("geometry"):
+            # Adaptive initial geometry: 78% of the work area on the monitor
+            # under the cursor, clamped to a sensible range and DPI-scaled.
+            # minsize is lowered so 1366x768 laptops (~728 px usable height)
+            # actually fit.
+            work_area = ui_scaling.get_cursor_work_area(self)
+            w, h, x, y = ui_scaling.compute_initial_geometry(
+                work_area, frac=0.78, min_w=960, min_h=640, max_w=1400, max_h=900
+            )
+            self.geometry(f"{w}x{h}+{x}+{y}")
+
+        # Zoomed state has to be applied AFTER initial geometry so Tk
+        # remembers the un-zoomed size for the user's next restore.
+        if saved_window and saved_window.get("zoomed"):
+            try:
+                self.state("zoomed")
+            except Exception:
+                pass
         if os.path.exists(ICON_DEFAULT):
             # ctk.CTk schedules its own icon setup on a 200 ms after-callback,
             # which overrides any iconbitmap we call here. Defer ours so it
@@ -2538,6 +2574,23 @@ class App(ctk.CTk):
         }
 
     # ── Window state persistence ────────────────────────────────
+    @staticmethod
+    def _peek_saved_window_state() -> Optional[Dict]:
+        """Read just the ``window`` key from config.json without parsing
+        the rest. Used during __init__ to set the right geometry on the
+        FIRST mapping of the window, avoiding the visual flash of the
+        adaptive-default size resizing to the saved size after build.
+        Returns ``None`` if no config exists or the key is missing."""
+        try:
+            if not os.path.exists(CONFIG_FILE):
+                return None
+            with open(CONFIG_FILE, "r", encoding="utf-8") as fh:
+                cfg = json.load(fh)
+            win = cfg.get("window")
+            return win if isinstance(win, dict) else None
+        except Exception:
+            return None
+
     def _capture_window_state(self) -> None:
         """Snapshot current main-window geometry/zoom/sash into self._window_state."""
         try:
