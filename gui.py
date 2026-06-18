@@ -30,7 +30,7 @@ import tkinter as tk
 import customtkinter as ctk
 from datetime import datetime, timedelta
 from tkinter import ttk, filedialog, messagebox
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from ctk_compat import Label, Button, Entry, Frame, Toplevel
 from theme import apply_theme
@@ -1488,17 +1488,23 @@ class SettingsDialog(Toplevel):
 class App(ctk.CTk):
     def __init__(self):
         super().__init__()
-        # Make the window fully transparent for the entire __init__ so
-        # Windows' first-map flash (CW_USEDEFAULT placeholder at the
-        # default 600x500 CTk size before our saved geometry takes
-        # effect) isn't visible. We restore alpha=1.0 on the first idle
-        # of the event loop, after layout has settled at the final size.
-        # We deliberately do NOT call self.withdraw() here — withdraw +
-        # deiconify still triggers the Windows first-map flicker, and it
-        # also entangles with CTk's internal _windows_set_titlebar_color
-        # dance in mainloop(), which on first start leaves the window
-        # withdrawn because its restore branch reads an uninitialised
-        # _state_before_windows_set_titlebar_color attribute.
+        # Triple-lock the window during __init__ so Windows can never
+        # display it at the default CTk size before our saved geometry
+        # takes effect. This is the same approach native apps (MT5,
+        # Notepad++, IDEs) use: keep the HWND hidden, set its size via
+        # the Win32 API directly, then ShowWindow it once everything is
+        # ready.
+        #   (1) Tk-level withdraw so Tk thinks the window is hidden.
+        #   (2) layered-window alpha=0 so even a transient map is
+        #       invisible.
+        #   (3) (later, after we know the saved geometry) Win32
+        #       SetWindowPos with SWP_HIDEWINDOW to size the HWND at OS
+        #       level — this is the critical step that suppresses the
+        #       CW_USEDEFAULT first-map flash.
+        try:
+            self.withdraw()
+        except Exception:
+            pass
         try:
             self.attributes("-alpha", 0.0)
         except Exception:
@@ -1523,6 +1529,7 @@ class App(ctk.CTk):
         # the adaptive default size flash up before _apply_window_state
         # resizes the window to its remembered size.
         saved_window = self._peek_saved_window_state()
+        initial_geom: Optional[Tuple[int, int, int, int]] = None  # (x, y, w, h)
         if saved_window and saved_window.get("geometry"):
             import re as _re
             geom = saved_window["geometry"]
@@ -1538,6 +1545,7 @@ class App(ctk.CTk):
                     mh_ = ui_scaling.scale(640)
                     sw_ = max(sw_, mw_); sh_ = max(sh_, mh_)
                     self.geometry(f"{sw_}x{sh_}+{sx_}+{sy_}")
+                    initial_geom = (sx_, sy_, sw_, sh_)
                 except Exception:
                     saved_window = None  # fall through to adaptive
             else:
@@ -1552,6 +1560,20 @@ class App(ctk.CTk):
                 work_area, frac=0.78, min_w=960, min_h=640, max_w=1400, max_h=900
             )
             self.geometry(f"{w}x{h}+{x}+{y}")
+            initial_geom = (x, y, w, h)
+
+        # Remember the resolved initial geometry for _first_show (where
+        # we re-assert it at the Win32 level just before showing) and for
+        # the Win32 SetWindowPos call we make right now.
+        self._initial_geom: Optional[Tuple[int, int, int, int]] = initial_geom
+        # Win32-level: size + position the HWND BEFORE the first
+        # ShowWindow so Windows uses our saved geometry on the very
+        # first frame, exactly the way MT5 does it. Without this, the
+        # OS briefly shows the window at CW_USEDEFAULT before Tk applies
+        # our requested geometry — that's the "small window" flash the
+        # user kept reporting.
+        if initial_geom is not None:
+            self._native_set_window_pos(*initial_geom, show=False)
 
         # Zoomed state has to be applied AFTER initial geometry so Tk
         # remembers the un-zoomed size for the user's next restore.
@@ -1591,9 +1613,17 @@ class App(ctk.CTk):
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         # Flush pending layout so the first paint happens at the final size.
         self.update_idletasks()
-        # Restore visibility once the event loop is running and CTk's
-        # internal titlebar dance has finished. See _first_show for the
-        # mainloop interactions this guards against.
+        # CTk.mainloop() runs an internal _windows_set_titlebar_color dance
+        # that calls super().withdraw() and then tries to restore the
+        # previous state via self._state_before_windows_set_titlebar_color.
+        # Because that attribute is only populated when _window_exists is
+        # True, the restore falls through to self.state(None) (no-op) on
+        # first start and leaves the window withdrawn. Prime it so CTk's
+        # restore branch deiconifies us automatically.
+        self._state_before_windows_set_titlebar_color = "normal"
+        # Reveal the window on the first idle of the event loop, after
+        # CTk's titlebar dance has finished. See _first_show for the
+        # full Win32 ShowWindow + alpha=1 sequence.
         self.after(0, self._first_show)
         # Defer all blocking start-up tasks (MT5 polling, license check,
         # update check, tray init) until *after* mainloop has started.
@@ -1606,25 +1636,75 @@ class App(ctk.CTk):
         self.after(500, self._schedule_check)
         self.after(800, self._check_update)
 
-    def _first_show(self) -> None:
-        """Idle-queue callback that fades the root window in once Tk's
-        first-map flicker is past. We started __init__ with alpha=0 and
-        kept the window mapped (never withdrawn) so Windows wouldn't
-        play its CW_USEDEFAULT first-show animation. By the time this
-        runs the event loop has processed the initial Map/Configure
-        events and the window is sitting at the saved geometry — we
-        just need to make it visible again."""
+    def _native_set_window_pos(self, x: int, y: int, w: int, h: int,
+                                show: bool = False) -> None:
+        """Set the top-level HWND's size and position via Win32
+        ``user32.SetWindowPos`` so the OS uses our saved geometry for
+        the very first ``ShowWindow`` call — eliminating the Windows
+        CW_USEDEFAULT first-map flash that pure-Tk fixes can't suppress.
+
+        ``show=False`` (used during ``__init__``) keeps the HWND hidden.
+        ``show=True`` (used by :py:meth:`_first_show`) reveals it.
+
+        No-op on non-Windows platforms or if the HWND can't be resolved.
+        """
+        if not sys.platform.startswith("win"):
+            return
         try:
-            # If we're zoomed, keep that state; alpha works on top of it.
-            self.attributes("-alpha", 1.0)
+            user32 = ctypes.windll.user32
+            SWP_NOACTIVATE = 0x0010
+            SWP_NOZORDER   = 0x0004
+            SWP_SHOWWINDOW = 0x0040
+            SWP_HIDEWINDOW = 0x0080
+            SWP_NOREDRAW   = 0x0008
+            flags = SWP_NOACTIVATE | SWP_NOZORDER
+            flags |= SWP_SHOWWINDOW if show else (SWP_HIDEWINDOW | SWP_NOREDRAW)
+            # Tk's winfo_id() returns the inner client-area XID; the real
+            # top-level HWND is its Win32 parent.
+            hwnd = user32.GetParent(self.winfo_id())
+            if hwnd:
+                user32.SetWindowPos(hwnd, 0, int(x), int(y), int(w), int(h),
+                                    flags)
         except Exception:
             pass
+
+    def _first_show(self) -> None:
+        """Idle-queue callback that performs the final reveal: re-asserts
+        the saved geometry at the Win32 level, calls ShowWindow via
+        ``SetWindowPos(SWP_SHOWWINDOW)``, Tk-deiconifies as a fallback,
+        and restores alpha=1.0.
+
+        Running on the first idle of the event loop guarantees that CTk's
+        internal ``_windows_set_titlebar_color`` dance in ``mainloop()``
+        has already finished — so nothing can re-withdraw us after we
+        show. See the long comment in ``__init__`` for why this is needed.
+        """
+        # Re-prime the CTk titlebar-restore attribute in case the
+        # appearance mode is changed later (mode change re-runs the
+        # titlebar dance and saves/restores around it).
         try:
-            # Some Windows builds need a final deiconify if any earlier
-            # code path (CTk's titlebar dance, an iconify, etc.) left us
-            # in a non-normal state.
+            self._state_before_windows_set_titlebar_color = "normal"
+        except Exception:
+            pass
+        # Native ShowWindow at the correct size — this is the show that
+        # the user actually sees, and it happens at the saved geometry.
+        geom = getattr(self, "_initial_geom", None)
+        if geom is not None:
+            self._native_set_window_pos(*geom, show=True)
+        # Tk-level fallback: if CTk's titlebar restore left us withdrawn
+        # (e.g. on first run when its state attribute was still None
+        # before our prime), deiconify so the widget tree gets shown.
+        try:
             if str(self.state()) == "withdrawn":
                 self.deiconify()
+        except Exception:
+            try:
+                self.deiconify()
+            except Exception:
+                pass
+        # Restore visibility of the layered-window contents.
+        try:
+            self.attributes("-alpha", 1.0)
         except Exception:
             pass
 
