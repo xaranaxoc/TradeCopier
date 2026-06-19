@@ -852,7 +852,7 @@ class AccountRow:
     def row_index(self, value):
         self._row = value
         try:
-            self._parent.rowconfigure(value, minsize=ui_scaling.scale(72))
+            self._parent.rowconfigure(value, minsize=ui_scaling.scale(56))
         except Exception:
             pass
         if hasattr(self, "_bg_frame") and self._bg_frame:
@@ -869,26 +869,22 @@ class AccountRow:
         d = self.slave_data
         r = self._row
 
-        # Card-list row: one rounded object per account, separated by
-        # whitespace instead of grid lines.  Keep widgets in the parent
-        # grid for compatibility, but reserve a taller row and draw a
-        # rounded frame behind the cells.
-        self._parent.rowconfigure(r, minsize=ui_scaling.scale(72))
         # Card-row chrome: rounded white background with a hair-thin
         # divider border (BORDER_LIGHT == slate-100).  padx=0 lets the
         # row sit flush with the parent's SPACE_16 inset so the card
-        # spans the full content width; vertical pady=6 gives 12px
-        # between adjacent account cards (6 + 6).
+        # spans the full content width; vertical pady=5 gives 10px
+        # between adjacent account cards (5 + 5).
+        self._parent.rowconfigure(r, minsize=ui_scaling.scale(56))
         self._bg_frame = ctk.CTkFrame(
             self._parent,
             fg_color=p.BG_ROW,
             corner_radius=p.RADIUS_LG,
             border_width=1,
             border_color=p.BORDER_LIGHT,
-            height=64,
+            height=52,
         )
         self._bg_frame.grid(row=r, column=0, columnspan=12,
-                            sticky="nsew", pady=6, padx=0)
+                            sticky="nsew", pady=5, padx=0)
         self._bg_frame.lower()  # stay behind cell widgets
 
         bg = p.BG_ROW
@@ -896,20 +892,17 @@ class AccountRow:
         # ── col 0 — enable switch ───────────────────────
         enabled = d.get("enabled", True)
         self.var_enabled = tk.BooleanVar(value=enabled)
-        # iOS-style switch.  Track 44×22 pill; knob is drawn as a 22px
-        # circle that sits FULLY INSIDE the track because the widget,
-        # the switch surface and the knob all share the same height —
-        # CTkSwitch only over-extends the knob when border_width > 0.
-        self.sw_enabled = ctk.CTkSwitch(
-            self._parent, text="", variable=self.var_enabled,
-            onvalue=True, offvalue=False, command=self._toggle,
-            width=44, height=22, switch_width=44, switch_height=22,
-            corner_radius=11,
-            progress_color=p.GREEN, fg_color=p.FG_DIM,
-            button_color="#FFFFFF", button_hover_color="#F5F5F5",
-            border_width=0,
+        # iOS-style toggle (custom Canvas widget).  Unlike CTkSwitch
+        # the knob is inset by 3px on every side so a thin ring of the
+        # green/grey track shows around the white circle — matches the
+        # reference SaaS toggle.  Track 36×20, knob 14×14, travels 16px.
+        self.sw_enabled = _widgets.Toggle(
+            self._parent, variable=self.var_enabled,
+            command=self._toggle,
+            width=36, height=20, knob_pad=3,
+            bg=bg,
         )
-        self.sw_enabled.grid(row=r, column=0, padx=(16, 8), pady=16,
+        self.sw_enabled.grid(row=r, column=0, padx=(16, 8), pady=12,
                              sticky="w")
         _bind_tip(self.sw_enabled, "Включить / выключить аккаунт")
         self._widgets.append(self.sw_enabled)
@@ -921,52 +914,52 @@ class AccountRow:
         self._dot = _widgets.IconCircle(
             self._parent, size=14, tint="neutral",
         )
-        self._dot.grid(row=r, column=1, padx=(0, 8), pady=16, sticky="")
+        self._dot.grid(row=r, column=1, padx=(0, 8), pady=12, sticky="")
         self._widgets.append(self._dot)
 
         # ── col 2 — name ────────────────────────────────
         self.lbl_name = Label(
             self._parent, text=d.get("name", "\u2014"),
-            bg=bg, fg=p.FG, font=("Segoe UI", 11, "bold"), anchor="w",
+            bg=bg, fg=p.FG, font=("Segoe UI", 9, "bold"), anchor="w",
         )
-        self.lbl_name.grid(row=r, column=2, padx=8, pady=16, sticky="ew")
+        self.lbl_name.grid(row=r, column=2, padx=8, pady=12, sticky="ew")
         self._widgets.append(self.lbl_name)
 
         # ── col 3 — login (mono) ────────────────────────
         self.lbl_login = Label(
             self._parent, text="", bg=bg, fg=p.FG_DIM,
-            font=("Segoe UI", 10), anchor="w",
+            font=("Segoe UI", 9), anchor="w",
         )
-        self.lbl_login.grid(row=r, column=3, padx=8, pady=16, sticky="ew")
+        self.lbl_login.grid(row=r, column=3, padx=8, pady=12, sticky="ew")
         self._widgets.append(self.lbl_login)
 
         # ── col 4 — balance ─────────────────────────────
         self.lbl_balance = Label(
             self._parent, text="", bg=bg, fg=p.FG,
-            font=("Segoe UI", 11, "bold"), anchor="e",
+            font=("Segoe UI", 9, "bold"), anchor="e",
         )
-        self.lbl_balance.grid(row=r, column=4, padx=8, pady=16, sticky="ew")
+        self.lbl_balance.grid(row=r, column=4, padx=8, pady=12, sticky="ew")
         self._widgets.append(self.lbl_balance)
 
         # ── col 5 — equity ──────────────────────────────
         self.lbl_equity = Label(
             self._parent, text="", bg=bg, fg=p.FG_LABEL,
-            font=("Segoe UI", 10), anchor="e",
+            font=("Segoe UI", 9), anchor="e",
         )
-        self.lbl_equity.grid(row=r, column=5, padx=8, pady=16, sticky="ew")
+        self.lbl_equity.grid(row=r, column=5, padx=8, pady=12, sticky="ew")
         self._widgets.append(self.lbl_equity)
 
         # ── col 6 — P&L ─────────────────────────────────
         self.lbl_pnl = Label(
             self._parent, text="", bg=bg, fg=p.FG_DIM,
-            font=("Segoe UI", 11, "bold"), anchor="e",
+            font=("Segoe UI", 9, "bold"), anchor="e",
         )
-        self.lbl_pnl.grid(row=r, column=6, padx=8, pady=16, sticky="ew")
+        self.lbl_pnl.grid(row=r, column=6, padx=8, pady=12, sticky="ew")
         self._widgets.append(self.lbl_pnl)
 
         # ── col 7 — symbol chips (overflow becomes "+N") ─
         self._sym_frame = ctk.CTkFrame(self._parent, fg_color="transparent")
-        self._sym_frame.grid(row=r, column=7, padx=8, pady=16, sticky="w")
+        self._sym_frame.grid(row=r, column=7, padx=8, pady=12, sticky="w")
         self._build_symbol_chips(d.get("symbol_map", {}))
         self._widgets.append(self._sym_frame)
 
@@ -976,19 +969,19 @@ class AccountRow:
         risk_text = f"{rv}%" if rt == "percent" else f"${rv}"
         self.lbl_risk = Label(
             self._parent, text=risk_text, bg=bg, fg=p.TINT_ORANGE_FG,
-            font=("Segoe UI", 10, "bold"), anchor="e",
+            font=("Segoe UI", 9, "bold"), anchor="e",
         )
-        self.lbl_risk.grid(row=r, column=8, padx=8, pady=16, sticky="ew")
+        self.lbl_risk.grid(row=r, column=8, padx=8, pady=12, sticky="ew")
         self._widgets.append(self.lbl_risk)
 
         # ── col 9 — trades per day ──────────────────────
         mtd = d.get("max_trades_per_day", 0)
         self.lbl_trades_day = Label(
             self._parent, text=str(mtd) if mtd else "\u2014",
-            bg=bg, fg=p.FG_DIM, font=("Segoe UI", 10),
+            bg=bg, fg=p.FG_DIM, font=("Segoe UI", 9),
             anchor="center",
         )
-        self.lbl_trades_day.grid(row=r, column=9, padx=8, pady=16, sticky="ew")
+        self.lbl_trades_day.grid(row=r, column=9, padx=8, pady=12, sticky="ew")
         self._widgets.append(self.lbl_trades_day)
 
         # ── col 10 — daily-loss RiskBar ─────────────────
@@ -998,12 +991,17 @@ class AccountRow:
             label=(f"$0/${dll:.0f}" if dll else "\u2014"),
             width=ui_scaling.scale(100),
         )
-        self._risk_bar.grid(row=r, column=10, padx=8, pady=16, sticky="ew")
+        # If no daily_loss_limit is configured we hide the bar entirely
+        # and show only a centred dash — a perpetually-empty bar carries
+        # no information.
+        if not dll:
+            self._risk_bar.set_disabled("\u2014")
+        self._risk_bar.grid(row=r, column=10, padx=8, pady=12, sticky="ew")
         self._widgets.append(self._risk_bar)
 
         # ── col 11 — action buttons ─────────────────────
         bf = ctk.CTkFrame(self._parent, fg_color="transparent")
-        bf.grid(row=r, column=11, padx=(8, 16), pady=16, sticky="e")
+        bf.grid(row=r, column=11, padx=(8, 16), pady=12, sticky="e")
         self._build_actions(bf)
         self._widgets.append(bf)
 
@@ -1108,9 +1106,13 @@ class AccountRow:
         self._hover = hover
         if hasattr(self, "_bg_frame") and self._bg_frame:
             try:
+                # Only the border shifts on hover.  We intentionally do
+                # NOT change the row's fg_color: the cells are tk.Labels
+                # with a fixed bg=BG_ROW, so a row background colour
+                # shift would make each label visible as a free-floating
+                # white rectangle on the new background.
                 self._bg_frame.configure(
                     border_color=p.ACCENT_DIM if hover else p.BORDER_LIGHT,
-                    fg_color=p.BG_ROW_HOVER if hover else p.BG_ROW,
                 )
             except Exception:
                 pass
@@ -1185,7 +1187,8 @@ class AccountRow:
 
     def update_daily_loss(self, daily_loss: float, daily_loss_limit: float):
         if daily_loss_limit <= 0:
-            self._risk_bar.set(0.0, label="\u2014")
+            # Bar hidden, only a centred dash in the column.
+            self._risk_bar.set_disabled("—")
             return
         pct = min(max(daily_loss / daily_loss_limit, 0.0), 1.0)
         self._risk_bar.set(
@@ -2022,15 +2025,12 @@ class App(ctk.CTk):
 
         ctk.CTkLabel(
             left, text="Trade Copier",
-            text_color=p.FG, font=("Segoe UI", 18, "bold"),
+            text_color=p.FG, font=("Segoe UI", 16, "bold"),
         ).pack(side="left", padx=(0, SPACE_8), pady=(2, 0))
-        # MT5 chip sits to the right of the title.  Tk's pack baseline
-        # anchors small widgets to the TOP of the slot when paired with
-        # a taller sibling — pady=(8, 0) nudges the chip down so its
-        # vertical centre aligns with the "Trade Copier" cap-height
-        # instead of floating at the title's ascender line.
+        # MT5 chip sits to the right of the title.  pady=(6, 0) lines
+        # its vertical centre up with the cap-height of the 16pt title.
         _widgets.Chip(left, text="MT5", tint="blue", bold=True).pack(
-            side="left", anchor="center", pady=(8, 0),
+            side="left", anchor="center", pady=(6, 0),
         )
 
         # "КОПИТРЕЙДЕР" caption sits to the left of the action buttons
@@ -2134,13 +2134,13 @@ class App(ctk.CTk):
         reads ``cget("text")`` to populate the KPI cards.  CTkLabel ignores
         ``.config(text=...)`` — that's why the KPI cards were empty before.
         """
-        # Card padding=SPACE_24 → row inset 24px on all sides (per the
-        # 8px rhythm: cards breathe with 24px internal padding, not 16).
-        card = _widgets.Card(self, padding=SPACE_24)
+        # Card padding=20 → row inset 20px on all sides.  20px matches
+        # the new compact rhythm (KPI cards also use 16/20).
+        card = _widgets.Card(self, padding=20)
         card.pack(fill="x", padx=SPACE_24, pady=(0, SPACE_24))
 
         row = ctk.CTkFrame(card, fg_color="transparent")
-        row.pack(fill="x", padx=SPACE_24, pady=SPACE_16)
+        row.pack(fill="x", padx=SPACE_16, pady=SPACE_8)
 
         # МАСТЕР chip on the left.
         _widgets.Chip(row, text="МАСТЕР", tint="blue", bold=True).pack(

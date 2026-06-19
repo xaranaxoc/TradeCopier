@@ -28,6 +28,8 @@ from __future__ import annotations
 
 from typing import Any, Callable, Optional, Tuple, Union
 
+import tkinter as tk
+
 import customtkinter as ctk
 
 from palette import palette_proxy as p, fonts_proxy as f
@@ -164,14 +166,12 @@ class KPICard(Card):
 
         self.columnconfigure(1, weight=1)
 
-        # Typography rhythm:
-        #   - LABEL  10 bold uppercase (eyebrow)
-        #   - VALUE  24 bold (hero number — sized so $125,893.45 fits a
-        #     KPI column at 4-up on a 1280-wide window)
-        #   - SUB    10 normal (caption)
-        # 24px internal padding + 20px gap between icon and text.
-        self._icon = IconCircle(self, size=40, tint=tint, icon=icon, glyph=glyph)
-        self._icon.grid(row=0, column=0, rowspan=3, padx=(20, 20), pady=20, sticky="n")
+        # Compact KPI scale: LABEL 10 bold uppercase, VALUE 20 bold,
+        # SUB 9 normal.  Icon circle shrunk to 36px with 16px gap and
+        # 16px internal padding so the tile feels like a tight,
+        # dashboard-class card instead of a hero block.
+        self._icon = IconCircle(self, size=36, tint=tint, icon=icon, glyph=glyph)
+        self._icon.grid(row=0, column=0, rowspan=3, padx=(16, 16), pady=16, sticky="n")
 
         self._lbl = ctk.CTkLabel(
             self,
@@ -180,25 +180,25 @@ class KPICard(Card):
             font=("Segoe UI", 10, "bold"),
             anchor="w",
         )
-        self._lbl.grid(row=0, column=1, sticky="ew", padx=(0, 20), pady=(20, 0))
+        self._lbl.grid(row=0, column=1, sticky="ew", padx=(0, 16), pady=(16, 0))
 
         self._val = ctk.CTkLabel(
             self,
             text=value,
             text_color=p.FG,
-            font=("Segoe UI", 24, "bold"),
+            font=("Segoe UI", 20, "bold"),
             anchor="w",
         )
-        self._val.grid(row=1, column=1, sticky="ew", padx=(0, 20), pady=(4, 0))
+        self._val.grid(row=1, column=1, sticky="ew", padx=(0, 16), pady=(2, 0))
 
         self._sub = ctk.CTkLabel(
             self,
             text=sub_text,
             text_color=sub_color or p.GREEN_DIM,
-            font=("Segoe UI", 10, "normal"),
+            font=("Segoe UI", 9, "normal"),
             anchor="w",
         )
-        self._sub.grid(row=2, column=1, sticky="ew", padx=(0, 20), pady=(2, 20))
+        self._sub.grid(row=2, column=1, sticky="ew", padx=(0, 16), pady=(2, 16))
 
     def set_value(
         self,
@@ -472,11 +472,141 @@ class RiskBar(ctk.CTkFrame):
         return p.ACCENT
 
     def set(self, value: float, *, label: Optional[str] = None) -> None:
+        # Re-show the bar in case it was hidden by ``set_disabled``.
+        if not self._bar.winfo_ismapped():
+            self._bar.pack(side="top", fill="x")
+            self._label.pack_configure(anchor="e", pady=(0, 2))
         v = max(0.0, min(1.0, value))
         self._bar.set(v)
         self._bar.configure(progress_color=self._colour_for(v))
         self._label.configure(
             text=label if label is not None else f"{v * 100:.1f}%"
+        )
+
+    def set_disabled(self, label: str = "—") -> None:
+        """Hide the progress bar entirely and show only a centred label.
+
+        Used when a slave account has no ``daily_loss_limit`` configured
+        — the bar would just sit at 0% with no semantic, so we drop it.
+        """
+        try:
+            self._bar.pack_forget()
+        except Exception:
+            pass
+        # Re-anchor label to the centre so the row column doesn't look
+        # off-balance with a right-aligned dash above an empty space.
+        self._label.pack_configure(anchor="center", pady=0)
+        self._label.configure(text=label, anchor="center")
+
+
+# ── Toggle ── iOS-style switch with knob fully inset inside the track ──
+
+
+class Toggle(tk.Canvas):
+    """Canvas-drawn iOS-style toggle.
+
+    CTkSwitch always draws its knob with diameter = ``switch_height``,
+    so the knob ends up flush against the track edges with no visible
+    padding.  ``Toggle`` instead draws the knob inset by ``knob_pad`` on
+    every side so there is a clean ring of track colour visible around
+    the knob (matches the reference SaaS toggle design).
+
+    The public API matches ``CTkSwitch`` as closely as needed by
+    AccountRow:
+
+      * ``variable=tk.BooleanVar(...)``  bound to the toggle state
+      * ``command=callable``             fires on click (after state flip)
+      * ``configure(state="disabled")``  greys out / disables clicks
+    """
+
+    def __init__(
+        self,
+        master: Any,
+        *,
+        variable: Optional[tk.BooleanVar] = None,
+        command: Optional[Any] = None,
+        width: int = 36,
+        height: int = 20,
+        knob_pad: int = 3,
+        bg: Optional[str] = None,
+        **kw: Any,
+    ) -> None:
+        # Resolve the canvas background to the host card colour so the
+        # pill's outside corners blend into the row instead of showing a
+        # white rectangle on top of the row's hover colour.
+        canvas_bg = bg if bg is not None else p.BG_ROW
+        super().__init__(
+            master,
+            width=width,
+            height=height,
+            highlightthickness=0,
+            bd=0,
+            bg=canvas_bg,
+            cursor="hand2",
+            **kw,
+        )
+        self._var = variable if variable is not None else tk.BooleanVar(value=False)
+        self._command = command
+        self._w = width
+        self._h = height
+        self._pad = knob_pad
+        self._track_on = p.GREEN
+        self._track_off = p.FG_DIM
+        self._knob_color = "#FFFFFF"
+        self._state = "normal"
+
+        self.bind("<Button-1>", self._on_click)
+        self._trace = self._var.trace_add("write", lambda *_a: self._redraw())
+        self._redraw()
+
+    # ── state ───────────────────────────────────────────────────────
+
+    def configure(self, **kw: Any) -> None:  # type: ignore[override]
+        state = kw.pop("state", None)
+        if state is not None:
+            self._state = state
+            self._redraw()
+        if "bg" in kw:
+            super().configure(bg=kw.pop("bg"))
+        if kw:
+            super().configure(**kw)
+
+    # CTkSwitch back-compat: not used by AccountRow, but harmless.
+    def select(self) -> None:
+        self._var.set(True)
+
+    def deselect(self) -> None:
+        self._var.set(False)
+
+    # ── internals ──────────────────────────────────────────────────
+
+    def _on_click(self, _event: Any = None) -> None:
+        if self._state == "disabled":
+            return
+        self._var.set(not self._var.get())
+        if self._command:
+            try:
+                self._command()
+            except Exception:
+                pass
+
+    def _redraw(self) -> None:
+        self.delete("all")
+        on = bool(self._var.get())
+        track = self._track_on if on else self._track_off
+        w, h, pad = self._w, self._h, self._pad
+        r = h / 2
+        # Pill = two end-circles + middle rectangle.
+        self.create_oval(0, 0, h, h, fill=track, outline="")
+        self.create_oval(w - h, 0, w, h, fill=track, outline="")
+        self.create_rectangle(r, 0, w - r, h, fill=track, outline="")
+        # Knob inset by ``pad`` so a ring of track shows around it.
+        knob_d = h - 2 * pad
+        kx = (w - knob_d - pad) if on else pad
+        ky = pad
+        self.create_oval(
+            kx, ky, kx + knob_d, ky + knob_d,
+            fill=self._knob_color, outline="",
         )
 
 
@@ -489,4 +619,5 @@ __all__ = [
     "IconButton",
     "SectionHeader",
     "RiskBar",
+    "Toggle",
 ]
