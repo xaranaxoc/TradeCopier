@@ -2023,7 +2023,7 @@ class App(ctk.CTk):
             side="left", anchor="center"
         )
 
-        # "КОПИРТРЕЙДЕР" caption sits to the left of the action buttons
+        # "КОПИТРЕЙДЕР" caption sits to the left of the action buttons
         # on the right side — pack it FIRST on the right cluster so it
         # ends up immediately before the Старт/Стоп pair.
 
@@ -2031,10 +2031,10 @@ class App(ctk.CTk):
         right = ctk.CTkFrame(outer, fg_color="transparent")
         right.pack(side="right")
 
-        # КОПИРТРЕЙДЕР caption — muted label that anchors the action group
+        # КОПИТРЕЙДЕР caption — muted label that anchors the action group
         # to the right edge.  Matches the reference mockup ordering.
         ctk.CTkLabel(
-            right, text="КОПИРТРЕЙДЕР",
+            right, text="КОПИТРЕЙДЕР",
             text_color=p.FG_LABEL, font=("Segoe UI", 9, "bold"),
         ).pack(side="left", padx=(0, SPACE_16))
 
