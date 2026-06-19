@@ -547,8 +547,12 @@ class Toggle(tk.Canvas):
         )
         self._var = variable if variable is not None else tk.BooleanVar(value=False)
         self._command = command
-        self._w = width
-        self._h = height
+        # NB: NEVER name these attributes ``_w`` / ``_h`` — ``_w`` is a
+        # reserved tkinter attribute that stores the widget's Tcl path,
+        # and shadowing it makes every .grid()/.pack()/.place() call
+        # raise `bad argument "<width>": must be name of window`.
+        self._cw = width
+        self._ch = height
         self._pad = knob_pad
         self._track_on = p.GREEN
         self._track_off = p.FG_DIM
@@ -595,7 +599,7 @@ class Toggle(tk.Canvas):
             self.delete("all")
             on = bool(self._var.get())
             track = self._track_on if on else self._track_off
-            w, h, pad = self._w, self._h, self._pad
+            w, h, pad = self._cw, self._ch, self._pad
             r = h / 2
             # Pill = two end-circles + middle rectangle.
             self.create_oval(0, 0, h, h, fill=track, outline="")
