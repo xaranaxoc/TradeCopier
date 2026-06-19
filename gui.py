@@ -1908,59 +1908,11 @@ class App(ctk.CTk):
         # ── Slave Accounts section ──────────────────────────
         self._build_slaves_soft()
 
-        # ── Notebook ────────────────────────────────────────
-        # ttk styles are configured centrally via apply_ttk_styles()
-        # (called in TradesTable._build which runs before this point).
+        # ── Trades + Log tabs ───────────────────────────────
+        self._build_tabs_soft()
 
-        nb_frame = tk.Frame(self._paned, bg=p.BG_DEEP)
-        self._paned.add(nb_frame, minsize=ui_scaling.scale(60),
-                        height=ui_scaling.scale(180))
-
-        self.notebook = ttk.Notebook(nb_frame, style="TNotebook")
-        self.notebook.pack(fill="both", expand=True)
-
-        trades_tab = tk.Frame(self.notebook, bg=p.BG)
-        self.notebook.add(trades_tab, text="  Сделки  ")
-        self.trades_table = TradesTable(trades_tab)
-        self.trades_table.pack(fill="both", expand=True, padx=1, pady=1)
-
-        for t in _load_trades():
-            tag = "ok" if t.get("success") else "err"
-            self.trades_table.add_trade(
-                time_str=t.get("time", ""), slave=t.get("slave", ""),
-                symbol=t.get("symbol", ""), direction=t.get("direction", ""),
-                lot=t.get("lot", 0.0), master_ticket=t.get("master_ticket", ""),
-                slave_ticket=t.get("slave_ticket", ""), status=t.get("status", ""),
-                tag=tag)
-
-        log_tab = tk.Frame(self.notebook, bg=p.BG)
-        self.notebook.add(log_tab, text="  Лог  ")
-        log_inner = tk.Frame(log_tab, bg=p.BG)
-        log_inner.pack(fill="both", expand=True, padx=1, pady=1)
-
-        self.log_text = tk.Text(log_inner, bg=p.BG_ROW, fg=p.FG, font=f.MONO_SM,
-                                relief="flat", state="disabled", wrap="word",
-                                highlightthickness=0)
-        log_sb = ttk.Scrollbar(log_inner, orient="vertical", command=self.log_text.yview)
-        self.log_text.configure(yscrollcommand=log_sb.set)
-        log_sb.pack(side="right", fill="y")
-        self.log_text.pack(side="left", fill="both", expand=True)
-
-        self.log_text.tag_config("ok", foreground=p.GREEN)
-        self.log_text.tag_config("err", foreground=p.RED)
-        self.log_text.tag_config("warn", foreground=p.YELLOW)
-        self.log_text.tag_config("info", foreground=p.FG_DIM)
-
-        # Статистика
-        stats_f = Frame(self, bg=p.BG_DEEP)
-        stats_f.pack(fill="x", padx=14, pady=(0, 2))
-        self.lbl_stats = Label(stats_f, text="", bg=p.BG_DEEP, fg=p.FG_DIM, font=f.SM)
-        self.lbl_stats.pack(side="left")
-        if _UPD_OK:
-            # Version uses the theme ACCENT color (cyan on Neon, blue on
-            # Light Pro) so the build tag has a bit of brand identity.
-            Label(stats_f, text=f"v{upd_mod.VERSION}", bg=p.BG_DEEP, fg=p.ACCENT,
-                  font=f.SM).pack(side="right")
+        # ── Bottom status bar ───────────────────────────────
+        self._build_statusbar_soft()
 
     # ── Phase-2 redesign builders ───────────────────────────
 
@@ -2304,6 +2256,97 @@ class App(ctk.CTk):
             lbl_h.grid(row=0, column=idx, padx=4, pady=(0, 8), sticky="ew")
 
         self._next_row = 1
+
+    def _build_tabs_soft(self) -> None:
+        """Build the bottom Trades / Log notebook in a Card-shell.
+
+        The ``ttk.Notebook`` is wrapped in a ``Card`` and added as the
+        bottom child of the PanedWindow created in ``_build_slaves_soft``.
+        ttk Notebook styling is already configured by ``apply_ttk_styles``
+        in palette.py, so we only need the Card chrome and the trade /
+        log children themselves.
+        """
+        # tk.PanedWindow needs a tk-managed child — wrap in tk.Frame.
+        nb_wrap = tk.Frame(self._paned, bg=p.BG_DEEP)
+        self._paned.add(nb_wrap, minsize=ui_scaling.scale(80),
+                        height=ui_scaling.scale(220))
+
+        # Card-shell around the notebook for the rounded soft look.
+        nb_card = _widgets.Card(nb_wrap, padding=0)
+        nb_card.pack(fill="both", expand=True)
+
+        self.notebook = ttk.Notebook(nb_card, style="TNotebook")
+        self.notebook.pack(fill="both", expand=True, padx=8, pady=8)
+
+        # ── Trades tab ─────────────────────────────────
+        trades_tab = tk.Frame(self.notebook, bg=p.BG_ROW)
+        self.notebook.add(trades_tab, text="  Сделки  ")
+        self.trades_table = TradesTable(trades_tab)
+        self.trades_table.pack(fill="both", expand=True, padx=2, pady=2)
+
+        for t in _load_trades():
+            tag = "ok" if t.get("success") else "err"
+            self.trades_table.add_trade(
+                time_str=t.get("time", ""), slave=t.get("slave", ""),
+                symbol=t.get("symbol", ""), direction=t.get("direction", ""),
+                lot=t.get("lot", 0.0), master_ticket=t.get("master_ticket", ""),
+                slave_ticket=t.get("slave_ticket", ""), status=t.get("status", ""),
+                tag=tag)
+
+        # ── Log tab ────────────────────────────────────
+        log_tab = tk.Frame(self.notebook, bg=p.BG_ROW)
+        self.notebook.add(log_tab, text="  Лог  ")
+        log_inner = tk.Frame(log_tab, bg=p.BG_ROW)
+        log_inner.pack(fill="both", expand=True, padx=2, pady=2)
+
+        self.log_text = tk.Text(
+            log_inner, bg=p.BG_ROW, fg=p.FG, font=f.MONO_SM,
+            relief="flat", state="disabled", wrap="word",
+            highlightthickness=0, padx=10, pady=8,
+        )
+        log_sb = ttk.Scrollbar(
+            log_inner, orient="vertical", command=self.log_text.yview,
+        )
+        self.log_text.configure(yscrollcommand=log_sb.set)
+        log_sb.pack(side="right", fill="y")
+        self.log_text.pack(side="left", fill="both", expand=True)
+
+        self.log_text.tag_config("ok", foreground=p.GREEN)
+        self.log_text.tag_config("err", foreground=p.RED)
+        self.log_text.tag_config("warn", foreground=p.YELLOW)
+        self.log_text.tag_config("info", foreground=p.FG_DIM)
+
+    def _build_statusbar_soft(self) -> None:
+        """Bottom status bar with a StatusPill and version tag.
+
+        The pill text doubles as the legacy ``lbl_stats`` (anything that
+        called ``self.lbl_stats.config(text=...)`` still works because the
+        StatusPill's inner CTkLabel proxies the same ``.configure`` /
+        ``.config`` interface).
+        """
+        bar = ctk.CTkFrame(self, fg_color=p.BG_DEEP, height=36)
+        bar.pack(fill="x", padx=24, pady=(0, 8))
+
+        # StatusPill on the left — "Система готова к работе" by default.
+        self._status_pill = _widgets.StatusPill(
+            bar, text="Система готова к работе", state="success",
+        )
+        self._status_pill.pack(side="left", padx=(0, 12), pady=4)
+
+        # The old ``lbl_stats`` attribute is what _on_start() updates with
+        # "N открытых позиций | NN сделок сегодня".  We keep it as a thin
+        # CTkLabel right of the pill.
+        self.lbl_stats = Label(
+            bar, text="", bg=p.BG_DEEP, fg=p.FG_DIM, font=f.SM,
+        )
+        self.lbl_stats.pack(side="left", pady=4)
+
+        if _UPD_OK:
+            # Version tag on the right — accent-coloured for brand pop.
+            Label(
+                bar, text=f"v{upd_mod.VERSION}",
+                bg=p.BG_DEEP, fg=p.ACCENT, font=f.SM,
+            ).pack(side="right", padx=(0, 4), pady=4)
 
     # ── Info toggle ─────────────────────────────────────────
 
@@ -2879,6 +2922,12 @@ class App(ctk.CTk):
         self._update_tray_icon(True)
         self._session_stats = {"copied": 0, "failed": 0}
         self._log("\u2705 Копитрейдер запущен", "ok")
+        # Reflect running state in the bottom status pill.
+        if hasattr(self, "_status_pill"):
+            try:
+                self._status_pill.set("Копитрейдер запущен", state="success")
+            except Exception:
+                pass
 
     def _stop(self):
         if self._trader:
@@ -2892,6 +2941,11 @@ class App(ctk.CTk):
         self._set_logo_cyan(False)
         self._update_tray_icon(False)
         self._log("\u25A0 Копитрейдер остановлен", "warn")
+        if hasattr(self, "_status_pill"):
+            try:
+                self._status_pill.set("Копитрейдер остановлен", state="warn")
+            except Exception:
+                pass
         self._schedule_check()
 
     # ── Колбэки ─────────────────────────────────────────────

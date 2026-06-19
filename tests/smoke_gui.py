@@ -116,8 +116,10 @@ EXPECTED_APP_ATTRS = [
     "_kpi_cards",
     # Slaves
     "lbl_slave_count", "_table_frame", "_paned", "_next_row",
-    # Bottom notebook
-    "notebook", "trades_table", "log_text", "lbl_stats",
+    # Bottom notebook + status bar
+    "notebook", "trades_table", "log_text", "lbl_stats", "_status_pill",
+    # Slave section card-header
+    "_slaves_header",
     # Top-bar buttons
     "btn_info", "btn_start", "btn_stop",
     # State containers
