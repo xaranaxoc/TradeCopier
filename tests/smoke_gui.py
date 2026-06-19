@@ -112,8 +112,8 @@ gui.ICON_CYAN = "/nonexistent.ico"
 EXPECTED_APP_ATTRS = [
     # Master panel labels (.config()'d by _update_master_info_silent)
     "lbl_master_login", "lbl_master_bal", "lbl_master_eq", "lbl_master_pnl",
-    # KPI labels (.config()'d by _refresh_dashboard)
-    "_kpi_labels",
+    # KPI cards (KPICard widgets, set_value()'d by _refresh_dashboard)
+    "_kpi_cards",
     # Slaves
     "lbl_slave_count", "_table_frame", "_paned", "_next_row",
     # Bottom notebook
@@ -128,9 +128,9 @@ EXPECTED_APP_ATTRS = [
 def _check_attrs(app: "gui.App") -> None:
     missing = [name for name in EXPECTED_APP_ATTRS if not hasattr(app, name)]
     assert not missing, f"App missing attributes: {missing}"
-    # _kpi_labels must have all four KPI keys.
+    # _kpi_cards must have all four KPI keys.
     for key in ("kpi_bal", "kpi_eq", "kpi_pnl", "kpi_conn"):
-        assert key in app._kpi_labels, f"_kpi_labels missing key: {key}"
+        assert key in app._kpi_cards, f"_kpi_cards missing key: {key}"
 
 
 def _exercise_refresh(app: "gui.App") -> None:

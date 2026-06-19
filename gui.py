@@ -1782,30 +1782,7 @@ class App(ctk.CTk):
         self._build_master_soft()
 
         # ── Dashboard KPI ───────────────────────────────────
-        dash = Frame(self, bg=p.BG_DEEP)
-        dash.pack(fill="x", padx=14, pady=6)
-
-        cards_data = [
-            ("kpi_bal", "Master Balance", "\u2014", p.FG),
-            ("kpi_eq", "Total Equity", "\u2014", p.FG),
-            ("kpi_pnl", "Net P&L", "\u2014", p.FG_DIM),
-            ("kpi_conn", "Connected", "\u2014", p.FG_DIM),
-        ]
-        self._kpi_labels: Dict[str, Label] = {}
-        for i, (key, title, default, color) in enumerate(cards_data):
-            # tk.Frame's internal padx/pady on a card translates to .pack()
-            # padding here; CTkFrame doesn't have a per-widget padx/pady.
-            card_outer = Frame(dash, bg=p.BG_DEEP)
-            card_outer.pack(side="left", fill="x", expand=True, padx=(0 if i == 0 else 6, 0))
-            card = Frame(card_outer, bg=p.BG_ROW, highlightbackground=p.BORDER,
-                         highlightthickness=1)
-            card.pack(fill="both", expand=True)
-            Label(card, text=title, bg=p.BG_ROW, fg=p.FG_DIM, font=f.SM).pack(anchor="w", padx=14, pady=(8, 0))
-            lbl = Label(card, text=default, bg=p.BG_ROW, fg=color, font=f.VAL_BOLD)
-            lbl.pack(anchor="w", padx=14, pady=(0, 8))
-            self._kpi_labels[key] = lbl
-
-        self._refresh_dashboard()
+        self._build_kpi_soft()
 
         # ── Таблица аккаунтов ────────────────────────────────
         tbl_header = Frame(self, bg=p.BG_DEEP)
@@ -2104,6 +2081,53 @@ class App(ctk.CTk):
             font=("Segoe UI", 10), anchor="w",
         )
         self.lbl_master_login.pack(side="left", padx=(0, 8))
+
+    def _build_kpi_soft(self) -> None:
+        """Build the Light-Soft KPI dashboard row.
+
+        Four ``KPICard`` widgets in a 1×4 grid, each column equally
+        weighted via ``uniform="kpi"`` so cards stay the same width as
+        the window resizes.
+
+        Card → tint / icon mapping mirrors the mockup:
+
+            ┌─ wallet/blue   ─┬─ chart-pie/purple ─┬─ trending-up/green ─┬─ link/orange ─┐
+            │ MASTER BALANCE  │ TOTAL EQUITY       │ NET P&L             │ CONNECTED     │
+            └─────────────────┴────────────────────┴─────────────────────┴───────────────┘
+
+        Values are populated by ``_refresh_dashboard`` which runs on a
+        1-second tick.  ``_kpi_cards`` (dict of ``KPICard``) replaces
+        the legacy ``_kpi_labels`` dict.
+        """
+        dash = ctk.CTkFrame(self, fg_color=p.BG_DEEP)
+        dash.pack(fill="x", padx=24, pady=(0, 12))
+
+        for col in range(4):
+            # uniform="kpi" forces equal column widths even when one
+            # card's content (e.g. long balance) tries to expand more.
+            dash.columnconfigure(col, weight=1, uniform="kpi")
+
+        specs = [
+            # (key, label, lucide-icon-name, tint-alias, icon-fg-hex)
+            ("kpi_bal",  "Master Balance", "wallet",       "blue",   p.TINT_BLUE_FG),
+            ("kpi_eq",   "Total Equity",   "chart-pie",    "purple", p.TINT_PURPLE_FG),
+            ("kpi_pnl",  "Net P&L",        "trending-up",  "green",  p.TINT_GREEN_FG),
+            ("kpi_conn", "Connected",      "link",         "orange", p.TINT_ORANGE_FG),
+        ]
+        self._kpi_cards: Dict[str, _widgets.KPICard] = {}
+        for col, (key, label, icon_name, tint, icon_fg) in enumerate(specs):
+            card = _widgets.KPICard(
+                dash,
+                label=label,
+                value="\u2014",
+                icon=_lucide.icon(icon_name, 20, icon_fg),
+                tint=tint,
+            )
+            pad_left = 0 if col == 0 else 8
+            card.grid(row=0, column=col, sticky="nsew", padx=(pad_left, 0))
+            self._kpi_cards[key] = card
+
+        self._refresh_dashboard()
 
     # ── Info toggle ─────────────────────────────────────────
 
@@ -2567,13 +2591,17 @@ class App(ctk.CTk):
             row.update_info(0, 0, status="\U0001F534 ошибка")
 
     def _refresh_dashboard(self):
+        # Master balance from the master strip (string we just rendered).
         try:
             bal_text = self.lbl_master_bal.cget("text")
             bal = float(bal_text.replace("$", "").replace(",", "")) if bal_text and bal_text != "\u2014" else 0
         except Exception:
             bal = 0
-        self._kpi_labels["kpi_bal"].config(text=f"${bal:,.2f}" if bal > 0 else "\u2014")
+        self._kpi_cards["kpi_bal"].set_value(
+            f"${bal:,.2f}" if bal > 0 else "\u2014",
+        )
 
+        # Total equity = master + every enabled slave's last-known equity.
         total_eq = bal
         for row in self._rows:
             try:
@@ -2583,8 +2611,11 @@ class App(ctk.CTk):
                     total_eq += eq
             except Exception:
                 pass
-        self._kpi_labels["kpi_eq"].config(text=f"${total_eq:,.2f}" if total_eq > 0 else "\u2014")
+        self._kpi_cards["kpi_eq"].set_value(
+            f"${total_eq:,.2f}" if total_eq > 0 else "\u2014",
+        )
 
+        # Net P&L summed across all slaves; sub-text colour-codes the sign.
         net_pnl = 0.0
         for row in self._rows:
             try:
@@ -2594,14 +2625,33 @@ class App(ctk.CTk):
                 net_pnl += pnl
             except Exception:
                 pass
-        pnl_color = p.GREEN if net_pnl >= 0 else p.RED
-        pnl_sign = "+" if net_pnl >= 0 else ""
-        self._kpi_labels["kpi_pnl"].config(text=f"{pnl_sign}${net_pnl:,.2f}" if net_pnl != 0 else "\u2014",
-                                            fg=pnl_color if net_pnl != 0 else p.FG_DIM)
+        if net_pnl > 0:
+            pnl_str = f"+${net_pnl:,.2f}"
+            pnl_color = p.GREEN
+        elif net_pnl < 0:
+            pnl_str = f"-${abs(net_pnl):,.2f}"
+            pnl_color = p.RED
+        else:
+            pnl_str = "\u2014"
+            pnl_color = p.FG_DIM
+        # KPICard.set_value colours the sub-text, not the big number — we
+        # tint the *sub* instead, which keeps the value glyph stable for
+        # the eye while still telegraphing gain/loss with the small caption.
+        self._kpi_cards["kpi_pnl"].set_value(
+            pnl_str,
+            sub_text=("прибыль" if net_pnl > 0 else "убыток" if net_pnl < 0 else ""),
+            sub_color=pnl_color,
+        )
 
+        # Connected = enabled slaves / total slaves; sub-text shows the
+        # connectivity percentage so the card matches the mockup pattern.
         connected = sum(1 for row in self._rows if row.var_enabled.get())
         total = len(self._rows)
-        self._kpi_labels["kpi_conn"].config(text=f"{connected}/{total}")
+        pct = (connected * 100 // total) if total else 0
+        self._kpi_cards["kpi_conn"].set_value(
+            f"{connected}/{total}" if total else "\u2014",
+            sub_text=f"{pct}% активно" if total else "",
+        )
 
     def _start(self):
         master_path = self.var_master_path.get().strip()
