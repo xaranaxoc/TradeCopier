@@ -553,23 +553,23 @@ class Toggle(tk.Canvas):
         self._track_on = p.GREEN
         self._track_off = p.FG_DIM
         self._knob_color = "#FFFFFF"
-        self._state = "normal"
+        self._disabled = False
 
         self.bind("<Button-1>", self._on_click)
-        self._trace = self._var.trace_add("write", lambda *_a: self._redraw())
-        self._redraw()
+        try:
+            self._trace = self._var.trace_add("write", lambda *_a: self._redraw())
+        except Exception:
+            self._trace = None
+        # Defer the first paint to the next idle tick so the canvas is
+        # fully realised by Tk before we draw — avoids a flicker /
+        # empty-frame issue on slow Windows starts.
+        self.after_idle(self._redraw)
 
     # ── state ───────────────────────────────────────────────────────
 
-    def configure(self, **kw: Any) -> None:  # type: ignore[override]
-        state = kw.pop("state", None)
-        if state is not None:
-            self._state = state
-            self._redraw()
-        if "bg" in kw:
-            super().configure(bg=kw.pop("bg"))
-        if kw:
-            super().configure(**kw)
+    def set_disabled(self, disabled: bool = True) -> None:
+        self._disabled = bool(disabled)
+        self._redraw()
 
     # CTkSwitch back-compat: not used by AccountRow, but harmless.
     def select(self) -> None:
@@ -581,7 +581,7 @@ class Toggle(tk.Canvas):
     # ── internals ──────────────────────────────────────────────────
 
     def _on_click(self, _event: Any = None) -> None:
-        if self._state == "disabled":
+        if self._disabled:
             return
         self._var.set(not self._var.get())
         if self._command:
@@ -591,23 +591,27 @@ class Toggle(tk.Canvas):
                 pass
 
     def _redraw(self) -> None:
-        self.delete("all")
-        on = bool(self._var.get())
-        track = self._track_on if on else self._track_off
-        w, h, pad = self._w, self._h, self._pad
-        r = h / 2
-        # Pill = two end-circles + middle rectangle.
-        self.create_oval(0, 0, h, h, fill=track, outline="")
-        self.create_oval(w - h, 0, w, h, fill=track, outline="")
-        self.create_rectangle(r, 0, w - r, h, fill=track, outline="")
-        # Knob inset by ``pad`` so a ring of track shows around it.
-        knob_d = h - 2 * pad
-        kx = (w - knob_d - pad) if on else pad
-        ky = pad
-        self.create_oval(
-            kx, ky, kx + knob_d, ky + knob_d,
-            fill=self._knob_color, outline="",
-        )
+        try:
+            self.delete("all")
+            on = bool(self._var.get())
+            track = self._track_on if on else self._track_off
+            w, h, pad = self._w, self._h, self._pad
+            r = h / 2
+            # Pill = two end-circles + middle rectangle.
+            self.create_oval(0, 0, h, h, fill=track, outline="")
+            self.create_oval(w - h, 0, w, h, fill=track, outline="")
+            self.create_rectangle(r, 0, w - r, h, fill=track, outline="")
+            # Knob inset by ``pad`` so a ring of track shows around it.
+            knob_d = h - 2 * pad
+            kx = (w - knob_d - pad) if on else pad
+            ky = pad
+            self.create_oval(
+                kx, ky, kx + knob_d, ky + knob_d,
+                fill=self._knob_color, outline="",
+            )
+        except tk.TclError:
+            # Widget might be destroyed mid-trace on shutdown.
+            pass
 
 
 __all__ = [
