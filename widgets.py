@@ -166,30 +166,29 @@ class KPICard(Card):
 
         self.columnconfigure(1, weight=1)
 
-        # Compact KPI scale: LABEL 10 bold uppercase, VALUE 20 bold,
-        # SUB 9 normal.  Icon circle shrunk to 36px with 16px gap and
-        # 16px internal padding so the tile feels like a tight,
-        # dashboard-class card instead of a hero block.
-        self._icon = IconCircle(self, size=36, tint=tint, icon=icon, glyph=glyph)
-        self._icon.grid(row=0, column=0, rowspan=3, padx=(16, 16), pady=16, sticky="n")
+        # Compact KPI scale matching the legacy WinForms density:
+        # LABEL 9 bold uppercase, VALUE 18 bold, no sub-text air.
+        # Icon 32px on a 12px gutter.
+        self._icon = IconCircle(self, size=32, tint=tint, icon=icon, glyph=glyph)
+        self._icon.grid(row=0, column=0, rowspan=3, padx=(14, 12), pady=14, sticky="n")
 
         self._lbl = ctk.CTkLabel(
             self,
             text=label.upper(),
             text_color=p.FG_LABEL,
-            font=("Segoe UI", 10, "bold"),
+            font=("Segoe UI", 9, "bold"),
             anchor="w",
         )
-        self._lbl.grid(row=0, column=1, sticky="ew", padx=(0, 16), pady=(16, 0))
+        self._lbl.grid(row=0, column=1, sticky="ew", padx=(0, 14), pady=(14, 0))
 
         self._val = ctk.CTkLabel(
             self,
             text=value,
             text_color=p.FG,
-            font=("Segoe UI", 20, "bold"),
+            font=("Segoe UI", 18, "bold"),
             anchor="w",
         )
-        self._val.grid(row=1, column=1, sticky="ew", padx=(0, 16), pady=(2, 0))
+        self._val.grid(row=1, column=1, sticky="ew", padx=(0, 14), pady=(2, 0))
 
         self._sub = ctk.CTkLabel(
             self,
@@ -198,7 +197,7 @@ class KPICard(Card):
             font=("Segoe UI", 9, "normal"),
             anchor="w",
         )
-        self._sub.grid(row=2, column=1, sticky="ew", padx=(0, 16), pady=(2, 16))
+        self._sub.grid(row=2, column=1, sticky="ew", padx=(0, 14), pady=(2, 14))
 
     def set_value(
         self,
@@ -499,24 +498,26 @@ class RiskBar(ctk.CTkFrame):
         self._label.configure(text=label, anchor="center")
 
 
-# ── Toggle ── iOS-style switch with knob fully inset inside the track ──
+# ── Toggle ── iOS-style switch built from CTkFrames (no Canvas seams) ──
 
 
-class Toggle(tk.Canvas):
-    """Canvas-drawn iOS-style toggle.
+class Toggle(ctk.CTkFrame):
+    """iOS-style toggle implemented with two ``CTkFrame``s.
 
-    CTkSwitch always draws its knob with diameter = ``switch_height``,
-    so the knob ends up flush against the track edges with no visible
-    padding.  ``Toggle`` instead draws the knob inset by ``knob_pad`` on
-    every side so there is a clean ring of track colour visible around
-    the knob (matches the reference SaaS toggle design).
+    Why not ``tk.Canvas`` (the previous implementation)?  On Windows
+    Tcl's Canvas renders ``create_oval`` + ``create_rectangle`` with
+    integer-pixel rasterisation; at non-integer joint coordinates the
+    pill ends up with visible seams between the end-caps and the
+    middle bar.  ``CTkFrame`` with ``corner_radius=height/2`` draws a
+    real smooth pill via CTk's drawing engine and looks identical to
+    the SaaS reference.
 
-    The public API matches ``CTkSwitch`` as closely as needed by
-    AccountRow:
+    Public API matches the previous Toggle (and the CTkSwitch it
+    replaced enough for AccountRow's needs):
 
-      * ``variable=tk.BooleanVar(...)``  bound to the toggle state
-      * ``command=callable``             fires on click (after state flip)
-      * ``configure(state="disabled")``  greys out / disables clicks
+      * ``variable=tk.BooleanVar`` (required)
+      * ``command=callable`` (optional)
+      * ``set_disabled(bool)`` to lock interaction
     """
 
     def __init__(
@@ -528,54 +529,62 @@ class Toggle(tk.Canvas):
         width: int = 36,
         height: int = 20,
         knob_pad: int = 3,
-        bg: Optional[str] = None,
+        bg_color: Optional[str] = None,
         **kw: Any,
     ) -> None:
-        # Resolve the canvas background to the host card colour so the
-        # pill's outside corners blend into the row instead of showing a
-        # white rectangle on top of the row's hover colour.
-        canvas_bg = bg if bg is not None else p.BG_ROW
         super().__init__(
             master,
             width=width,
             height=height,
-            highlightthickness=0,
-            bd=0,
-            bg=canvas_bg,
-            cursor="hand2",
+            corner_radius=height // 2,
+            fg_color=p.FG_DIM,
+            border_width=0,
+            bg_color=bg_color if bg_color is not None else "transparent",
             **kw,
         )
+        # Lock the track size — without this the inner CTkFrame would
+        # let the knob's place() expand the track height.
+        self.grid_propagate(False)
+        self.pack_propagate(False)
+
         self._var = variable if variable is not None else tk.BooleanVar(value=False)
         self._command = command
-        # NB: NEVER name these attributes ``_w`` / ``_h`` — ``_w`` is a
-        # reserved tkinter attribute that stores the widget's Tcl path,
-        # and shadowing it makes every .grid()/.pack()/.place() call
-        # raise `bad argument "<width>": must be name of window`.
         self._cw = width
         self._ch = height
         self._pad = knob_pad
         self._track_on = p.GREEN
         self._track_off = p.FG_DIM
-        self._knob_color = "#FFFFFF"
         self._disabled = False
 
-        self.bind("<Button-1>", self._on_click)
+        knob_d = height - 2 * knob_pad
+        self._knob = ctk.CTkFrame(
+            self,
+            width=knob_d,
+            height=knob_d,
+            corner_radius=knob_d // 2,
+            fg_color="#FFFFFF",
+            border_width=0,
+        )
+        self._knob.place(x=knob_pad, y=knob_pad)
+
+        # Bind clicks on BOTH the track and the knob so the entire
+        # widget surface toggles regardless of which child the cursor
+        # happens to hit.
+        for w in (self, self._knob):
+            w.bind("<Button-1>", self._on_click)
+
         try:
-            self._trace = self._var.trace_add("write", lambda *_a: self._redraw())
+            self._trace = self._var.trace_add("write", lambda *_a: self._update())
         except Exception:
             self._trace = None
-        # Defer the first paint to the next idle tick so the canvas is
-        # fully realised by Tk before we draw — avoids a flicker /
-        # empty-frame issue on slow Windows starts.
-        self.after_idle(self._redraw)
+        # Defer first paint so place() applies after the track is mapped.
+        self.after_idle(self._update)
 
-    # ── state ───────────────────────────────────────────────────────
+    # ── state ──────────────────────────────────────────────────────
 
     def set_disabled(self, disabled: bool = True) -> None:
         self._disabled = bool(disabled)
-        self._redraw()
 
-    # CTkSwitch back-compat: not used by AccountRow, but harmless.
     def select(self) -> None:
         self._var.set(True)
 
@@ -594,27 +603,14 @@ class Toggle(tk.Canvas):
             except Exception:
                 pass
 
-    def _redraw(self) -> None:
+    def _update(self) -> None:
         try:
-            self.delete("all")
             on = bool(self._var.get())
-            track = self._track_on if on else self._track_off
-            w, h, pad = self._cw, self._ch, self._pad
-            r = h / 2
-            # Pill = two end-circles + middle rectangle.
-            self.create_oval(0, 0, h, h, fill=track, outline="")
-            self.create_oval(w - h, 0, w, h, fill=track, outline="")
-            self.create_rectangle(r, 0, w - r, h, fill=track, outline="")
-            # Knob inset by ``pad`` so a ring of track shows around it.
-            knob_d = h - 2 * pad
-            kx = (w - knob_d - pad) if on else pad
-            ky = pad
-            self.create_oval(
-                kx, ky, kx + knob_d, ky + knob_d,
-                fill=self._knob_color, outline="",
-            )
+            self.configure(fg_color=self._track_on if on else self._track_off)
+            knob_d = self._ch - 2 * self._pad
+            kx = (self._cw - knob_d - self._pad) if on else self._pad
+            self._knob.place(x=kx, y=self._pad)
         except tk.TclError:
-            # Widget might be destroyed mid-trace on shutdown.
             pass
 
 
