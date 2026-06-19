@@ -508,7 +508,7 @@ class CopyTrader:
                     "success": True, "status": f"✅ TEST BUY #{ticket}",
                 })
 
-                mt5.sleep(1000)
+                time.sleep(1)
 
                 pos = None
                 all_pos = mt5.positions_get(symbol=slave_sym)
