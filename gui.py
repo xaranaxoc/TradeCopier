@@ -48,6 +48,13 @@ from typing import Dict, List, Optional, Tuple
 
 from ctk_compat import Label, Button, Entry, Frame, Toplevel
 from theme import apply_theme, init_scaling as _init_ctk_scaling
+# Phase-2 redesign primitives. `widgets` provides Card / KPICard / Chip /
+# StatusPill / IconButton / SectionHeader / RiskBar; `lucide` returns
+# tinted CTkImages for the bundled Lucide icon set. Both modules read
+# colours through palette_proxy, so they automatically follow the
+# active theme on the next rebuild via `_apply_runtime_theme`.
+import widgets as _widgets
+import lucide as _lucide
 
 try:
     import MetaTrader5 as mt5
@@ -1761,130 +1768,18 @@ class App(ctk.CTk):
                       activebackground=abg, padx=10, pady=3)
 
     def _build_ui(self):
-        # ── Header bar ───────────────────────────────────────
-        hdr = Frame(self, bg=p.BG_HEADER)
-        hdr.pack(fill="x", padx=0, pady=0)
-
-        hdr_left = Frame(hdr, bg=p.BG_HEADER)
-        hdr_left.pack(side="left", padx=14, pady=(10, 8))
-
-        logo_path = os.path.join(IMG_DIR, "convertico-fth_48x48.png")
-        if os.path.exists(logo_path):
-            try:
-                self._logo_img = tk.PhotoImage(file=logo_path)
-                self._logo_label = Label(hdr_left, image=self._logo_img, bg=p.BG_HEADER, text="")
-                self._logo_label.pack(side="left", padx=(0, 8))
-            except Exception:
-                pass
-        Label(hdr_left, text="Trade Copier", bg=p.BG_HEADER, fg=p.FG,
-              font=f.TITLE).pack(side="left")
-        Label(hdr_left, text="  MT5", bg=p.BG_HEADER, fg=p.ACCENT,
-              font=("Segoe UI", 12)).pack(side="left", anchor="s")
-
-        hdr_right = Frame(hdr, bg=p.BG_HEADER)
-        hdr_right.pack(side="right", padx=14, pady=(10, 8))
-
-        self.btn_info = Button(hdr_right, text="i", command=self._toggle_info,
-                               bg=p.BG_INPUT, fg=p.FG_DIM,
-                               font=("Segoe UI", 10, "bold"),
-                               activebackground=p.BG_ROW_HOVER, padx=8, pady=1,
-                               width=2)
-        self.btn_info.pack(side="right", padx=(8, 0))
-        _bind_tip(self.btn_info, "Режим подсказок")
-
-        btn_settings = Button(hdr_right, text="\u2699", command=self._open_settings,
-                              bg=p.BG_INPUT, fg=p.FG_DIM,
-                              font=("Segoe UI", 10, "bold"),
-                              activebackground=p.BG_ROW_HOVER, padx=8, pady=1,
-                              width=2)
-        btn_settings.pack(side="right", padx=(4, 0))
-        _bind_tip(btn_settings, "Настройки приложения")
-
-        block_term = Frame(hdr_right, bg=p.BG_HEADER)
-        block_term.pack(side="right", padx=(12, 0))
-        Label(block_term, text="ТЕРМИНАЛЫ", bg=p.BG_HEADER, fg=p.FG_DIM,
-              font=f.XS).pack(side="left", padx=(0, 4))
-        btn_launch = self._make_btn(block_term, "\u25B6 Запустить", self._launch_all, accent=True)
-        btn_launch.pack(side="left", padx=2)
-        _bind_tip(btn_launch, "Запустить все терминалы (свёрнутые)")
-        btn_shutdown = self._make_btn(block_term, "\u25A0 Закрыть", self._shutdown_all, danger=True)
-        btn_shutdown.pack(side="left", padx=2)
-        _bind_tip(btn_shutdown, "Завершить процессы всех терминалов")
-
-        block_ct = Frame(hdr_right, bg=p.BG_HEADER)
-        block_ct.pack(side="right", padx=(12, 0))
-        Label(block_ct, text="КОПИТРЕЙДЕР", bg=p.BG_HEADER, fg=p.FG_DIM,
-              font=f.XS).pack(side="left", padx=(0, 4))
-        self.btn_start = self._make_btn(block_ct, "\u25B6  Старт", self._start, accent=True)
-        self.btn_start.pack(side="left", padx=2)
-        _bind_tip(self.btn_start, "Запустить копирование сделок")
-        self.btn_stop = self._make_btn(block_ct, "\u25A0  Стоп", self._stop, danger=True)
-        self.btn_stop.pack(side="left", padx=2)
-        _bind_tip(self.btn_stop, "Остановить копирование")
-        self.btn_stop.configure(state="disabled")
-
-        # ── Мастер ──────────────────────────────────────────
-        Frame(self, bg=p.DIVIDER, height=1).pack(fill="x", padx=14, pady=(6, 0))
-
-        master_outer = Frame(self, bg=p.BG_ROW, highlightbackground=p.BORDER,
-                             highlightthickness=1)
-        master_outer.pack(fill="x", padx=14, pady=1)
-
-        master_strip = Frame(master_outer, bg=p.ACCENT, width=3)
-        master_strip.place(x=0, y=0, relheight=1.0)
-
-        master_f = Frame(master_outer, bg=p.BG_ROW)
-        master_f.pack(fill="x", padx=(6, 8), pady=6)
-
-        Label(master_f, text="МАСТЕР", bg=p.BG_ROW, fg=p.ACCENT, font=f.BOLD).grid(row=0, column=0, padx=(4, 8))
-
-        self.var_master_path = tk.StringVar()
-        # Path is set via the "..." browse button; keeping the entry
-        # read-only avoids accidental edits to a value that needs to
-        # point at a real terminal64.exe on disk.
-        Entry(master_f, textvariable=self.var_master_path, width=36,
-              bg=p.BG_INPUT, fg=p.FG, font=f.SM, highlightthickness=1,
-              highlightbackground=p.BORDER, highlightcolor=p.ACCENT,
-              state="readonly").grid(row=0, column=1, padx=4, sticky="ew")
-        btn_browse_m = self._make_btn(master_f, "...", self._browse_master)
-        btn_browse_m.grid(row=0, column=2, padx=2)
-        _bind_tip(btn_browse_m, "Выбрать путь к terminal64.exe мастера")
-
-        btn_open_m = Button(master_f, text="\U0001F4C8", command=self._open_master_terminal,
-                            bg=p.BG_ROW, fg=p.ACCENT, font=f.SM,
-                            activebackground=p.BG_ROW_HOVER, width=2)
-        btn_open_m.grid(row=0, column=3, padx=(8, 4))
-        _bind_tip(btn_open_m, "Открыть терминал мастера")
-
-        btn_close_master = Button(master_f, text="\u2716", command=self._close_all_master,
-                                  bg=p.BG_ROW, fg=p.RED_DIM, font=f.SM,
-                                  activebackground=p.BG_ROW_HOVER, width=2)
-        btn_close_master.grid(row=0, column=4, padx=2)
-        _bind_tip(btn_close_master, "Закрыть все позиции мастера")
-
-        btn_test_master = Button(master_f, text="\u26A0", command=self._test_master,
-                                 bg=p.BG_ROW, fg=p.YELLOW, font=f.SM,
-                                 activebackground=p.BG_ROW_HOVER, width=2)
-        btn_test_master.grid(row=0, column=5, padx=2)
-        _bind_tip(btn_test_master, "Тест: BUY 0.01 лот на мастере")
-
-        self.lbl_master_login = Label(master_f, text="", bg=p.BG_ROW, fg=p.FG_DIM,
-                                      font=f.MONO_SM, anchor="w")
-        self.lbl_master_login.grid(row=0, column=6, padx=6, sticky="ew")
-
-        self.lbl_master_bal = Label(master_f, text="", bg=p.BG_ROW, fg=p.FG,
-                                    font=f.VAL_BOLD, anchor="e")
-        self.lbl_master_bal.grid(row=0, column=7, padx=4, sticky="ew")
-
-        self.lbl_master_eq = Label(master_f, text="", bg=p.BG_ROW, fg=p.FG_DIM,
-                                   font=f.MONO_SM, anchor="e")
-        self.lbl_master_eq.grid(row=0, column=8, padx=4, sticky="ew")
-
-        self.lbl_master_pnl = Label(master_f, text="", bg=p.BG_ROW, fg=p.FG_DIM,
-                                    font=f.VAL, anchor="e")
-        self.lbl_master_pnl.grid(row=0, column=9, padx=4, sticky="ew")
-
-        master_f.columnconfigure(1, weight=1)
+        # ── Header + Master row (Phase-2 soft redesign) ──────
+        # The header and master strip are now card-aware: header has no
+        # solid bar (it sits on the page background), action buttons use
+        # Lucide icons via lucide.icon(), and the master row is a white
+        # Card consistent with the rest of the dashboard.
+        #
+        # Each helper sets the same instance attributes as the previous
+        # inline code, so the rest of the app (_apply_runtime_theme,
+        # _toggle_info, _start, _stop, master polling, theme rebuild)
+        # keeps working without changes.
+        self._build_header_soft()
+        self._build_master_soft()
 
         # ── Dashboard KPI ───────────────────────────────────
         dash = Frame(self, bg=p.BG_DEEP)
@@ -2009,18 +1904,227 @@ class App(ctk.CTk):
             Label(stats_f, text=f"v{upd_mod.VERSION}", bg=p.BG_DEEP, fg=p.ACCENT,
                   font=f.SM).pack(side="right")
 
+    # ── Phase-2 redesign builders ───────────────────────────
+
+    def _build_header_soft(self) -> None:
+        """Build the Light-Soft header row.
+
+        Layout (left → right):
+
+            [logo] FTH Trade Copier [MT5]   …   [▶ Старт][■ Стоп] · \
+[🚀 Запустить терминалы][⏻ Закрыть] · [⚙][ⓘ]
+
+        The header has no separate ``BG_HEADER`` strip — it sits flush
+        on the page background (``BG_DEEP``) and is separated from the
+        master row only by spacing.
+        """
+        outer = ctk.CTkFrame(self, fg_color=p.BG_DEEP, corner_radius=0)
+        outer.pack(fill="x", padx=24, pady=(16, 8))
+
+        # ── Left cluster: logo + title + MT5 chip ─────────
+        left = ctk.CTkFrame(outer, fg_color="transparent")
+        left.pack(side="left")
+
+        logo_path = os.path.join(IMG_DIR, "convertico-fth_48x48.png")
+        if os.path.exists(logo_path):
+            try:
+                # tk.PhotoImage stays — _set_logo_cyan already targets
+                # this widget by attribute (self._logo_label) when the
+                # trader transitions between idle and running states.
+                self._logo_img = tk.PhotoImage(file=logo_path)
+                self._logo_label = Label(left, image=self._logo_img,
+                                         bg=p.BG_DEEP, text="")
+                self._logo_label.pack(side="left", padx=(0, 12))
+            except Exception:
+                pass
+
+        ctk.CTkLabel(
+            left, text="FTH Trade Copier",
+            text_color=p.FG, font=("Segoe UI", 18, "bold"),
+        ).pack(side="left", padx=(0, 10))
+        _widgets.Chip(left, text="MT5", tint="blue", bold=True).pack(
+            side="left", anchor="center"
+        )
+
+        # ── Right cluster: action buttons, gear, info ────
+        right = ctk.CTkFrame(outer, fg_color="transparent")
+        right.pack(side="right")
+
+        # Copy-trader controls — Start (primary) / Stop (ghost).
+        self.btn_start = ctk.CTkButton(
+            right, text="Старт", image=_lucide.icon("play", 14, "on_accent"),
+            compound="left", command=self._start,
+            fg_color=p.ACCENT, hover_color=p.ACCENT_H, text_color=p.ACCENT_FG,
+            corner_radius=p.RADIUS_MD, border_width=0,
+            width=98, height=34, font=("Segoe UI", 11, "bold"),
+        )
+        self.btn_start.pack(side="left", padx=(0, 6))
+        _bind_tip(self.btn_start, "Запустить копирование сделок")
+
+        self.btn_stop = ctk.CTkButton(
+            right, text="Стоп", image=_lucide.icon("square", 12, "label"),
+            compound="left", command=self._stop,
+            fg_color="transparent", hover_color=p.BG_ROW_HOVER,
+            text_color=p.FG, corner_radius=p.RADIUS_MD,
+            border_width=1, border_color=p.BORDER,
+            width=84, height=34, font=("Segoe UI", 11, "bold"),
+            state="disabled",
+        )
+        self.btn_stop.pack(side="left", padx=(0, 16))
+        _bind_tip(self.btn_stop, "Остановить копирование")
+
+        # Terminal controls — Launch / Shutdown.
+        btn_launch = ctk.CTkButton(
+            right, text="Запустить терминалы",
+            image=_lucide.icon("rocket", 14, "label"), compound="left",
+            command=self._launch_all,
+            fg_color="transparent", hover_color=p.BG_ROW_HOVER,
+            text_color=p.FG, corner_radius=p.RADIUS_MD,
+            border_width=1, border_color=p.BORDER,
+            height=34, font=("Segoe UI", 11),
+        )
+        btn_launch.pack(side="left", padx=(0, 6))
+        _bind_tip(btn_launch, "Запустить все терминалы (свёрнутые)")
+
+        btn_shutdown = ctk.CTkButton(
+            right, text="Закрыть",
+            image=_lucide.icon("power", 14, "danger"), compound="left",
+            command=self._shutdown_all,
+            fg_color="transparent", hover_color=p.RED_GLOW,
+            text_color=p.RED, corner_radius=p.RADIUS_MD,
+            border_width=1, border_color=p.BORDER,
+            height=34, font=("Segoe UI", 11),
+        )
+        btn_shutdown.pack(side="left", padx=(0, 16))
+        _bind_tip(btn_shutdown, "Завершить процессы всех терминалов")
+
+        # Icon-only utility buttons.
+        btn_settings = _widgets.IconButton(
+            right, icon=_lucide.icon("settings", 16, "label"),
+            variant="ghost", size=34, command=self._open_settings,
+        )
+        btn_settings.pack(side="left", padx=(0, 4))
+        _bind_tip(btn_settings, "Настройки приложения")
+
+        self.btn_info = _widgets.IconButton(
+            right, icon=_lucide.icon("info", 16, "label"),
+            variant="ghost", size=34, command=self._toggle_info,
+        )
+        # Stash the default icon/color so _toggle_info can revert to it.
+        self.btn_info._info_default_icon = _lucide.icon("info", 16, "label")
+        self.btn_info._info_active_icon = _lucide.icon("info", 16, "on_accent")
+        self.btn_info.pack(side="left")
+        _bind_tip(self.btn_info, "Режим подсказок")
+
+    def _build_master_soft(self) -> None:
+        """Build the Light-Soft master strip as a single white Card.
+
+        Children laid out in one row::
+
+            [МАСТЕР chip] [path entry] [📁][📊][❌][⚠]
+                       login · balance · equity · P&L (right-aligned)
+        """
+        card = _widgets.Card(self, padding=12)
+        card.pack(fill="x", padx=24, pady=(0, 8))
+
+        row = ctk.CTkFrame(card, fg_color="transparent")
+        row.pack(fill="x", padx=14, pady=10)
+
+        # МАСТЕР chip on the left.
+        _widgets.Chip(row, text="МАСТЕР", tint="blue", bold=True).pack(
+            side="left", padx=(0, 10)
+        )
+
+        # Path entry (read-only, populated by _browse_master).
+        self.var_master_path = tk.StringVar()
+        path_entry = ctk.CTkEntry(
+            row, textvariable=self.var_master_path,
+            width=300, height=30, corner_radius=p.RADIUS_MD,
+            fg_color=p.BG_DEEP, text_color=p.FG,
+            border_color=p.BORDER, border_width=1,
+            font=("Segoe UI", 10), state="readonly",
+        )
+        path_entry.pack(side="left", padx=(0, 6))
+
+        # Browse — folder icon.
+        btn_browse_m = _widgets.IconButton(
+            row, icon=_lucide.icon("folder", 16, "label"),
+            variant="ghost", size=30, command=self._browse_master,
+        )
+        btn_browse_m.pack(side="left", padx=(0, 12))
+        _bind_tip(btn_browse_m, "Выбрать путь к terminal64.exe мастера")
+
+        # Open master terminal — chart icon.
+        btn_open_m = _widgets.IconButton(
+            row, icon=_lucide.icon("chart-no-axes-column", 16, "accent"),
+            variant="ghost", size=30, command=self._open_master_terminal,
+        )
+        btn_open_m.pack(side="left", padx=(0, 2))
+        _bind_tip(btn_open_m, "Открыть терминал мастера")
+
+        # Close all positions — danger icon.
+        btn_close_master = _widgets.IconButton(
+            row, icon=_lucide.icon("circle-x", 16, "danger"),
+            variant="ghost", size=30, command=self._close_all_master,
+        )
+        btn_close_master.pack(side="left", padx=(0, 2))
+        _bind_tip(btn_close_master, "Закрыть все позиции мастера")
+
+        # Test BUY — warn icon.
+        btn_test_master = _widgets.IconButton(
+            row, icon=_lucide.icon("triangle-alert", 16, "warn"),
+            variant="ghost", size=30, command=self._test_master,
+        )
+        btn_test_master.pack(side="left", padx=(0, 16))
+        _bind_tip(btn_test_master, "Тест: BUY 0.01 лот на мастере")
+
+        # ── Right-side metrics ───────────────────────────
+        # P&L (rightmost), then equity, balance, then login.  Packing
+        # right→left gives the visual order the mockup uses.
+        self.lbl_master_pnl = ctk.CTkLabel(
+            row, text="", text_color=p.FG_DIM,
+            font=("Segoe UI", 11, "bold"), anchor="e",
+        )
+        self.lbl_master_pnl.pack(side="right", padx=(8, 0))
+
+        self.lbl_master_eq = ctk.CTkLabel(
+            row, text="", text_color=p.FG_LABEL,
+            font=("Segoe UI", 10), anchor="e",
+        )
+        self.lbl_master_eq.pack(side="right", padx=(8, 0))
+
+        self.lbl_master_bal = ctk.CTkLabel(
+            row, text="", text_color=p.FG,
+            font=("Segoe UI", 12, "bold"), anchor="e",
+        )
+        self.lbl_master_bal.pack(side="right", padx=(8, 0))
+
+        self.lbl_master_login = ctk.CTkLabel(
+            row, text="", text_color=p.FG_LABEL,
+            font=("Segoe UI", 10), anchor="w",
+        )
+        self.lbl_master_login.pack(side="left", padx=(0, 8))
+
     # ── Info toggle ─────────────────────────────────────────
 
     def _toggle_info(self):
         _Tip.enabled = not _Tip.enabled
         if _Tip.enabled:
-            # When info-mode is ON, the button stays solid-accent on hover
-            # so the active state remains obvious (no fade-to-row-hover).
-            self.btn_info.configure(bg=p.ACCENT, fg=p.ACCENT_FG,
-                                    activebackground=p.ACCENT)
+            # Active state — solid accent with white icon so the toggle
+            # state is obvious at a glance.
+            self.btn_info.configure(
+                fg_color=p.ACCENT, hover_color=p.ACCENT_H,
+                text_color=p.ACCENT_FG,
+                image=getattr(self.btn_info, "_info_active_icon", None)
+                      or _lucide.icon("info", 16, "on_accent"),
+            )
         else:
-            self.btn_info.configure(bg=p.BG_INPUT, fg=p.FG_DIM,
-                                    activebackground=p.BG_ROW_HOVER)
+            self.btn_info.configure(
+                fg_color="transparent", hover_color=p.BG_ROW_HOVER,
+                text_color=p.FG_LABEL,
+                image=getattr(self.btn_info, "_info_default_icon", None)
+                      or _lucide.icon("info", 16, "label"),
+            )
             _Tip.hide()
 
     # ── Мастер ──────────────────────────────────────────────
@@ -2858,6 +2962,13 @@ class App(ctk.CTk):
         # 3. Re-apply CTk appearance for the NEW theme (light/dark mode).
         try:
             apply_theme()
+        except Exception:
+            pass
+
+        # 3b. Drop Lucide-icon cache so colour-aliased icons (``"accent"``,
+        # ``"label"`` …) re-tint against the new palette on next paint.
+        try:
+            _lucide.clear_cache()
         except Exception:
             pass
 
