@@ -26,6 +26,9 @@ echo.
     --windows-icon-from-ico=img/convertico-fth.ico ^
     --output-filename=FTHTradeCopier.exe ^
     --include-data-dir=img=img ^
+    --include-data-dir=assets=assets ^
+    --include-module=widgets ^
+    --include-module=lucide ^
     --include-package-data=customtkinter ^
     --include-package-data=MetaTrader5 ^
     --enable-plugin=tk-inter ^
