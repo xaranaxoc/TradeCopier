@@ -87,6 +87,34 @@ class Palette:
     BORDER_LIGHT: str
     DIVIDER: str
 
+    # ── Soft-design tokens ──────────────────────────────────────────
+    # Optional with sensible defaults so existing builtin themes
+    # (NEON_CYAN, LIGHT_PRO) keep working without changes. The
+    # ``Light Soft`` redesign theme overrides these for tinted icon
+    # circles, P&L row tints and rounded-corner widgets.
+
+    # Tinted backgrounds for icon circles / row stripes (BUY/SELL etc.)
+    TINT_BLUE: str = "#EFF6FF"
+    TINT_PURPLE: str = "#F5F3FF"
+    TINT_GREEN: str = "#ECFDF5"
+    TINT_ORANGE: str = "#FFF7ED"
+    TINT_RED: str = "#FEF2F2"
+
+    # Foreground colours for chips/badges over the tinted backgrounds.
+    TINT_BLUE_FG: str = "#2563EB"
+    TINT_PURPLE_FG: str = "#7C3AED"
+    TINT_GREEN_FG: str = "#16A34A"
+    TINT_ORANGE_FG: str = "#EA580C"
+    TINT_RED_FG: str = "#DC2626"
+
+    # Corner radii used by CTk widgets in the redesigned UI. Existing
+    # themes keep a small default radius for compatibility; the soft
+    # redesign theme bumps these to 8/12/16 for a softer look.
+    RADIUS_SM: int = 4
+    RADIUS_MD: int = 6
+    RADIUS_LG: int = 8
+    RADIUS_PILL: int = 999
+
 
 # ── Fonts dataclass ──────────────────────────────────────────────────
 
@@ -172,6 +200,58 @@ LIGHT_PRO = Palette(
     DIVIDER="#E5E5E5",
 )
 
+LIGHT_SOFT = Palette(
+    # Soft light theme — modern card-based redesign.
+    # Reference: ChatGPT-generated mock (see PR description).
+    # Page is a soft gray (#F2F4F7), content lives in white rounded
+    # cards (#FFFFFF) with thin neutral borders (#E5E7EB) instead of
+    # drop shadows. Saturated blue accent, Tailwind-style semantic
+    # colours, tinted icon circles for KPI cards (blue/purple/green/
+    # orange) and tinted row backgrounds for the trade log.
+    BG_DEEP="#F2F4F7",       # page background
+    BG="#F2F4F7",            # frames / panels (flat page bg)
+    BG_ROW="#FFFFFF",        # cards, table rows
+    BG_ROW_HOVER="#F8FAFC",  # subtle hover on row
+    BG_INPUT="#FFFFFF",      # entry / combobox (with border)
+    BG_HEADER="#FFFFFF",     # section header card
+    FG="#0F172A",            # primary text (slate-900)
+    FG_DIM="#94A3B8",        # tertiary text (slate-400)
+    FG_LABEL="#64748B",      # secondary text / labels (slate-500)
+    FG_MUTED="#94A3B8",      # muted / disabled
+    ACCENT="#3B82F6",        # primary blue (Tailwind blue-500)
+    ACCENT_H="#2563EB",      # blue-600 hover
+    ACCENT_DIM="#93C5FD",    # blue-300 disabled
+    ACCENT_FG="#FFFFFF",     # text on blue
+    CYAN_GLOW="#EFF6FF",     # blue-50 badge background
+    GREEN="#22C55E",         # green-500
+    GREEN_DIM="#16A34A",     # green-600
+    GREEN_GLOW="#ECFDF5",    # green-50 row tint (profit)
+    RED="#EF4444",           # red-500
+    RED_DIM="#DC2626",       # red-600
+    RED_GLOW="#FEF2F2",      # red-50 row tint (loss)
+    YELLOW="#F59E0B",        # amber-500
+    YELLOW_DIM="#D97706",    # amber-600
+    BORDER="#E5E7EB",        # card border (slate-200)
+    BORDER_LIGHT="#F1F5F9",  # divider (slate-100)
+    DIVIDER="#F1F5F9",
+    # Tints — used for KPI icon circles and chips.
+    TINT_BLUE="#EFF6FF",
+    TINT_PURPLE="#F5F3FF",
+    TINT_GREEN="#ECFDF5",
+    TINT_ORANGE="#FFF7ED",
+    TINT_RED="#FEF2F2",
+    TINT_BLUE_FG="#2563EB",
+    TINT_PURPLE_FG="#7C3AED",
+    TINT_GREEN_FG="#16A34A",
+    TINT_ORANGE_FG="#EA580C",
+    TINT_RED_FG="#DC2626",
+    # Larger radii for the soft / modern look.
+    RADIUS_SM=8,
+    RADIUS_MD=12,
+    RADIUS_LG=16,
+    RADIUS_PILL=999,
+)
+
 # ── Built-in font sets ──────────────────────────────────────────────
 
 DEFAULT_FONTS = Fonts(
@@ -198,18 +278,20 @@ class Theme:
 THEMES: Dict[str, Theme] = {
     "neon_cyan": Theme(palette=NEON_CYAN, fonts=DEFAULT_FONTS, appearance="dark"),
     "light_pro": Theme(palette=LIGHT_PRO, fonts=DEFAULT_FONTS, appearance="light"),
+    "light_soft": Theme(palette=LIGHT_SOFT, fonts=DEFAULT_FONTS, appearance="light"),
 }
 
 # Human-readable names for the theme picker UI.
 THEME_LABELS: Dict[str, str] = {
     "neon_cyan": "Neon Cyan (тёмная)",
     "light_pro": "Light Pro (MetaTrader 5)",
+    "light_soft": "Light Soft (карточный)",
 }
 
 DEFAULT_THEME = "neon_cyan"
 
 # Built-ins cannot be unregistered or overwritten via custom-themes JSON.
-_BUILTIN_THEMES = frozenset({"neon_cyan", "light_pro"})
+_BUILTIN_THEMES = frozenset({"neon_cyan", "light_pro", "light_soft"})
 
 # ── Global state ────────────────────────────────────────────────────
 
