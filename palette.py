@@ -674,27 +674,29 @@ def apply_ttk_styles(
     except Exception:
         pass
 
-    # Treeview (trades table)
+    # Treeview (trades table) — 36px rows with 11pt body text feels
+    # spacious like a modern dashboard, not a Win-Forms data grid.
     style.configure(
         "T.Treeview",
         background=pal.BG_ROW,
         foreground=pal.FG,
         fieldbackground=pal.BG_ROW,
-        font=("Segoe UI", 10),
+        font=("Segoe UI", 11),
         rowheight=s(36),
         borderwidth=0,
         relief="flat",
     )
-    # Heading sits on BG_ROW_HOVER (slate-50) for a subtle band that
-    # separates it from the white rows below — matches the reference.
+    # Heading: light slate band, uppercase-style 10pt bold label colour.
+    # Larger horizontal padding (16/12) keeps column headers from
+    # bumping into the rows below.
     style.configure(
         "T.Treeview.Heading",
         background=pal.BG_ROW_HOVER,
         foreground=pal.FG_LABEL,
-        font=("Segoe UI", 9, "bold"),
+        font=("Segoe UI", 10, "bold"),
         borderwidth=0,
         relief="flat",
-        padding=(8, 8),
+        padding=(16, 12),
     )
     style.map(
         "T.Treeview",
@@ -705,12 +707,14 @@ def apply_ttk_styles(
 
     # Notebook (bottom tabs: Сделки / Лог)
     style.configure("TNotebook", background=pal.BG_ROW, borderwidth=0, relief="flat")
+    # Tabs (Сделки / Лог): bigger touch target + 10pt bold so they
+    # look like real navigation, not vestigial controls.
     style.configure(
         "TNotebook.Tab",
         background=pal.BG_INPUT,
         foreground=pal.FG_DIM,
-        padding=[16, 8],
-        font=("Segoe UI", 9, "bold"),
+        padding=[20, 10],
+        font=("Segoe UI", 10, "bold"),
         borderwidth=0,
         relief="flat",
     )

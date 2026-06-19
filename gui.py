@@ -874,6 +874,11 @@ class AccountRow:
         # grid for compatibility, but reserve a taller row and draw a
         # rounded frame behind the cells.
         self._parent.rowconfigure(r, minsize=ui_scaling.scale(72))
+        # Card-row chrome: rounded white background with a hair-thin
+        # divider border (BORDER_LIGHT == slate-100).  padx=0 lets the
+        # row sit flush with the parent's SPACE_16 inset so the card
+        # spans the full content width; vertical pady=6 gives 12px
+        # between adjacent account cards (6 + 6).
         self._bg_frame = ctk.CTkFrame(
             self._parent,
             fg_color=p.BG_ROW,
@@ -883,7 +888,7 @@ class AccountRow:
             height=64,
         )
         self._bg_frame.grid(row=r, column=0, columnspan=12,
-                            sticky="nsew", pady=8, padx=4)
+                            sticky="nsew", pady=6, padx=0)
         self._bg_frame.lower()  # stay behind cell widgets
 
         bg = p.BG_ROW
@@ -2033,10 +2038,14 @@ class App(ctk.CTk):
 
         # КОПИТРЕЙДЕР caption — muted label that anchors the action group
         # to the right edge.  Matches the reference mockup ordering.
+        # Muted uppercase caption — 10pt bold reads as an eyebrow label
+        # (matches Linear / Stripe Dashboard chrome).  Padding bumped to
+        # SPACE_24 so the caption sits in its own zone instead of crowding
+        # the Старт button.
         ctk.CTkLabel(
             right, text="КОПИТРЕЙДЕР",
-            text_color=p.FG_LABEL, font=("Segoe UI", 9, "bold"),
-        ).pack(side="left", padx=(0, SPACE_16))
+            text_color=p.FG_LABEL, font=("Segoe UI", 10, "bold"),
+        ).pack(side="left", padx=(0, SPACE_24))
 
         # Copy-trader controls — Start (primary) / Stop (ghost).
         self.btn_start = ctk.CTkButton(
@@ -2058,7 +2067,10 @@ class App(ctk.CTk):
             width=BTN_MIN_W, height=BTN_HEIGHT, font=("Segoe UI", 11, "bold"),
             state="disabled",
         )
-        self.btn_stop.pack(side="left", padx=(0, SPACE_16))
+        # SPACE_24 between the copy-trader group (Старт/Стоп) and the
+        # terminal group (Запустить/Закрыть) reads as a real separation
+        # instead of one long button row.
+        self.btn_stop.pack(side="left", padx=(0, SPACE_24))
         _bind_tip(self.btn_stop, "Остановить копирование")
 
         # Terminal controls — Launch / Shutdown.
@@ -2083,7 +2095,9 @@ class App(ctk.CTk):
             border_width=1, border_color=p.BORDER,
             height=BTN_HEIGHT, font=("Segoe UI", 11),
         )
-        btn_shutdown.pack(side="left", padx=(0, SPACE_16))
+        # SPACE_24 between terminal group and icon-only utilities (gear /
+        # info) so the two halves of the right cluster breathe apart.
+        btn_shutdown.pack(side="left", padx=(0, SPACE_24))
         _bind_tip(btn_shutdown, "Завершить процессы всех терминалов")
 
         # Icon-only utility buttons.
@@ -2117,11 +2131,13 @@ class App(ctk.CTk):
         reads ``cget("text")`` to populate the KPI cards.  CTkLabel ignores
         ``.config(text=...)`` — that's why the KPI cards were empty before.
         """
-        card = _widgets.Card(self, padding=SPACE_16)
+        # Card padding=SPACE_24 → row inset 24px on all sides (per the
+        # 8px rhythm: cards breathe with 24px internal padding, not 16).
+        card = _widgets.Card(self, padding=SPACE_24)
         card.pack(fill="x", padx=SPACE_24, pady=(0, SPACE_24))
 
         row = ctk.CTkFrame(card, fg_color="transparent")
-        row.pack(fill="x", padx=SPACE_16, pady=SPACE_16)
+        row.pack(fill="x", padx=SPACE_24, pady=SPACE_16)
 
         # МАСТЕР chip on the left.
         _widgets.Chip(row, text="МАСТЕР", tint="blue", bold=True).pack(
@@ -2253,7 +2269,9 @@ class App(ctk.CTk):
             sashwidth=SPACE_16, sashrelief="flat", opaqueresize=True,
             borderwidth=0,
         )
-        self._paned.pack(fill="both", expand=True, padx=SPACE_24, pady=(0, SPACE_16))
+        # 24px bottom matches the section rhythm (header → master →
+        # KPI → slaves are all separated by 24px).
+        self._paned.pack(fill="both", expand=True, padx=SPACE_24, pady=(0, SPACE_24))
 
         # Top pane: header + rows in the SAME card.
         top_pane = tk.Frame(self._paned, bg=p.BG_DEEP)
@@ -2304,16 +2322,20 @@ class App(ctk.CTk):
                 idx, minsize=ui_scaling.scale(min_w), weight=weight,
             )
 
+        # Column labels are intentionally LIGHT — text-secondary with no
+        # bold weight — so the eye reads the row cards as the primary
+        # grouping, not the column band.  Modern dashboards (Linear,
+        # Stripe) use this trick to reduce visual noise.
         for idx, text, _, _, anchor in COL_SPEC:
             if not text:
                 continue
             lbl_h = ctk.CTkLabel(
                 self._table_frame, text=text.upper(),
                 text_color=p.FG_LABEL,
-                font=("Segoe UI", 9, "bold"),
+                font=("Segoe UI", 9, "normal"),
                 anchor=anchor,
             )
-            lbl_h.grid(row=0, column=idx, padx=SPACE_8, pady=(0, SPACE_8), sticky="ew")
+            lbl_h.grid(row=0, column=idx, padx=SPACE_8, pady=(0, SPACE_16), sticky="ew")
 
         self._next_row = 1
 

@@ -164,20 +164,21 @@ class KPICard(Card):
 
         self.columnconfigure(1, weight=1)
 
-        # 24px internal padding + 16px icon/text gap: the KPI cards are
-        # meant to feel like independent dashboard tiles, not compact table
-        # cells.  The structure is identical for all four tiles:
-        #     icon | TITLE
-        #          | VALUE
-        #          | SUBTEXT
+        # Visual rhythm:
+        #     - icon column padded 24px LEFT and 24px RIGHT (the 24px
+        #       gap between icon and text is what makes the tile feel
+        #       calm, instead of glued together at ~10px)
+        #     - 24px internal padding all around the tile
+        #     - typography scale: LABEL 11 bold uppercase (eyebrow),
+        #       VALUE 32 bold (hero), SUBTEXT 11 normal (caption)
         self._icon = IconCircle(self, size=44, tint=tint, icon=icon, glyph=glyph)
-        self._icon.grid(row=0, column=0, rowspan=3, padx=(24, 16), pady=24, sticky="n")
+        self._icon.grid(row=0, column=0, rowspan=3, padx=(24, 24), pady=24, sticky="n")
 
         self._lbl = ctk.CTkLabel(
             self,
             text=label.upper(),
             text_color=p.FG_LABEL,
-            font=("Segoe UI", 12, "bold"),
+            font=("Segoe UI", 11, "bold"),
             anchor="w",
         )
         self._lbl.grid(row=0, column=1, sticky="ew", padx=(0, 24), pady=(24, 0))
@@ -186,7 +187,7 @@ class KPICard(Card):
             self,
             text=value,
             text_color=p.FG,
-            font=("Segoe UI", 30, "bold"),
+            font=("Segoe UI", 32, "bold"),
             anchor="w",
         )
         self._val.grid(row=1, column=1, sticky="ew", padx=(0, 24), pady=(6, 0))
@@ -195,7 +196,7 @@ class KPICard(Card):
             self,
             text=sub_text,
             text_color=sub_color or p.GREEN_DIM,
-            font=("Segoe UI", 12, "normal"),
+            font=("Segoe UI", 11, "normal"),
             anchor="w",
         )
         self._sub.grid(row=2, column=1, sticky="ew", padx=(0, 24), pady=(2, 24))
@@ -248,13 +249,16 @@ class StatusPill(ctk.CTkFrame):
             border_width=0,
             **kw,
         )
+        # Pill geometry: 8 vertical / 14 horizontal padding — matches the
+        # Stripe / Linear "● Active" badge shape.  Dot 11pt sits visually
+        # centred against the 11pt label.
         self._dot = ctk.CTkLabel(
             self,
             text="●",
             text_color=getattr(p, self._DOT_COLOR.get(state, "GREEN")),
-            font=("Segoe UI", 12, "bold"),
+            font=("Segoe UI", 11, "bold"),
         )
-        self._dot.pack(side="left", padx=(12, 6), pady=8)
+        self._dot.pack(side="left", padx=(14, 6), pady=8)
         self._lbl = ctk.CTkLabel(
             self,
             text=text,
@@ -296,9 +300,12 @@ class Chip(ctk.CTkLabel):
             fg_color=bg,
             text_color=fg,
             corner_radius=p.RADIUS_PILL,
-            font=("Segoe UI", 9, "bold" if bold else "normal"),
-            padx=10,
-            pady=2,
+            # 10pt is the smallest size that still reads cleanly at 100%
+            # Windows scaling; 4px vertical pad gives the chip a proper
+            # pill shape instead of a tight rectangle.
+            font=("Segoe UI", 10, "bold" if bold else "normal"),
+            padx=12,
+            pady=4,
             **kw,
         )
 
@@ -380,19 +387,22 @@ class SectionHeader(ctk.CTkFrame):
         )
         self.columnconfigure(2, weight=1)
 
+        # Section title reads as a heading: 12pt bold uppercase, neutral
+        # FG colour.  Counter pill sits 12px after the title and uses the
+        # accent colour so it can be parsed as metadata, not text body.
         self._title = ctk.CTkLabel(
             self,
             text=title.upper(),
             text_color=p.FG,
             font=("Segoe UI", 12, "bold"),
         )
-        self._title.grid(row=0, column=0, padx=(0, 10), sticky="w")
+        self._title.grid(row=0, column=0, padx=(0, 12), sticky="w")
 
         self._counter = ctk.CTkLabel(
             self,
             text=counter or "",
             text_color=p.ACCENT,
-            font=("Segoe UI", 12, "bold"),
+            font=("Segoe UI", 11, "bold"),
         )
         self._counter.grid(row=0, column=1, sticky="w")
 
