@@ -896,15 +896,15 @@ class AccountRow:
         # ── col 0 — enable switch ───────────────────────
         enabled = d.get("enabled", True)
         self.var_enabled = tk.BooleanVar(value=enabled)
-        # iOS-style switch — white knob on a green / grey track.
-        # Track is dark grey (FG_DIM) when off so it doesn't blend with
-        # the white row background; knob is pure white with a bit of
-        # border for crisp contrast.
+        # iOS-style switch.  Track 44×22 pill; knob is drawn as a 22px
+        # circle that sits FULLY INSIDE the track because the widget,
+        # the switch surface and the knob all share the same height —
+        # CTkSwitch only over-extends the knob when border_width > 0.
         self.sw_enabled = ctk.CTkSwitch(
             self._parent, text="", variable=self.var_enabled,
             onvalue=True, offvalue=False, command=self._toggle,
-            width=44, height=22, switch_width=36, switch_height=20,
-            corner_radius=p.RADIUS_PILL,
+            width=44, height=22, switch_width=44, switch_height=22,
+            corner_radius=11,
             progress_color=p.GREEN, fg_color=p.FG_DIM,
             button_color="#FFFFFF", button_hover_color="#F5F5F5",
             border_width=0,
@@ -2023,9 +2023,14 @@ class App(ctk.CTk):
         ctk.CTkLabel(
             left, text="Trade Copier",
             text_color=p.FG, font=("Segoe UI", 18, "bold"),
-        ).pack(side="left", padx=(0, SPACE_8))
+        ).pack(side="left", padx=(0, SPACE_8), pady=(2, 0))
+        # MT5 chip sits to the right of the title.  Tk's pack baseline
+        # anchors small widgets to the TOP of the slot when paired with
+        # a taller sibling — pady=(8, 0) nudges the chip down so its
+        # vertical centre aligns with the "Trade Copier" cap-height
+        # instead of floating at the title's ascender line.
         _widgets.Chip(left, text="MT5", tint="blue", bold=True).pack(
-            side="left", anchor="center"
+            side="left", anchor="center", pady=(8, 0),
         )
 
         # "КОПИТРЕЙДЕР" caption sits to the left of the action buttons
@@ -2038,13 +2043,11 @@ class App(ctk.CTk):
 
         # КОПИТРЕЙДЕР caption — muted label that anchors the action group
         # to the right edge.  Matches the reference mockup ordering.
-        # Muted uppercase caption — 10pt bold reads as an eyebrow label
-        # (matches Linear / Stripe Dashboard chrome).  Padding bumped to
-        # SPACE_24 so the caption sits in its own zone instead of crowding
-        # the Старт button.
+        # Muted uppercase caption — 9pt bold, sits in its own padding
+        # zone (SPACE_24) so it doesn't crowd the Старт button.
         ctk.CTkLabel(
             right, text="КОПИТРЕЙДЕР",
-            text_color=p.FG_LABEL, font=("Segoe UI", 10, "bold"),
+            text_color=p.FG_LABEL, font=("Segoe UI", 9, "bold"),
         ).pack(side="left", padx=(0, SPACE_24))
 
         # Copy-trader controls — Start (primary) / Stop (ghost).
@@ -2314,7 +2317,17 @@ class App(ctk.CTk):
 
         # Column labels + card rows.  No grid lines: whitespace + row cards
         # do the grouping.
-        self._table_frame = ctk.CTkFrame(rows_card, fg_color="transparent")
+        # Account rows live in a CTkScrollableFrame so the section can
+        # host up to 10 slaves (and beyond) without breaking the layout —
+        # extra rows scroll inside the card while the section header /
+        # action buttons stay pinned at the top.
+        self._table_frame = ctk.CTkScrollableFrame(
+            rows_card,
+            fg_color="transparent",
+            scrollbar_button_color=p.BORDER,
+            scrollbar_button_hover_color=p.FG_DIM,
+            label_text="",
+        )
         self._table_frame.pack(fill="both", expand=True, padx=SPACE_16, pady=(0, SPACE_16))
         self._table_frame.rowconfigure(0, minsize=ui_scaling.scale(32))
         for idx, _, min_w, weight, _ in COL_SPEC:

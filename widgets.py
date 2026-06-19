@@ -164,42 +164,41 @@ class KPICard(Card):
 
         self.columnconfigure(1, weight=1)
 
-        # Visual rhythm:
-        #     - icon column padded 24px LEFT and 24px RIGHT (the 24px
-        #       gap between icon and text is what makes the tile feel
-        #       calm, instead of glued together at ~10px)
-        #     - 24px internal padding all around the tile
-        #     - typography scale: LABEL 11 bold uppercase (eyebrow),
-        #       VALUE 32 bold (hero), SUBTEXT 11 normal (caption)
-        self._icon = IconCircle(self, size=44, tint=tint, icon=icon, glyph=glyph)
-        self._icon.grid(row=0, column=0, rowspan=3, padx=(24, 24), pady=24, sticky="n")
+        # Typography rhythm:
+        #   - LABEL  10 bold uppercase (eyebrow)
+        #   - VALUE  24 bold (hero number — sized so $125,893.45 fits a
+        #     KPI column at 4-up on a 1280-wide window)
+        #   - SUB    10 normal (caption)
+        # 24px internal padding + 20px gap between icon and text.
+        self._icon = IconCircle(self, size=40, tint=tint, icon=icon, glyph=glyph)
+        self._icon.grid(row=0, column=0, rowspan=3, padx=(20, 20), pady=20, sticky="n")
 
         self._lbl = ctk.CTkLabel(
             self,
             text=label.upper(),
             text_color=p.FG_LABEL,
-            font=("Segoe UI", 11, "bold"),
+            font=("Segoe UI", 10, "bold"),
             anchor="w",
         )
-        self._lbl.grid(row=0, column=1, sticky="ew", padx=(0, 24), pady=(24, 0))
+        self._lbl.grid(row=0, column=1, sticky="ew", padx=(0, 20), pady=(20, 0))
 
         self._val = ctk.CTkLabel(
             self,
             text=value,
             text_color=p.FG,
-            font=("Segoe UI", 32, "bold"),
+            font=("Segoe UI", 24, "bold"),
             anchor="w",
         )
-        self._val.grid(row=1, column=1, sticky="ew", padx=(0, 24), pady=(6, 0))
+        self._val.grid(row=1, column=1, sticky="ew", padx=(0, 20), pady=(4, 0))
 
         self._sub = ctk.CTkLabel(
             self,
             text=sub_text,
             text_color=sub_color or p.GREEN_DIM,
-            font=("Segoe UI", 11, "normal"),
+            font=("Segoe UI", 10, "normal"),
             anchor="w",
         )
-        self._sub.grid(row=2, column=1, sticky="ew", padx=(0, 24), pady=(2, 24))
+        self._sub.grid(row=2, column=1, sticky="ew", padx=(0, 20), pady=(2, 20))
 
     def set_value(
         self,
@@ -249,23 +248,24 @@ class StatusPill(ctk.CTkFrame):
             border_width=0,
             **kw,
         )
-        # Pill geometry: 8 vertical / 14 horizontal padding — matches the
-        # Stripe / Linear "● Active" badge shape.  Dot 11pt sits visually
-        # centred against the 11pt label.
+        # Pill geometry: 6 vertical / 12 horizontal padding — smaller
+        # than the previous 8/14 since the larger version read as a
+        # button.  Dot 10pt, label 10pt bold so the pill stays in the
+        # supporting-element scale.
         self._dot = ctk.CTkLabel(
             self,
             text="●",
             text_color=getattr(p, self._DOT_COLOR.get(state, "GREEN")),
-            font=("Segoe UI", 11, "bold"),
+            font=("Segoe UI", 10, "bold"),
         )
-        self._dot.pack(side="left", padx=(14, 6), pady=8)
+        self._dot.pack(side="left", padx=(12, 5), pady=6)
         self._lbl = ctk.CTkLabel(
             self,
             text=text,
             text_color=getattr(p, self._DOT_COLOR.get(state, "GREEN")),
-            font=("Segoe UI", 11, "bold"),
+            font=("Segoe UI", 10, "bold"),
         )
-        self._lbl.pack(side="left", padx=(0, 14), pady=8)
+        self._lbl.pack(side="left", padx=(0, 12), pady=6)
 
     def set(self, text: str, *, state: Optional[str] = None) -> None:
         self._lbl.configure(text=text)
@@ -300,12 +300,13 @@ class Chip(ctk.CTkLabel):
             fg_color=bg,
             text_color=fg,
             corner_radius=p.RADIUS_PILL,
-            # 10pt is the smallest size that still reads cleanly at 100%
-            # Windows scaling; 4px vertical pad gives the chip a proper
-            # pill shape instead of a tight rectangle.
-            font=("Segoe UI", 10, "bold" if bold else "normal"),
-            padx=12,
-            pady=4,
+            # 9pt is the standard chip size — bigger reads as a button.
+            # 3px vertical pad still gives the chip a pill shape but keeps
+            # it visually small next to 18pt headings (so it sits as a
+            # tag, not as a sibling element).
+            font=("Segoe UI", 9, "bold" if bold else "normal"),
+            padx=10,
+            pady=3,
             **kw,
         )
 
