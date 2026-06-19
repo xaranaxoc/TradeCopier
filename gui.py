@@ -840,18 +840,19 @@ class AccountRow:
         d = self.slave_data
         r = self._row
 
-        # Card-style row background.  We use a CTkFrame with rounded
-        # corners so the row reads as a card on the soft page bg.
+        # Card-style row background.  Subtle slate-50 surface with a
+        # thin slate-200 border so each row reads as its own pill on the
+        # white outer card — matches the reference mockup spacing.
         self._bg_frame = ctk.CTkFrame(
             self._parent,
             fg_color=p.BG_ROW,
             corner_radius=p.RADIUS_MD,
             border_width=1,
             border_color=p.BORDER,
-            height=44,
+            height=52,
         )
         self._bg_frame.grid(row=r, column=0, columnspan=12,
-                            sticky="nsew", pady=3, padx=2)
+                            sticky="nsew", pady=4, padx=4)
         self._bg_frame.lower()  # stay behind cell widgets
 
         bg = p.BG_ROW
@@ -859,15 +860,20 @@ class AccountRow:
         # ── col 0 — enable switch ───────────────────────
         enabled = d.get("enabled", True)
         self.var_enabled = tk.BooleanVar(value=enabled)
+        # iOS-style switch — white knob on a green / grey track.
+        # Track is dark grey (FG_DIM) when off so it doesn't blend with
+        # the white row background; knob is pure white with a bit of
+        # border for crisp contrast.
         self.sw_enabled = ctk.CTkSwitch(
             self._parent, text="", variable=self.var_enabled,
             onvalue=True, offvalue=False, command=self._toggle,
-            width=36, height=18, switch_width=30, switch_height=16,
+            width=44, height=22, switch_width=36, switch_height=20,
             corner_radius=p.RADIUS_PILL,
-            progress_color=p.GREEN, fg_color=p.BORDER,
-            button_color=p.BG_ROW, button_hover_color=p.BG_ROW_HOVER,
+            progress_color=p.GREEN, fg_color=p.FG_DIM,
+            button_color="#FFFFFF", button_hover_color="#F5F5F5",
+            border_width=0,
         )
-        self.sw_enabled.grid(row=r, column=0, padx=(10, 4), pady=8,
+        self.sw_enabled.grid(row=r, column=0, padx=(12, 4), pady=8,
                              sticky="w")
         _bind_tip(self.sw_enabled, "Включить / выключить аккаунт")
         self._widgets.append(self.sw_enabled)
@@ -1949,16 +1955,27 @@ class App(ctk.CTk):
                 pass
 
         ctk.CTkLabel(
-            left, text="FTH Trade Copier",
+            left, text="Trade Copier",
             text_color=p.FG, font=("Segoe UI", 18, "bold"),
         ).pack(side="left", padx=(0, 10))
         _widgets.Chip(left, text="MT5", tint="blue", bold=True).pack(
             side="left", anchor="center"
         )
 
+        # "КОПИРТРЕЙДЕР" caption sits to the left of the action buttons
+        # on the right side — pack it FIRST on the right cluster so it
+        # ends up immediately before the Старт/Стоп pair.
+
         # ── Right cluster: action buttons, gear, info ────
         right = ctk.CTkFrame(outer, fg_color="transparent")
         right.pack(side="right")
+
+        # КОПИРТРЕЙДЕР caption — muted label that anchors the action group
+        # to the right edge.  Matches the reference mockup ordering.
+        ctk.CTkLabel(
+            right, text="КОПИРТРЕЙДЕР",
+            text_color=p.FG_LABEL, font=("Segoe UI", 9, "bold"),
+        ).pack(side="left", padx=(0, 12))
 
         # Copy-trader controls — Start (primary) / Stop (ghost).
         self.btn_start = ctk.CTkButton(
@@ -2029,10 +2046,15 @@ class App(ctk.CTk):
     def _build_master_soft(self) -> None:
         """Build the Light-Soft master strip as a single white Card.
 
-        Children laid out in one row::
+        Layout (matches the reference mockup)::
 
-            [МАСТЕР chip] [path entry] [📁][📊][❌][⚠]
-                       login · balance · equity · P&L (right-aligned)
+            [МАСТЕР chip] [path entry ─── fills ───] [📁][📊][❌][⚠] [● Running]
+
+        Master balance/equity/P&L/login are kept as *invisible* ctk_compat
+        Labels.  ``_update_master_info_silent`` and ``_update_status`` use
+        ``.config(text=...)`` on them as a backing store; ``_refresh_dashboard``
+        reads ``cget("text")`` to populate the KPI cards.  CTkLabel ignores
+        ``.config(text=...)`` — that's why the KPI cards were empty before.
         """
         card = _widgets.Card(self, padding=12)
         card.pack(fill="x", padx=24, pady=(0, 8))
@@ -2045,75 +2067,66 @@ class App(ctk.CTk):
             side="left", padx=(0, 10)
         )
 
-        # Path entry (read-only, populated by _browse_master).
-        self.var_master_path = tk.StringVar()
-        path_entry = ctk.CTkEntry(
-            row, textvariable=self.var_master_path,
-            width=300, height=30, corner_radius=p.RADIUS_MD,
-            fg_color=p.BG_DEEP, text_color=p.FG,
-            border_color=p.BORDER, border_width=1,
-            font=("Segoe UI", 10), state="readonly",
+        # ── Right-side action cluster (status pill last so it pins right) ──
+        # Status pill (rightmost) — Running / Stopped indicator.
+        self._master_status_pill = _widgets.StatusPill(
+            row, text="Готов", state="neutral",
         )
-        path_entry.pack(side="left", padx=(0, 6))
-
-        # Browse — folder icon.
-        btn_browse_m = _widgets.IconButton(
-            row, icon=_lucide.icon("folder", 16, "label"),
-            variant="ghost", size=30, command=self._browse_master,
-        )
-        btn_browse_m.pack(side="left", padx=(0, 12))
-        _bind_tip(btn_browse_m, "Выбрать путь к terminal64.exe мастера")
-
-        # Open master terminal — chart icon.
-        btn_open_m = _widgets.IconButton(
-            row, icon=_lucide.icon("chart-no-axes-column", 16, "accent"),
-            variant="ghost", size=30, command=self._open_master_terminal,
-        )
-        btn_open_m.pack(side="left", padx=(0, 2))
-        _bind_tip(btn_open_m, "Открыть терминал мастера")
-
-        # Close all positions — danger icon.
-        btn_close_master = _widgets.IconButton(
-            row, icon=_lucide.icon("circle-x", 16, "danger"),
-            variant="ghost", size=30, command=self._close_all_master,
-        )
-        btn_close_master.pack(side="left", padx=(0, 2))
-        _bind_tip(btn_close_master, "Закрыть все позиции мастера")
+        self._master_status_pill.pack(side="right", padx=(8, 0))
 
         # Test BUY — warn icon.
         btn_test_master = _widgets.IconButton(
             row, icon=_lucide.icon("triangle-alert", 16, "warn"),
             variant="ghost", size=30, command=self._test_master,
         )
-        btn_test_master.pack(side="left", padx=(0, 16))
+        btn_test_master.pack(side="right", padx=(2, 4))
         _bind_tip(btn_test_master, "Тест: BUY 0.01 лот на мастере")
 
-        # ── Right-side metrics ───────────────────────────
-        # P&L (rightmost), then equity, balance, then login.  Packing
-        # right→left gives the visual order the mockup uses.
-        self.lbl_master_pnl = ctk.CTkLabel(
-            row, text="", text_color=p.FG_DIM,
-            font=("Segoe UI", 11, "bold"), anchor="e",
+        # Close all positions — danger icon.
+        btn_close_master = _widgets.IconButton(
+            row, icon=_lucide.icon("circle-x", 16, "danger"),
+            variant="ghost", size=30, command=self._close_all_master,
         )
-        self.lbl_master_pnl.pack(side="right", padx=(8, 0))
+        btn_close_master.pack(side="right", padx=2)
+        _bind_tip(btn_close_master, "Закрыть все позиции мастера")
 
-        self.lbl_master_eq = ctk.CTkLabel(
-            row, text="", text_color=p.FG_LABEL,
-            font=("Segoe UI", 10), anchor="e",
+        # Open master terminal — chart icon.
+        btn_open_m = _widgets.IconButton(
+            row, icon=_lucide.icon("chart-no-axes-column", 16, "accent"),
+            variant="ghost", size=30, command=self._open_master_terminal,
         )
-        self.lbl_master_eq.pack(side="right", padx=(8, 0))
+        btn_open_m.pack(side="right", padx=2)
+        _bind_tip(btn_open_m, "Открыть терминал мастера")
 
-        self.lbl_master_bal = ctk.CTkLabel(
-            row, text="", text_color=p.FG,
-            font=("Segoe UI", 12, "bold"), anchor="e",
+        # Browse — folder icon.
+        btn_browse_m = _widgets.IconButton(
+            row, icon=_lucide.icon("folder", 16, "label"),
+            variant="ghost", size=30, command=self._browse_master,
         )
-        self.lbl_master_bal.pack(side="right", padx=(8, 0))
+        btn_browse_m.pack(side="right", padx=(4, 4))
+        _bind_tip(btn_browse_m, "Выбрать путь к terminal64.exe мастера")
 
-        self.lbl_master_login = ctk.CTkLabel(
-            row, text="", text_color=p.FG_LABEL,
-            font=("Segoe UI", 10), anchor="w",
+        # Path entry (read-only, populated by _browse_master).  Packed
+        # last with ``fill="x", expand=True`` so it consumes the middle.
+        self.var_master_path = tk.StringVar()
+        path_entry = ctk.CTkEntry(
+            row, textvariable=self.var_master_path,
+            height=30, corner_radius=p.RADIUS_MD,
+            fg_color=p.BG_DEEP, text_color=p.FG,
+            border_color=p.BORDER, border_width=1,
+            font=("Segoe UI", 10), state="readonly",
         )
-        self.lbl_master_login.pack(side="left", padx=(0, 8))
+        path_entry.pack(side="left", fill="x", expand=True, padx=(0, 8))
+
+        # ── Hidden backing-store labels (KPI cards read .cget from these) ──
+        # Use ctk_compat.Label so ``.config(text=..., fg=...)`` works.
+        # NOT packed/gridded → they have no on-screen footprint.
+        self.lbl_master_login = Label(
+            self, text="", bg=p.BG_DEEP, fg=p.FG_LABEL,
+        )
+        self.lbl_master_bal = Label(self, text="", bg=p.BG_DEEP, fg=p.FG)
+        self.lbl_master_eq = Label(self, text="", bg=p.BG_DEEP, fg=p.FG_LABEL)
+        self.lbl_master_pnl = Label(self, text="", bg=p.BG_DEEP, fg=p.FG_DIM)
 
     def _build_kpi_soft(self) -> None:
         """Build the Light-Soft KPI dashboard row.
@@ -2317,35 +2330,34 @@ class App(ctk.CTk):
         self.log_text.tag_config("info", foreground=p.FG_DIM)
 
     def _build_statusbar_soft(self) -> None:
-        """Bottom status bar with a StatusPill and version tag.
+        """Minimal bottom bar — just session stats + version tag.
 
-        The pill text doubles as the legacy ``lbl_stats`` (anything that
-        called ``self.lbl_stats.config(text=...)`` still works because the
-        StatusPill's inner CTkLabel proxies the same ``.configure`` /
-        ``.config`` interface).
+        User explicitly asked to remove the "Система готова к работе"
+        pill at the bottom; the master block's own StatusPill already
+        carries the live system state.  We keep the ``_status_pill``
+        attribute as an off-screen stub for code paths that still call
+        ``set(text, state=...)``.  ``lbl_stats`` is the running
+        ✅/❌ counter that ``_on_trade`` updates.
         """
-        bar = ctk.CTkFrame(self, fg_color=p.BG_DEEP, height=36)
-        bar.pack(fill="x", padx=24, pady=(0, 8))
+        bar = ctk.CTkFrame(self, fg_color=p.BG_DEEP, height=28)
+        bar.pack(fill="x", padx=24, pady=(0, 6))
 
-        # StatusPill on the left — "Система готова к работе" by default.
+        # Off-screen stub so legacy `.set(...)` calls don't NPE.
         self._status_pill = _widgets.StatusPill(
-            bar, text="Система готова к работе", state="success",
-        )
-        self._status_pill.pack(side="left", padx=(0, 12), pady=4)
+            self, text="", state="success",
+        )  # NOT packed — invisible.
 
-        # The old ``lbl_stats`` attribute is what _on_start() updates with
-        # "N открытых позиций | NN сделок сегодня".  We keep it as a thin
-        # CTkLabel right of the pill.
+        # Running session stats (▶/⏹ counters).  Subtle on left.
         self.lbl_stats = Label(
             bar, text="", bg=p.BG_DEEP, fg=p.FG_DIM, font=f.SM,
         )
-        self.lbl_stats.pack(side="left", pady=4)
+        self.lbl_stats.pack(side="left", padx=(2, 0), pady=4)
 
         if _UPD_OK:
-            # Version tag on the right — accent-coloured for brand pop.
+            # Version tag on the right — muted, matches reference.
             Label(
                 bar, text=f"v{upd_mod.VERSION}",
-                bg=p.BG_DEEP, fg=p.ACCENT, font=f.SM,
+                bg=p.BG_DEEP, fg=p.FG_DIM, font=f.SM,
             ).pack(side="right", padx=(0, 4), pady=4)
 
     # ── Info toggle ─────────────────────────────────────────
@@ -2754,6 +2766,20 @@ class App(ctk.CTk):
                 return
         self._lic_timer = self.after(600000, self._schedule_license_check)
 
+    def _set_master_pill(self, text: str, state: str) -> None:
+        """Reflect master terminal state in the right-side status pill.
+
+        Defensive — older code paths and the smoke test may construct App
+        without the pill (e.g. partial init crashes); just no-op then.
+        """
+        pill = getattr(self, "_master_status_pill", None)
+        if pill is None:
+            return
+        try:
+            pill.set(text, state=state)
+        except Exception:
+            pass
+
     def _update_master_info_silent(self):
         if not _MT5_OK:
             return
@@ -2761,9 +2787,11 @@ class App(ctk.CTk):
         if not master_path:
             self.lbl_master_bal.config(text="\u2014", fg=p.FG_DIM)
             self.lbl_master_login.config(text="нет пути", fg=p.RED)
+            self._set_master_pill("Нет пути", "danger")
             return
         if not is_terminal_running(master_path):
             self.lbl_master_login.config(text="не запущен", fg=p.RED)
+            self._set_master_pill("Не запущен", "danger")
             return
         if mt5.initialize(path=master_path):
             try:
@@ -2780,12 +2808,18 @@ class App(ctk.CTk):
                     self.lbl_master_bal.config(text=f"${acc.balance:,.2f}")
                     self.lbl_master_eq.config(text=f"${acc.equity:,.2f}")
                     self.lbl_master_pnl.config(text=f"{pnl_sign}${pnl:,.2f}", fg=pnl_color)
+                    if at_off:
+                        self._set_master_pill("AutoTrading OFF", "warn")
+                    else:
+                        self._set_master_pill("Running", "success")
                 else:
                     self.lbl_master_login.config(text="нет аккаунта", fg=p.RED)
+                    self._set_master_pill("Нет аккаунта", "danger")
             finally:
                 mt5.shutdown()
         else:
             self.lbl_master_login.config(text="ошибка", fg=p.RED)
+            self._set_master_pill("Ошибка", "danger")
 
     def _update_row_info_silent(self, row: AccountRow, slave: Dict):
         if not _MT5_OK:
@@ -2913,8 +2947,8 @@ class App(ctk.CTk):
             config_file=CONFIG_FILE,
         )
         self._trader.start()
-        self.btn_start.config(state="disabled")
-        self.btn_stop.config(state="normal")
+        self.btn_start.configure(state="disabled")
+        self.btn_stop.configure(state="normal")
         if os.path.exists(ICON_CYAN):
             self.iconbitmap(ICON_CYAN)
             self.wm_iconbitmap(ICON_CYAN)
@@ -2933,8 +2967,8 @@ class App(ctk.CTk):
         if self._trader:
             self._trader.stop()
             self._trader = None
-        self.btn_start.config(state="normal")
-        self.btn_stop.config(state="disabled")
+        self.btn_start.configure(state="normal")
+        self.btn_stop.configure(state="disabled")
         if os.path.exists(ICON_DEFAULT):
             self.iconbitmap(ICON_DEFAULT)
             self.wm_iconbitmap(ICON_DEFAULT)

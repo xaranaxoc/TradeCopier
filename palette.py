@@ -684,13 +684,16 @@ def apply_ttk_styles(
         rowheight=s(17),
         borderwidth=0,
     )
+    # Heading sits on BG_ROW_HOVER (slate-50) for a subtle band that
+    # separates it from the white rows below — matches the reference.
     style.configure(
         "T.Treeview.Heading",
-        background=pal.BG_INPUT,
-        foreground=pal.FG_DIM,
+        background=pal.BG_ROW_HOVER,
+        foreground=pal.FG_LABEL,
         font=fnt.XS,
         borderwidth=0,
         relief="flat",
+        padding=(8, 6),
     )
     style.map(
         "T.Treeview",
