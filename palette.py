@@ -680,9 +680,10 @@ def apply_ttk_styles(
         background=pal.BG_ROW,
         foreground=pal.FG,
         fieldbackground=pal.BG_ROW,
-        font=fnt.MONO_SM,
-        rowheight=s(17),
+        font=("Segoe UI", 10),
+        rowheight=s(36),
         borderwidth=0,
+        relief="flat",
     )
     # Heading sits on BG_ROW_HOVER (slate-50) for a subtle band that
     # separates it from the white rows below — matches the reference.
@@ -690,10 +691,10 @@ def apply_ttk_styles(
         "T.Treeview.Heading",
         background=pal.BG_ROW_HOVER,
         foreground=pal.FG_LABEL,
-        font=fnt.XS,
+        font=("Segoe UI", 9, "bold"),
         borderwidth=0,
         relief="flat",
-        padding=(8, 6),
+        padding=(8, 8),
     )
     style.map(
         "T.Treeview",
@@ -703,14 +704,15 @@ def apply_ttk_styles(
     style.map("T.Treeview.Heading", background=[("active", pal.BG_ROW_HOVER)])
 
     # Notebook (bottom tabs: Сделки / Лог)
-    style.configure("TNotebook", background=pal.BG_DEEP, borderwidth=0)
+    style.configure("TNotebook", background=pal.BG_ROW, borderwidth=0, relief="flat")
     style.configure(
         "TNotebook.Tab",
         background=pal.BG_INPUT,
         foreground=pal.FG_DIM,
-        padding=[12, 3],
-        font=fnt.SM,
+        padding=[16, 8],
+        font=("Segoe UI", 9, "bold"),
         borderwidth=0,
+        relief="flat",
     )
     style.map(
         "TNotebook.Tab",

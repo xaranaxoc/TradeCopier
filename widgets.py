@@ -164,35 +164,41 @@ class KPICard(Card):
 
         self.columnconfigure(1, weight=1)
 
-        self._icon = IconCircle(self, tint=tint, icon=icon, glyph=glyph)
-        self._icon.grid(row=0, column=0, rowspan=3, padx=(16, 14), pady=16, sticky="n")
+        # 24px internal padding + 16px icon/text gap: the KPI cards are
+        # meant to feel like independent dashboard tiles, not compact table
+        # cells.  The structure is identical for all four tiles:
+        #     icon | TITLE
+        #          | VALUE
+        #          | SUBTEXT
+        self._icon = IconCircle(self, size=44, tint=tint, icon=icon, glyph=glyph)
+        self._icon.grid(row=0, column=0, rowspan=3, padx=(24, 16), pady=24, sticky="n")
 
         self._lbl = ctk.CTkLabel(
             self,
             text=label.upper(),
             text_color=p.FG_LABEL,
-            font=("Segoe UI", 10, "bold"),
+            font=("Segoe UI", 12, "bold"),
             anchor="w",
         )
-        self._lbl.grid(row=0, column=1, sticky="ew", padx=(0, 16), pady=(16, 0))
+        self._lbl.grid(row=0, column=1, sticky="ew", padx=(0, 24), pady=(24, 0))
 
         self._val = ctk.CTkLabel(
             self,
             text=value,
             text_color=p.FG,
-            font=("Segoe UI", 22, "bold"),
+            font=("Segoe UI", 30, "bold"),
             anchor="w",
         )
-        self._val.grid(row=1, column=1, sticky="ew", padx=(0, 16), pady=(2, 0))
+        self._val.grid(row=1, column=1, sticky="ew", padx=(0, 24), pady=(6, 0))
 
         self._sub = ctk.CTkLabel(
             self,
             text=sub_text,
             text_color=sub_color or p.GREEN_DIM,
-            font=("Segoe UI", 10),
+            font=("Segoe UI", 12, "normal"),
             anchor="w",
         )
-        self._sub.grid(row=2, column=1, sticky="ew", padx=(0, 16), pady=(0, 16))
+        self._sub.grid(row=2, column=1, sticky="ew", padx=(0, 24), pady=(2, 24))
 
     def set_value(
         self,
@@ -248,14 +254,14 @@ class StatusPill(ctk.CTkFrame):
             text_color=getattr(p, self._DOT_COLOR.get(state, "GREEN")),
             font=("Segoe UI", 12, "bold"),
         )
-        self._dot.pack(side="left", padx=(10, 4), pady=4)
+        self._dot.pack(side="left", padx=(12, 6), pady=8)
         self._lbl = ctk.CTkLabel(
             self,
             text=text,
             text_color=getattr(p, self._DOT_COLOR.get(state, "GREEN")),
-            font=("Segoe UI", 10, "bold"),
+            font=("Segoe UI", 11, "bold"),
         )
-        self._lbl.pack(side="left", padx=(0, 12), pady=4)
+        self._lbl.pack(side="left", padx=(0, 14), pady=8)
 
     def set(self, text: str, *, state: Optional[str] = None) -> None:
         self._lbl.configure(text=text)

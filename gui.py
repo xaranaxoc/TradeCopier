@@ -160,6 +160,31 @@ _apply_saved_theme()
 p = palette_proxy
 f = fonts_proxy
 
+# Backward-compatible dynamic colour/font aliases for old helpers and
+# smoke tests that still access gui.GREEN / gui.FG_DIM directly.
+_PALETTE_ALIAS_NAMES = set(getattr(_palette_mod.Palette, "__dataclass_fields__", {}))
+_FONT_ALIAS_NAMES = set(getattr(_palette_mod.Fonts, "__dataclass_fields__", {}))
+
+
+def __getattr__(name: str):
+    if name in _PALETTE_ALIAS_NAMES:
+        return getattr(p, name)
+    if name in _FONT_ALIAS_NAMES:
+        return getattr(f, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+# ── Light Soft spacing system ───────────────────────────────
+# Keep the redesign on an 8px grid.  These constants intentionally stay
+# local to gui.py so the legacy neon/light-pro code paths are not forced
+# through a larger token migration.
+SPACE_8 = 8
+SPACE_16 = 16
+SPACE_24 = 24
+SPACE_32 = 32
+BTN_HEIGHT = 40
+BTN_MIN_W = 96
+
 
 # ── Persistence: trades ─────────────────────────────────────
 
@@ -269,7 +294,7 @@ COL_SPEC = [
     (8, "РИСК", 60, 0, "e"),
     (9, "СДЕЛ/Д", 54, 0, "center"),
     (10, "УБЫТ/Д", 110, 0, "center"),
-    (11, "", 110, 0, "e"),
+    (11, "", 200, 0, "e"),
 ]
 
 
@@ -826,6 +851,10 @@ class AccountRow:
     @row_index.setter
     def row_index(self, value):
         self._row = value
+        try:
+            self._parent.rowconfigure(value, minsize=ui_scaling.scale(72))
+        except Exception:
+            pass
         if hasattr(self, "_bg_frame") and self._bg_frame:
             self._bg_frame.grid(row=value)
         for w in self._widgets:
@@ -840,19 +869,21 @@ class AccountRow:
         d = self.slave_data
         r = self._row
 
-        # Card-style row background.  Subtle slate-50 surface with a
-        # thin slate-200 border so each row reads as its own pill on the
-        # white outer card — matches the reference mockup spacing.
+        # Card-list row: one rounded object per account, separated by
+        # whitespace instead of grid lines.  Keep widgets in the parent
+        # grid for compatibility, but reserve a taller row and draw a
+        # rounded frame behind the cells.
+        self._parent.rowconfigure(r, minsize=ui_scaling.scale(72))
         self._bg_frame = ctk.CTkFrame(
             self._parent,
             fg_color=p.BG_ROW,
-            corner_radius=p.RADIUS_MD,
+            corner_radius=p.RADIUS_LG,
             border_width=1,
-            border_color=p.BORDER,
-            height=52,
+            border_color=p.BORDER_LIGHT,
+            height=64,
         )
         self._bg_frame.grid(row=r, column=0, columnspan=12,
-                            sticky="nsew", pady=4, padx=4)
+                            sticky="nsew", pady=8, padx=4)
         self._bg_frame.lower()  # stay behind cell widgets
 
         bg = p.BG_ROW
@@ -873,7 +904,7 @@ class AccountRow:
             button_color="#FFFFFF", button_hover_color="#F5F5F5",
             border_width=0,
         )
-        self.sw_enabled.grid(row=r, column=0, padx=(12, 4), pady=8,
+        self.sw_enabled.grid(row=r, column=0, padx=(16, 8), pady=16,
                              sticky="w")
         _bind_tip(self.sw_enabled, "Включить / выключить аккаунт")
         self._widgets.append(self.sw_enabled)
@@ -885,7 +916,7 @@ class AccountRow:
         self._dot = _widgets.IconCircle(
             self._parent, size=14, tint="neutral",
         )
-        self._dot.grid(row=r, column=1, padx=2, pady=8, sticky="")
+        self._dot.grid(row=r, column=1, padx=(0, 8), pady=16, sticky="")
         self._widgets.append(self._dot)
 
         # ── col 2 — name ────────────────────────────────
@@ -893,15 +924,15 @@ class AccountRow:
             self._parent, text=d.get("name", "\u2014"),
             bg=bg, fg=p.FG, font=("Segoe UI", 11, "bold"), anchor="w",
         )
-        self.lbl_name.grid(row=r, column=2, padx=4, pady=8, sticky="ew")
+        self.lbl_name.grid(row=r, column=2, padx=8, pady=16, sticky="ew")
         self._widgets.append(self.lbl_name)
 
         # ── col 3 — login (mono) ────────────────────────
         self.lbl_login = Label(
             self._parent, text="", bg=bg, fg=p.FG_DIM,
-            font=f.MONO_SM, anchor="w",
+            font=("Segoe UI", 10), anchor="w",
         )
-        self.lbl_login.grid(row=r, column=3, padx=4, pady=8, sticky="ew")
+        self.lbl_login.grid(row=r, column=3, padx=8, pady=16, sticky="ew")
         self._widgets.append(self.lbl_login)
 
         # ── col 4 — balance ─────────────────────────────
@@ -909,7 +940,7 @@ class AccountRow:
             self._parent, text="", bg=bg, fg=p.FG,
             font=("Segoe UI", 11, "bold"), anchor="e",
         )
-        self.lbl_balance.grid(row=r, column=4, padx=4, pady=8, sticky="ew")
+        self.lbl_balance.grid(row=r, column=4, padx=8, pady=16, sticky="ew")
         self._widgets.append(self.lbl_balance)
 
         # ── col 5 — equity ──────────────────────────────
@@ -917,7 +948,7 @@ class AccountRow:
             self._parent, text="", bg=bg, fg=p.FG_LABEL,
             font=("Segoe UI", 10), anchor="e",
         )
-        self.lbl_equity.grid(row=r, column=5, padx=4, pady=8, sticky="ew")
+        self.lbl_equity.grid(row=r, column=5, padx=8, pady=16, sticky="ew")
         self._widgets.append(self.lbl_equity)
 
         # ── col 6 — P&L ─────────────────────────────────
@@ -925,12 +956,12 @@ class AccountRow:
             self._parent, text="", bg=bg, fg=p.FG_DIM,
             font=("Segoe UI", 11, "bold"), anchor="e",
         )
-        self.lbl_pnl.grid(row=r, column=6, padx=4, pady=8, sticky="ew")
+        self.lbl_pnl.grid(row=r, column=6, padx=8, pady=16, sticky="ew")
         self._widgets.append(self.lbl_pnl)
 
         # ── col 7 — symbol chips (overflow becomes "+N") ─
         self._sym_frame = ctk.CTkFrame(self._parent, fg_color="transparent")
-        self._sym_frame.grid(row=r, column=7, padx=4, pady=6, sticky="w")
+        self._sym_frame.grid(row=r, column=7, padx=8, pady=16, sticky="w")
         self._build_symbol_chips(d.get("symbol_map", {}))
         self._widgets.append(self._sym_frame)
 
@@ -942,7 +973,7 @@ class AccountRow:
             self._parent, text=risk_text, bg=bg, fg=p.TINT_ORANGE_FG,
             font=("Segoe UI", 10, "bold"), anchor="e",
         )
-        self.lbl_risk.grid(row=r, column=8, padx=4, pady=8, sticky="ew")
+        self.lbl_risk.grid(row=r, column=8, padx=8, pady=16, sticky="ew")
         self._widgets.append(self.lbl_risk)
 
         # ── col 9 — trades per day ──────────────────────
@@ -952,7 +983,7 @@ class AccountRow:
             bg=bg, fg=p.FG_DIM, font=("Segoe UI", 10),
             anchor="center",
         )
-        self.lbl_trades_day.grid(row=r, column=9, padx=4, pady=8, sticky="ew")
+        self.lbl_trades_day.grid(row=r, column=9, padx=8, pady=16, sticky="ew")
         self._widgets.append(self.lbl_trades_day)
 
         # ── col 10 — daily-loss RiskBar ─────────────────
@@ -962,12 +993,12 @@ class AccountRow:
             label=(f"$0/${dll:.0f}" if dll else "\u2014"),
             width=ui_scaling.scale(100),
         )
-        self._risk_bar.grid(row=r, column=10, padx=4, pady=6, sticky="ew")
+        self._risk_bar.grid(row=r, column=10, padx=8, pady=16, sticky="ew")
         self._widgets.append(self._risk_bar)
 
         # ── col 11 — action buttons ─────────────────────
         bf = ctk.CTkFrame(self._parent, fg_color="transparent")
-        bf.grid(row=r, column=11, padx=(2, 8), pady=6, sticky="e")
+        bf.grid(row=r, column=11, padx=(8, 16), pady=16, sticky="e")
         self._build_actions(bf)
         self._widgets.append(bf)
 
@@ -995,53 +1026,53 @@ class AccountRow:
             chip = _widgets.Chip(
                 self._sym_frame, text=text, tint="blue", bold=False,
             )
-            chip.pack(side="left", padx=(0, 4))
+            chip.pack(side="left", padx=(0, SPACE_8))
         if len(items) > 3:
             extra = _widgets.Chip(
                 self._sym_frame, text=f"+{len(items) - 3}",
                 tint="neutral", bold=True,
             )
-            extra.pack(side="left", padx=(0, 4))
+            extra.pack(side="left", padx=(0, SPACE_8))
 
     def _build_actions(self, parent):
         # Open terminal (chart) — neutral ghost.
         btn_open = _widgets.IconButton(
             parent, icon=_lucide.icon("chart-no-axes-column", 14, "label"),
-            variant="ghost", size=28, command=self._open_terminal,
+            variant="ghost", size=SPACE_32, command=self._open_terminal,
         )
-        btn_open.pack(side="left", padx=2)
+        btn_open.pack(side="left", padx=(0, SPACE_8))
         _bind_tip(btn_open, "Открыть терминал")
 
         # Close all positions on this slave — danger ghost.
         btn_close = _widgets.IconButton(
             parent, icon=_lucide.icon("circle-x", 14, "danger"),
-            variant="ghost", size=28, command=self._close_all,
+            variant="ghost", size=SPACE_32, command=self._close_all,
         )
-        btn_close.pack(side="left", padx=2)
+        btn_close.pack(side="left", padx=(0, SPACE_8))
         _bind_tip(btn_close, "Закрыть все позиции")
 
         # Test BUY 0.01 — warn ghost.
         btn_test = _widgets.IconButton(
             parent, icon=_lucide.icon("triangle-alert", 14, "warn"),
-            variant="ghost", size=28, command=self._test,
+            variant="ghost", size=SPACE_32, command=self._test,
         )
-        btn_test.pack(side="left", padx=2)
+        btn_test.pack(side="left", padx=(0, SPACE_8))
         _bind_tip(btn_test, "Тест: BUY 0.01 лот")
 
         # Settings — ghost.
         btn_edit = _widgets.IconButton(
             parent, icon=_lucide.icon("settings", 14, "label"),
-            variant="ghost", size=28, command=self._edit,
+            variant="ghost", size=SPACE_32, command=self._edit,
         )
-        btn_edit.pack(side="left", padx=2)
+        btn_edit.pack(side="left", padx=(0, SPACE_8))
         _bind_tip(btn_edit, "Настройки")
 
         # Delete — ghost with x.
         btn_del = _widgets.IconButton(
             parent, icon=_lucide.icon("x", 14, "label"),
-            variant="ghost", size=28, command=self._delete,
+            variant="ghost", size=SPACE_32, command=self._delete,
         )
-        btn_del.pack(side="left", padx=2)
+        btn_del.pack(side="left", padx=(0, 0))
         _bind_tip(btn_del, "Удалить аккаунт")
 
     # ── Hover ──────────────────────────────────────────────
@@ -1073,7 +1104,7 @@ class AccountRow:
         if hasattr(self, "_bg_frame") and self._bg_frame:
             try:
                 self._bg_frame.configure(
-                    border_color=p.ACCENT_DIM if hover else p.BORDER,
+                    border_color=p.ACCENT_DIM if hover else p.BORDER_LIGHT,
                     fg_color=p.BG_ROW_HOVER if hover else p.BG_ROW,
                 )
             except Exception:
@@ -1129,17 +1160,21 @@ class AccountRow:
         # to grid-replace.
         try:
             r = self._row
-            self._dot.grid_forget()
-            self._dot.destroy()
+            old_dot = self._dot
+            old_dot.grid_forget()
+            old_dot.destroy()
             self._dot = _widgets.IconCircle(
                 self._parent, size=14, tint=tint,
             )
-            self._dot.grid(row=r, column=1, padx=2, pady=8, sticky="")
-            # Replace in _widgets list so destroy() cleans up.
-            self._widgets = [
-                w if not (hasattr(w, "_destroyed_dot")) else self._dot
-                for w in self._widgets
-            ]
+            self._dot.grid(row=r, column=1, padx=(0, 8), pady=16, sticky="")
+            # Replace in _widgets list so destroy() cleans up and hover
+            # bindings attach to the live dot on the next bind pass.
+            self._widgets = [self._dot if w is old_dot else w for w in self._widgets]
+            try:
+                self._dot.bind("<Enter>", self._on_enter)
+                self._dot.bind("<Leave>", self._on_leave)
+            except Exception:
+                pass
         except Exception:
             pass
 
@@ -1215,8 +1250,9 @@ class TradesTable(tk.Frame):
     WIDTHS = [62, 50, 64, 28, 40, 70, 70, 140]
 
     def __init__(self, parent):
-        super().__init__(parent, bg=p.BG)
+        super().__init__(parent, bg=p.BG_ROW)
         self._max_rows = 200
+        self._hover_iid = ""
         self._build()
 
     def _build(self):
@@ -1233,11 +1269,36 @@ class TradesTable(tk.Frame):
         self.tree.configure(yscrollcommand=sb.set)
         sb.pack(side="right", fill="y")
         self.tree.pack(side="left", fill="both", expand=True)
-        self.tree.tag_configure("ok", foreground=p.GREEN)
-        self.tree.tag_configure("err", foreground=p.RED)
-        self.tree.tag_configure("warn", foreground=p.YELLOW)
-        self.tree.tag_configure("even", background=p.BG_ROW)
-        self.tree.tag_configure("odd", background=p.BG_DEEP)
+        # Modern table feel: normal dark text, roomy rows and subtle
+        # row tints instead of the old all-green/all-red mono DataGrid.
+        self.tree.tag_configure("ok", background=p.GREEN_GLOW, foreground=p.FG)
+        self.tree.tag_configure("err", background=p.RED_GLOW, foreground=p.FG)
+        self.tree.tag_configure("warn", background=p.TINT_ORANGE, foreground=p.FG)
+        self.tree.tag_configure("even", background=p.BG_ROW, foreground=p.FG)
+        self.tree.tag_configure("odd", background="#FAFBFC", foreground=p.FG)
+        self.tree.tag_configure("hover", background=p.BG_ROW_HOVER, foreground=p.FG)
+        self.tree.bind("<Motion>", self._on_motion, add="+")
+        self.tree.bind("<Leave>", self._clear_hover, add="+")
+
+    def _on_motion(self, event):
+        iid = self.tree.identify_row(event.y)
+        if iid == self._hover_iid:
+            return
+        self._clear_hover()
+        if iid:
+            tags = tuple(t for t in self.tree.item(iid, "tags") if t != "hover")
+            self.tree.item(iid, tags=tags + ("hover",))
+            self._hover_iid = iid
+
+    def _clear_hover(self, _event=None):
+        if not self._hover_iid:
+            return
+        try:
+            tags = tuple(t for t in self.tree.item(self._hover_iid, "tags") if t != "hover")
+            self.tree.item(self._hover_iid, tags=tags)
+        except Exception:
+            pass
+        self._hover_iid = ""
 
     def add_trade(self, time_str: str, slave: str, symbol: str,
                   direction: str, lot: float, master_ticket: str,
@@ -1248,7 +1309,7 @@ class TradesTable(tk.Frame):
         self.tree.insert("", 0, values=(
             time_str, slave, symbol, direction,
             f"{lot:.2f}", master_ticket, slave_ticket, status
-        ), tags=(tag, row_tag))
+        ), tags=(row_tag, tag))
         children = self.tree.get_children()
         while len(children) > self._max_rows:
             self.tree.delete(children[-1])
@@ -1935,7 +1996,7 @@ class App(ctk.CTk):
         master row only by spacing.
         """
         outer = ctk.CTkFrame(self, fg_color=p.BG_DEEP, corner_radius=0)
-        outer.pack(fill="x", padx=24, pady=(16, 8))
+        outer.pack(fill="x", padx=SPACE_24, pady=(SPACE_24, SPACE_24))
 
         # ── Left cluster: logo + title + MT5 chip ─────────
         left = ctk.CTkFrame(outer, fg_color="transparent")
@@ -1950,14 +2011,14 @@ class App(ctk.CTk):
                 self._logo_img = tk.PhotoImage(file=logo_path)
                 self._logo_label = Label(left, image=self._logo_img,
                                          bg=p.BG_DEEP, text="")
-                self._logo_label.pack(side="left", padx=(0, 12))
+                self._logo_label.pack(side="left", padx=(0, SPACE_16))
             except Exception:
                 pass
 
         ctk.CTkLabel(
             left, text="Trade Copier",
             text_color=p.FG, font=("Segoe UI", 18, "bold"),
-        ).pack(side="left", padx=(0, 10))
+        ).pack(side="left", padx=(0, SPACE_8))
         _widgets.Chip(left, text="MT5", tint="blue", bold=True).pack(
             side="left", anchor="center"
         )
@@ -1975,7 +2036,7 @@ class App(ctk.CTk):
         ctk.CTkLabel(
             right, text="КОПИРТРЕЙДЕР",
             text_color=p.FG_LABEL, font=("Segoe UI", 9, "bold"),
-        ).pack(side="left", padx=(0, 12))
+        ).pack(side="left", padx=(0, SPACE_16))
 
         # Copy-trader controls — Start (primary) / Stop (ghost).
         self.btn_start = ctk.CTkButton(
@@ -1983,9 +2044,9 @@ class App(ctk.CTk):
             compound="left", command=self._start,
             fg_color=p.ACCENT, hover_color=p.ACCENT_H, text_color=p.ACCENT_FG,
             corner_radius=p.RADIUS_MD, border_width=0,
-            width=98, height=34, font=("Segoe UI", 11, "bold"),
+            width=BTN_MIN_W, height=BTN_HEIGHT, font=("Segoe UI", 11, "bold"),
         )
-        self.btn_start.pack(side="left", padx=(0, 6))
+        self.btn_start.pack(side="left", padx=(0, SPACE_8))
         _bind_tip(self.btn_start, "Запустить копирование сделок")
 
         self.btn_stop = ctk.CTkButton(
@@ -1994,10 +2055,10 @@ class App(ctk.CTk):
             fg_color="transparent", hover_color=p.BG_ROW_HOVER,
             text_color=p.FG, corner_radius=p.RADIUS_MD,
             border_width=1, border_color=p.BORDER,
-            width=84, height=34, font=("Segoe UI", 11, "bold"),
+            width=BTN_MIN_W, height=BTN_HEIGHT, font=("Segoe UI", 11, "bold"),
             state="disabled",
         )
-        self.btn_stop.pack(side="left", padx=(0, 16))
+        self.btn_stop.pack(side="left", padx=(0, SPACE_16))
         _bind_tip(self.btn_stop, "Остановить копирование")
 
         # Terminal controls — Launch / Shutdown.
@@ -2008,9 +2069,9 @@ class App(ctk.CTk):
             fg_color="transparent", hover_color=p.BG_ROW_HOVER,
             text_color=p.FG, corner_radius=p.RADIUS_MD,
             border_width=1, border_color=p.BORDER,
-            height=34, font=("Segoe UI", 11),
+            height=BTN_HEIGHT, font=("Segoe UI", 11),
         )
-        btn_launch.pack(side="left", padx=(0, 6))
+        btn_launch.pack(side="left", padx=(0, SPACE_8))
         _bind_tip(btn_launch, "Запустить все терминалы (свёрнутые)")
 
         btn_shutdown = ctk.CTkButton(
@@ -2020,22 +2081,22 @@ class App(ctk.CTk):
             fg_color="transparent", hover_color=p.RED_GLOW,
             text_color=p.RED, corner_radius=p.RADIUS_MD,
             border_width=1, border_color=p.BORDER,
-            height=34, font=("Segoe UI", 11),
+            height=BTN_HEIGHT, font=("Segoe UI", 11),
         )
-        btn_shutdown.pack(side="left", padx=(0, 16))
+        btn_shutdown.pack(side="left", padx=(0, SPACE_16))
         _bind_tip(btn_shutdown, "Завершить процессы всех терминалов")
 
         # Icon-only utility buttons.
         btn_settings = _widgets.IconButton(
             right, icon=_lucide.icon("settings", 16, "label"),
-            variant="ghost", size=34, command=self._open_settings,
+            variant="ghost", size=BTN_HEIGHT, command=self._open_settings,
         )
-        btn_settings.pack(side="left", padx=(0, 4))
+        btn_settings.pack(side="left", padx=(0, SPACE_8))
         _bind_tip(btn_settings, "Настройки приложения")
 
         self.btn_info = _widgets.IconButton(
             right, icon=_lucide.icon("info", 16, "label"),
-            variant="ghost", size=34, command=self._toggle_info,
+            variant="ghost", size=BTN_HEIGHT, command=self._toggle_info,
         )
         # Stash the default icon/color so _toggle_info can revert to it.
         self.btn_info._info_default_icon = _lucide.icon("info", 16, "label")
@@ -2056,15 +2117,15 @@ class App(ctk.CTk):
         reads ``cget("text")`` to populate the KPI cards.  CTkLabel ignores
         ``.config(text=...)`` — that's why the KPI cards were empty before.
         """
-        card = _widgets.Card(self, padding=12)
-        card.pack(fill="x", padx=24, pady=(0, 8))
+        card = _widgets.Card(self, padding=SPACE_16)
+        card.pack(fill="x", padx=SPACE_24, pady=(0, SPACE_24))
 
         row = ctk.CTkFrame(card, fg_color="transparent")
-        row.pack(fill="x", padx=14, pady=10)
+        row.pack(fill="x", padx=SPACE_16, pady=SPACE_16)
 
         # МАСТЕР chip on the left.
         _widgets.Chip(row, text="МАСТЕР", tint="blue", bold=True).pack(
-            side="left", padx=(0, 10)
+            side="left", padx=(0, SPACE_16)
         )
 
         # ── Right-side action cluster (status pill last so it pins right) ──
@@ -2072,38 +2133,38 @@ class App(ctk.CTk):
         self._master_status_pill = _widgets.StatusPill(
             row, text="Готов", state="neutral",
         )
-        self._master_status_pill.pack(side="right", padx=(8, 0))
+        self._master_status_pill.pack(side="right", padx=(SPACE_8, 0))
 
         # Test BUY — warn icon.
         btn_test_master = _widgets.IconButton(
             row, icon=_lucide.icon("triangle-alert", 16, "warn"),
-            variant="ghost", size=30, command=self._test_master,
+            variant="ghost", size=BTN_HEIGHT, command=self._test_master,
         )
-        btn_test_master.pack(side="right", padx=(2, 4))
+        btn_test_master.pack(side="right", padx=(SPACE_8, SPACE_8))
         _bind_tip(btn_test_master, "Тест: BUY 0.01 лот на мастере")
 
         # Close all positions — danger icon.
         btn_close_master = _widgets.IconButton(
             row, icon=_lucide.icon("circle-x", 16, "danger"),
-            variant="ghost", size=30, command=self._close_all_master,
+            variant="ghost", size=BTN_HEIGHT, command=self._close_all_master,
         )
-        btn_close_master.pack(side="right", padx=2)
+        btn_close_master.pack(side="right", padx=SPACE_8)
         _bind_tip(btn_close_master, "Закрыть все позиции мастера")
 
         # Open master terminal — chart icon.
         btn_open_m = _widgets.IconButton(
             row, icon=_lucide.icon("chart-no-axes-column", 16, "accent"),
-            variant="ghost", size=30, command=self._open_master_terminal,
+            variant="ghost", size=BTN_HEIGHT, command=self._open_master_terminal,
         )
-        btn_open_m.pack(side="right", padx=2)
+        btn_open_m.pack(side="right", padx=SPACE_8)
         _bind_tip(btn_open_m, "Открыть терминал мастера")
 
         # Browse — folder icon.
         btn_browse_m = _widgets.IconButton(
             row, icon=_lucide.icon("folder", 16, "label"),
-            variant="ghost", size=30, command=self._browse_master,
+            variant="ghost", size=BTN_HEIGHT, command=self._browse_master,
         )
-        btn_browse_m.pack(side="right", padx=(4, 4))
+        btn_browse_m.pack(side="right", padx=(SPACE_8, SPACE_8))
         _bind_tip(btn_browse_m, "Выбрать путь к terminal64.exe мастера")
 
         # Path entry (read-only, populated by _browse_master).  Packed
@@ -2111,12 +2172,12 @@ class App(ctk.CTk):
         self.var_master_path = tk.StringVar()
         path_entry = ctk.CTkEntry(
             row, textvariable=self.var_master_path,
-            height=30, corner_radius=p.RADIUS_MD,
+            height=BTN_HEIGHT, corner_radius=p.RADIUS_MD,
             fg_color=p.BG_DEEP, text_color=p.FG,
             border_color=p.BORDER, border_width=1,
             font=("Segoe UI", 10), state="readonly",
         )
-        path_entry.pack(side="left", fill="x", expand=True, padx=(0, 8))
+        path_entry.pack(side="left", fill="x", expand=True, padx=(0, SPACE_16))
 
         # ── Hidden backing-store labels (KPI cards read .cget from these) ──
         # Use ctk_compat.Label so ``.config(text=..., fg=...)`` works.
@@ -2146,7 +2207,7 @@ class App(ctk.CTk):
         the legacy ``_kpi_labels`` dict.
         """
         dash = ctk.CTkFrame(self, fg_color=p.BG_DEEP)
-        dash.pack(fill="x", padx=24, pady=(0, 12))
+        dash.pack(fill="x", padx=SPACE_24, pady=(0, SPACE_24))
 
         for col in range(4):
             # uniform="kpi" forces equal column widths even when one
@@ -2169,89 +2230,75 @@ class App(ctk.CTk):
                 icon=_lucide.icon(icon_name, 20, icon_fg),
                 tint=tint,
             )
-            pad_left = 0 if col == 0 else 8
+            pad_left = 0 if col == 0 else SPACE_16
             card.grid(row=0, column=col, sticky="nsew", padx=(pad_left, 0))
             self._kpi_cards[key] = card
 
         self._refresh_dashboard()
 
     def _build_slaves_soft(self) -> None:
-        """Build the Light-Soft Slave Accounts section.
+        """Build Slave Accounts as one logical card-list block.
 
-        Layout::
-
-            ┌─ Card ─────────────────────────────────────────────┐
-            │ SLAVE ACCOUNTS  2/10        [+ Аккаунт] [✕ Закрыть]│
-            │ ON │ ●  ИМЯ        ЛОГИН … РИСК   СДЕЛ/Д  УБЫТ/Д   │
-            │ ── grid filled with AccountRow widgets ──          │
-            └────────────────────────────────────────────────────┘
-            ↕ sash
-            ┌─ Notebook / log card (built later) ────────────────┐
-
-        The outer ``tk.PanedWindow`` is kept so the user can drag the
-        sash between slaves and trades; only the visuals change.
+        The old interim version had a separate header card and a separate
+        table card, which made the section feel like stacked widgets.  This
+        pass puts header/actions + column labels + account rows into one
+        white card inside the PanedWindow top pane.  AccountRow keeps its
+        public API, but the visuals read as spaced rounded rows rather than
+        a dense data grid.
         """
-        # Card-shell that hosts the section header and column headers.
-        shell = _widgets.Card(self, padding=0)
-        shell.pack(fill="x", padx=24, pady=(0, 8))
+        # ── Paned split between slave rows and trade log/notebook ──
+        # PanedWindow is a tk widget — host children as tk.Frame wrappers.
+        self._paned = tk.PanedWindow(
+            self, orient="vertical", bg=p.BG_DEEP,
+            sashwidth=SPACE_16, sashrelief="flat", opaqueresize=True,
+            borderwidth=0,
+        )
+        self._paned.pack(fill="both", expand=True, padx=SPACE_24, pady=(0, SPACE_16))
+
+        # Top pane: header + rows in the SAME card.
+        top_pane = tk.Frame(self._paned, bg=p.BG_DEEP)
+        self._paned.add(top_pane, minsize=ui_scaling.scale(120),
+                        height=ui_scaling.scale(250))
+
+        rows_card = _widgets.Card(top_pane, padding=0)
+        rows_card.pack(fill="both", expand=True)
 
         # ── Section header row with action buttons ──────
         header = _widgets.SectionHeader(
-            shell, title="Slave Accounts", counter="0/10",
+            rows_card, title="Slave Accounts", counter="0/10",
         )
-        header.pack(fill="x", padx=14, pady=(12, 6))
+        header.pack(fill="x", padx=SPACE_16, pady=(SPACE_16, SPACE_16))
         self._slaves_header = header
-        # Backward-compat: legacy ``_update_slave_count`` writes to the
-        # counter via ``set_counter`` now, but we keep the old attribute
-        # name pointing at the counter label for any external readers.
         self.lbl_slave_count = header._counter
 
         btn_add = ctk.CTkButton(
-            shell, text="+ Аккаунт",
+            rows_card, text="+ Аккаунт",
             image=_lucide.icon("circle-play", 14, "on_accent"),
             compound="left", command=self._add_slave,
             fg_color=p.ACCENT, hover_color=p.ACCENT_H,
             text_color=p.ACCENT_FG, corner_radius=p.RADIUS_MD,
-            height=30, font=("Segoe UI", 10, "bold"),
+            height=BTN_HEIGHT, font=("Segoe UI", 10, "bold"),
         )
         _bind_tip(btn_add, "Добавить новый слейв-аккаунт")
-        header.add_action(btn_add, padx=(0, 6))
+        header.add_action(btn_add, padx=(0, SPACE_8))
 
         btn_close_all = ctk.CTkButton(
-            shell, text="Закрыть сделки",
+            rows_card, text="Закрыть сделки",
             image=_lucide.icon("circle-x", 14, "danger"),
             compound="left", command=self._close_all_open,
             fg_color="transparent", hover_color=p.TINT_RED,
             text_color=p.RED, corner_radius=p.RADIUS_MD,
             border_width=1, border_color=p.TINT_RED,
-            height=30, font=("Segoe UI", 10, "bold"),
+            height=BTN_HEIGHT, font=("Segoe UI", 10, "bold"),
         )
         _bind_tip(btn_close_all, "Закрыть все позиции на мастере и слейвах")
         header.add_action(btn_close_all, padx=(0, 0))
 
-        # ── Paned split between slave rows and trade log/notebook ──
-        # PanedWindow is a tk widget — we host both children as tk.Frame
-        # wrappers and put CTk content inside them.
-        self._paned = tk.PanedWindow(
-            self, orient="vertical", bg=p.BG_DEEP,
-            sashwidth=6, sashrelief="flat", opaqueresize=True,
-        )
-        self._paned.pack(fill="both", expand=True, padx=24, pady=(0, 8))
-
-        # Top pane: scrollable rows container, wrapped in a tk.Frame
-        # because tk.PanedWindow can't manage CTkFrame children directly.
-        top_pane = tk.Frame(self._paned, bg=p.BG_DEEP)
-        self._paned.add(top_pane, minsize=ui_scaling.scale(80),
-                        height=ui_scaling.scale(220))
-
-        rows_card = _widgets.Card(top_pane, padding=0)
-        rows_card.pack(fill="both", expand=True)
-
-        # Column-header row — uppercase tiny labels matching COL_SPEC.
-        # Headers live in their own frame so the row grid stays free for
-        # AccountRow widgets.
+        # Column labels + card rows.  No grid lines: whitespace + row cards
+        # do the grouping.
         self._table_frame = ctk.CTkFrame(rows_card, fg_color="transparent")
-        self._table_frame.pack(fill="both", expand=True, padx=10, pady=(8, 8))
+        self._table_frame.pack(fill="both", expand=True, padx=SPACE_16, pady=(0, SPACE_16))
+        self._table_frame.rowconfigure(0, minsize=ui_scaling.scale(32))
         for idx, _, min_w, weight, _ in COL_SPEC:
             self._table_frame.columnconfigure(
                 idx, minsize=ui_scaling.scale(min_w), weight=weight,
@@ -2266,7 +2313,7 @@ class App(ctk.CTk):
                 font=("Segoe UI", 9, "bold"),
                 anchor=anchor,
             )
-            lbl_h.grid(row=0, column=idx, padx=4, pady=(0, 8), sticky="ew")
+            lbl_h.grid(row=0, column=idx, padx=SPACE_8, pady=(0, SPACE_8), sticky="ew")
 
         self._next_row = 1
 
@@ -2289,13 +2336,13 @@ class App(ctk.CTk):
         nb_card.pack(fill="both", expand=True)
 
         self.notebook = ttk.Notebook(nb_card, style="TNotebook")
-        self.notebook.pack(fill="both", expand=True, padx=8, pady=8)
+        self.notebook.pack(fill="both", expand=True, padx=SPACE_8, pady=SPACE_8)
 
         # ── Trades tab ─────────────────────────────────
         trades_tab = tk.Frame(self.notebook, bg=p.BG_ROW)
         self.notebook.add(trades_tab, text="  Сделки  ")
         self.trades_table = TradesTable(trades_tab)
-        self.trades_table.pack(fill="both", expand=True, padx=2, pady=2)
+        self.trades_table.pack(fill="both", expand=True, padx=0, pady=0)
 
         for t in _load_trades():
             tag = "ok" if t.get("success") else "err"
@@ -2310,12 +2357,12 @@ class App(ctk.CTk):
         log_tab = tk.Frame(self.notebook, bg=p.BG_ROW)
         self.notebook.add(log_tab, text="  Лог  ")
         log_inner = tk.Frame(log_tab, bg=p.BG_ROW)
-        log_inner.pack(fill="both", expand=True, padx=2, pady=2)
+        log_inner.pack(fill="both", expand=True, padx=0, pady=0)
 
         self.log_text = tk.Text(
             log_inner, bg=p.BG_ROW, fg=p.FG, font=f.MONO_SM,
             relief="flat", state="disabled", wrap="word",
-            highlightthickness=0, padx=10, pady=8,
+            highlightthickness=0, padx=SPACE_16, pady=SPACE_8,
         )
         log_sb = ttk.Scrollbar(
             log_inner, orient="vertical", command=self.log_text.yview,
@@ -2339,8 +2386,8 @@ class App(ctk.CTk):
         ``set(text, state=...)``.  ``lbl_stats`` is the running
         ✅/❌ counter that ``_on_trade`` updates.
         """
-        bar = ctk.CTkFrame(self, fg_color=p.BG_DEEP, height=28)
-        bar.pack(fill="x", padx=24, pady=(0, 6))
+        bar = ctk.CTkFrame(self, fg_color=p.BG_DEEP, height=SPACE_32)
+        bar.pack(fill="x", padx=SPACE_24, pady=(0, SPACE_8))
 
         # Off-screen stub so legacy `.set(...)` calls don't NPE.
         self._status_pill = _widgets.StatusPill(
@@ -2351,14 +2398,14 @@ class App(ctk.CTk):
         self.lbl_stats = Label(
             bar, text="", bg=p.BG_DEEP, fg=p.FG_DIM, font=f.SM,
         )
-        self.lbl_stats.pack(side="left", padx=(2, 0), pady=4)
+        self.lbl_stats.pack(side="left", padx=(SPACE_8, 0), pady=SPACE_8)
 
         if _UPD_OK:
             # Version tag on the right — muted, matches reference.
             Label(
                 bar, text=f"v{upd_mod.VERSION}",
                 bg=p.BG_DEEP, fg=p.FG_DIM, font=f.SM,
-            ).pack(side="right", padx=(0, 4), pady=4)
+            ).pack(side="right", padx=(0, SPACE_8), pady=SPACE_8)
 
     # ── Info toggle ─────────────────────────────────────────
 
