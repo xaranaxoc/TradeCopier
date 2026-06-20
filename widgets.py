@@ -164,25 +164,29 @@ class KPICard(Card):
     ) -> None:
         super().__init__(master, **kw)
 
+        # Two-column layout: icon on the left (placed at fixed coords —
+        # see below), label + value stacked on the right in a grid that
+        # owns column 1.  Column 0 is reserved purely as whitespace via
+        # ``minsize`` so the label/value text never overlaps the icon.
+        ICON_BOX = 28          # IconCircle side length
+        ICON_LEFT = 12         # inset from card's left edge
+        ICON_RIGHT = 10        # gap between icon and the text column
+        self.columnconfigure(0, minsize=ICON_LEFT + ICON_BOX + ICON_RIGHT)
         self.columnconfigure(1, weight=1)
-        # Two-row natural layout: label row + value row, no extra row
-        # weights.  Letting the rows size to their content keeps the
-        # IconCircle's grid cell at the icon's natural 28px height
-        # instead of stretching it to fill the (taller) card box —
-        # otherwise the rowspan=2 + weight=1 combo would force the
-        # icon's tinted frame to grow vertically and clip against the
-        # card's top/bottom borders.  All four KPI tiles share the same
-        # label/value content structure, so their natural heights match
-        # automatically without needing row weights.
 
-        # IconCircle 28px (was 32) and inner padding 12/10/12 trims ~10%
-        # off the tile footprint without touching label/value typography.
-        self._icon = IconCircle(self, size=28, tint=tint, icon=icon, glyph=glyph)
-        # ``sticky="n"`` anchors the icon to the top of its rowspan cell
-        # so it lines up with the LABEL baseline (which sits at the top
-        # of row 0).  Vertical pady=12 gives equal breathing room top
-        # and bottom inside the card.
-        self._icon.grid(row=0, column=0, rowspan=2, padx=(12, 10), pady=12, sticky="n")
+        # IconCircle is positioned with ``place(...)`` instead of grid so
+        # tk's grid manager cannot stretch its drawn box vertically.
+        # Symptom that caused this workaround: with rowspan=2 + sticky="n"
+        # CTk's CTkFrame engine still painted the tinted background up to
+        # the rowspan cell's full allocated height (~card height), turning
+        # the 28×28 circle into a tall vertical pill that clipped against
+        # the card's top and bottom borders.  ``place(... rely=0.5
+        # anchor="w")`` pins the icon's vertical centre to the card's
+        # mid-height with its natural 28×28 size, irrespective of how
+        # much height the value row reserves.
+        self._icon = IconCircle(self, size=ICON_BOX, tint=tint, icon=icon, glyph=glyph)
+        self._icon.place(x=ICON_LEFT, rely=0.5, anchor="w",
+                         width=ICON_BOX, height=ICON_BOX)
 
         self._lbl = ctk.CTkLabel(
             self,
@@ -191,9 +195,6 @@ class KPICard(Card):
             font=("Segoe UI", 9, "bold"),
             anchor="w",
         )
-        # ``sticky="sew"`` pins the label to the bottom of its row so the
-        # label/value pair reads as a tight unit instead of floating apart
-        # when row weights expand the cells.
         self._lbl.grid(row=0, column=1, sticky="ew", padx=(0, 12), pady=(12, 0))
 
         # Value font 16 (was 18) — together with the smaller icon this
@@ -532,6 +533,37 @@ class Toggle(ctk.CTkFrame):
       * ``set_disabled(bool)`` to lock interaction
     """
 
+    # ── knob image cache ─────────────────────────────────
+    #
+    # Maps knob diameter (px) → CTkImage of a clean anti-aliased white
+    # disc.  Shared across all Toggle instances so dozens of slave-row
+    # toggles don't each rasterise their own copy.
+
+    @classmethod
+    def _knob_image(cls, diameter: int):
+        cache = getattr(cls, "_knob_img_cache", None)
+        if cache is None:
+            cache = {}
+            cls._knob_img_cache = cache
+        if diameter in cache:
+            return cache[diameter]
+        try:
+            from PIL import Image, ImageDraw
+            ss = 4  # 4× supersample for anti-aliased downsample
+            big = Image.new("RGBA", (diameter * ss, diameter * ss), (0, 0, 0, 0))
+            ImageDraw.Draw(big).ellipse(
+                [0, 0, diameter * ss - 1, diameter * ss - 1],
+                fill=(255, 255, 255, 255),
+            )
+            small = big.resize((diameter, diameter), Image.LANCZOS)
+            cache[diameter] = ctk.CTkImage(
+                light_image=small, dark_image=small,
+                size=(diameter, diameter),
+            )
+        except Exception:
+            cache[diameter] = None
+        return cache[diameter]
+
     def __init__(
         self,
         master: Any,
@@ -569,30 +601,43 @@ class Toggle(ctk.CTkFrame):
         self._disabled = False
 
         knob_d = height - 2 * knob_pad
-        # The previous CTkFrame-based knob picked up visible rendering
-        # artifacts at small sizes (knob_d ≤ 16): CTk draws rounded
-        # rectangles as 4 corner arcs + 2 rectangles, and when w == h and
-        # corner_radius == w//2 the corner arcs don't always align at
-        # sub-pixel boundaries, producing a slightly squished / non-round
-        # outline.  A plain ``tk.Canvas`` ``create_oval`` rasterises as a
-        # clean anti-aliased circle, matching the SaaS reference toggle.
-        # We keep the canvas background in sync with the track colour
-        # (see ``_update``) so the square canvas blends into the pill
-        # track around the white oval.
-        self._knob = tk.Canvas(
-            self,
-            width=knob_d,
-            height=knob_d,
-            bg=self._track_off,
-            highlightthickness=0,
-            borderwidth=0,
-        )
-        self._knob.create_oval(
-            0, 0, knob_d, knob_d,
-            fill="#FFFFFF",
-            outline="",
-        )
-        self._knob.place(x=knob_pad, y=knob_pad)
+        # PIL-rendered white circle as the knob.  Earlier attempts used a
+        # ``tk.Canvas`` ``create_oval`` and a ``CTkFrame`` with
+        # ``corner_radius=knob_d/2``; both rasterised poorly at very
+        # small sizes (knob_d ≤ 10) and the knob read as a squarish
+        # blob or vertical pill instead of a circle.  Drawing the
+        # ellipse with PIL at 4× supersample and downsizing via
+        # Lanczos gives a fully anti-aliased disc that's pixel-perfect
+        # at any size.  The image is cached per-diameter on the class.
+        knob_img = Toggle._knob_image(knob_d)
+        if knob_img is not None:
+            # CTkLabel with a transparent ``fg_color`` lets the track's
+            # colour show around the white disc; the label only paints
+            # the cached image, no additional draw box to clip the disc.
+            self._knob = ctk.CTkLabel(
+                self,
+                text="",
+                image=knob_img,
+                fg_color="transparent",
+            )
+        else:
+            # Fallback for environments without PIL: keep the canvas
+            # oval path — slightly less smooth at small sizes but
+            # functional.
+            self._knob = tk.Canvas(
+                self,
+                width=knob_d,
+                height=knob_d,
+                bg=self._track_off,
+                highlightthickness=0,
+                borderwidth=0,
+            )
+            self._knob.create_oval(
+                0, 0, knob_d, knob_d,
+                fill="#FFFFFF",
+                outline="",
+            )
+        self._knob.place(x=knob_pad, y=knob_pad, width=knob_d, height=knob_d)
 
         # Bind clicks on BOTH the track and the knob so the entire
         # widget surface toggles regardless of which child the cursor
@@ -635,16 +680,19 @@ class Toggle(ctk.CTkFrame):
             on = bool(self._var.get())
             track = self._track_on if on else self._track_off
             self.configure(fg_color=track)
-            # Keep the knob canvas bg in sync with the track so the four
-            # square corners of the canvas blend invisibly into the pill
-            # track surrounding the white oval.
-            try:
-                self._knob.configure(bg=track)
-            except tk.TclError:
-                pass
+            # Canvas knob needs the bg colour synced to blend the four
+            # square corners of the canvas into the surrounding pill
+            # track.  CTkLabel knob (PIL-image path) has fg_color
+            # "transparent" so the track colour already shows around
+            # the disc — nothing to update.
+            if isinstance(self._knob, tk.Canvas):
+                try:
+                    self._knob.configure(bg=track)
+                except tk.TclError:
+                    pass
             knob_d = self._ch - 2 * self._pad
             kx = (self._cw - knob_d - self._pad) if on else self._pad
-            self._knob.place(x=kx, y=self._pad)
+            self._knob.place(x=kx, y=self._pad, width=knob_d, height=knob_d)
         except tk.TclError:
             pass
 

@@ -22,6 +22,7 @@ This module mixes CTk and tk on purpose:
 import os
 import sys
 import json
+import re
 import uuid
 import subprocess
 import threading
@@ -1201,6 +1202,14 @@ class AccountRow:
             tint = p.YELLOW
         else:
             tint = p.FG_DIM
+        # Extract a human-readable caption for the hover tooltip:
+        # strip the leading status emoji, drop any "#12345" account-id
+        # suffix the polling layer appends.
+        caption = status
+        for emoji in ("\U0001F7E2", "\U0001F534", "\U0001F7E1"):
+            caption = caption.replace(emoji, "")
+        caption = re.sub(r"\s*#\d+", "", caption).strip()
+        self._dot_tooltip = caption or "—"
         # Rebuild IconCircle with new tint: CTkFrame.configure(fg_color)
         # works for the bg, but we need the matching FG too — easiest is
         # to grid-replace.
@@ -1212,15 +1221,37 @@ class AccountRow:
             self._dot = _widgets.IconCircle(
                 self._parent, size=10, tint=tint,
             )
-            self._dot.grid(row=r, column=1, padx=(0, 8), pady=12, sticky="")
+            self._dot.grid(row=r, column=1, padx=(0, 6), pady=3, sticky="")
             # Replace in _widgets list so destroy() cleans up and hover
             # bindings attach to the live dot on the next bind pass.
             self._widgets = [self._dot if w is old_dot else w for w in self._widgets]
             try:
-                self._dot.bind("<Enter>", self._on_enter)
-                self._dot.bind("<Leave>", self._on_leave)
+                # Dot-specific hover handlers fire the row's hover state
+                # AND show the status tooltip via _Tip.show regardless
+                # of the global tooltip-mode toggle (the dot's caption
+                # is always useful and never spammy).
+                self._dot.bind("<Enter>", self._on_dot_enter)
+                self._dot.bind("<Leave>", self._on_dot_leave)
             except Exception:
                 pass
+        except Exception:
+            pass
+
+    def _on_dot_enter(self, event=None):
+        # Mirror the row-card hover effect first so the border highlight
+        # still appears when the cursor enters via the dot.
+        self._on_enter(event)
+        text = getattr(self, "_dot_tooltip", "")
+        if text and text != "—":
+            try:
+                _Tip.show(self._dot, text)
+            except Exception:
+                pass
+
+    def _on_dot_leave(self, event=None):
+        self._on_leave(event)
+        try:
+            _Tip.hide()
         except Exception:
             pass
 
@@ -2051,7 +2082,7 @@ class App(ctk.CTk):
         master row only by spacing.
         """
         outer = ctk.CTkFrame(self, fg_color=p.BG_DEEP, corner_radius=0)
-        outer.pack(fill="x", padx=SPACE_24, pady=(SPACE_24, SPACE_24))
+        outer.pack(fill="x", padx=SPACE_24, pady=(SPACE_16, SPACE_16))
 
         # ── Left cluster: logo + title + MT5 chip ─────────
         left = ctk.CTkFrame(outer, fg_color="transparent")
@@ -2066,13 +2097,10 @@ class App(ctk.CTk):
                 self._logo_img = tk.PhotoImage(file=logo_path)
                 self._logo_label = Label(left, image=self._logo_img,
                                          bg=p.BG_DEEP, text="")
-                # padx=(2, SPACE_16): the cards below this header (МАСТЕР
-                # strip, KPI dashboard, slave card) have rounded corners
-                # whose visible body starts ~2 px inside the card box.
-                # The logo PNG is a hard rectangle, so without this 2 px
-                # nudge its black left edge sat slightly to the LEFT of
-                # the card bodies and read as misaligned.
-                self._logo_label.pack(side="left", padx=(2, SPACE_16))
+                # Flush against the page-edge SPACE_24 inset so the
+                # logo's left edge sits at the same X as every card's
+                # left edge below it.
+                self._logo_label.pack(side="left", padx=(0, SPACE_16))
             except Exception:
                 pass
 
@@ -2293,7 +2321,7 @@ class App(ctk.CTk):
         the legacy ``_kpi_labels`` dict.
         """
         dash = ctk.CTkFrame(self, fg_color=p.BG_DEEP)
-        dash.pack(fill="x", padx=SPACE_24, pady=(0, SPACE_24))
+        dash.pack(fill="x", padx=SPACE_24, pady=(0, SPACE_16))
 
         for col in range(4):
             # uniform="kpi" forces equal column widths even when one
@@ -2341,7 +2369,7 @@ class App(ctk.CTk):
         )
         # 24px bottom matches the section rhythm (header → master →
         # KPI → slaves are all separated by 24px).
-        self._paned.pack(fill="both", expand=True, padx=SPACE_24, pady=(0, SPACE_24))
+        self._paned.pack(fill="both", expand=True, padx=SPACE_24, pady=(0, SPACE_16))
 
         # Top pane: header + rows in the SAME card.
         top_pane = tk.Frame(self._paned, bg=p.BG_DEEP)
@@ -2355,7 +2383,7 @@ class App(ctk.CTk):
         header = _widgets.SectionHeader(
             rows_card, title="Slave Accounts", counter="0/10",
         )
-        header.pack(fill="x", padx=SPACE_16, pady=(SPACE_16, SPACE_16))
+        header.pack(fill="x", padx=SPACE_16, pady=(SPACE_8, SPACE_8))
         self._slaves_header = header
         self.lbl_slave_count = header._counter
 
@@ -2395,8 +2423,8 @@ class App(ctk.CTk):
             scrollbar_button_hover_color=p.FG_DIM,
             label_text="",
         )
-        self._table_frame.pack(fill="both", expand=True, padx=SPACE_16, pady=(0, SPACE_16))
-        self._table_frame.rowconfigure(0, minsize=ui_scaling.scale(32))
+        self._table_frame.pack(fill="both", expand=True, padx=SPACE_16, pady=(0, SPACE_8))
+        self._table_frame.rowconfigure(0, minsize=ui_scaling.scale(24))
         for idx, _, min_w, weight, _ in COL_SPEC:
             self._table_frame.columnconfigure(
                 idx, minsize=ui_scaling.scale(min_w), weight=weight,
@@ -2992,16 +3020,27 @@ class App(ctk.CTk):
         if not is_terminal_running(slave_path):
             row.update_info(0, 0, status="\U0001F534 не запущен")
             return
+        # Slider check: if the user disabled this slave's toggle we
+        # still want to refresh balance/equity so the row stays current,
+        # but the dot reads "неактивен" (yellow) until the slider is
+        # turned back on.  This is independent of whatever the terminal
+        # itself is doing.
+        slider_off = not row.var_enabled.get()
         if mt5.initialize(path=slave_path):
             try:
                 acc = mt5.account_info()
                 if acc:
                     ti = mt5.terminal_info()
                     at_off = ti and not ti.trade_allowed
-                    if at_off:
-                        status = f"\U0001F7E1 \u26A0AT #{acc.login}"
+                    if slider_off:
+                        status = f"\U0001F7E1 неактивен #{acc.login}"
+                    elif at_off:
+                        status = f"\U0001F7E1 алготрейдинг отключен #{acc.login}"
                     else:
-                        status = f"\U0001F7E2 #{acc.login}"
+                        # TODO: market-closed / no-symbols detection
+                        # belongs here once copier exposes that signal;
+                        # for now treat enabled + AT-on as "активен".
+                        status = f"\U0001F7E2 активен #{acc.login}"
                     row.update_info(acc.balance, acc.equity, acc.login, status)
                 else:
                     row.update_info(0, 0, status="\U0001F534 нет аккаунта")
