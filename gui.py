@@ -2019,14 +2019,21 @@ class App(ctk.CTk):
         # ── Dashboard KPI ───────────────────────────────────
         self._build_kpi_soft()
 
+        # ── Bottom status bar ───────────────────────────────
+        # Built BEFORE the slave/log paned block: its ``side="bottom"``
+        # pack reserves its slice of vertical space against the window's
+        # bottom edge BEFORE the paned widget claims everything left with
+        # ``expand=True``.  Reversed order (the previous code path) let
+        # the paned eat all space below the KPI row, so the status bar
+        # got 0 height and the version label was clipped completely on
+        # smaller windows.
+        self._build_statusbar_soft()
+
         # ── Slave Accounts section ──────────────────────────
         self._build_slaves_soft()
 
         # ── Trades + Log tabs ───────────────────────────────
         self._build_tabs_soft()
-
-        # ── Bottom status bar ───────────────────────────────
-        self._build_statusbar_soft()
 
     # ── Phase-2 redesign builders ───────────────────────────
 
