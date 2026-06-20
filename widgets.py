@@ -185,8 +185,10 @@ class KPICard(Card):
         # mid-height with its natural 28×28 size, irrespective of how
         # much height the value row reserves.
         self._icon = IconCircle(self, size=ICON_BOX, tint=tint, icon=icon, glyph=glyph)
-        self._icon.place(x=ICON_LEFT, rely=0.5, anchor="w",
-                         width=ICON_BOX, height=ICON_BOX)
+        # CTk forbids ``width=/height=`` on ``.place(...)``; the
+        # IconCircle already locks its size to ICON_BOX×ICON_BOX via the
+        # constructor + grid_propagate/pack_propagate(False).
+        self._icon.place(x=ICON_LEFT, rely=0.5, anchor="w")
 
         self._lbl = ctk.CTkLabel(
             self,
@@ -614,11 +616,15 @@ class Toggle(ctk.CTkFrame):
             # CTkLabel with a transparent ``fg_color`` lets the track's
             # colour show around the white disc; the label only paints
             # the cached image, no additional draw box to clip the disc.
+            # Width/height are set on the constructor (CTk forbids them
+            # on ``.place(...)``).
             self._knob = ctk.CTkLabel(
                 self,
                 text="",
                 image=knob_img,
                 fg_color="transparent",
+                width=knob_d,
+                height=knob_d,
             )
         else:
             # Fallback for environments without PIL: keep the canvas
@@ -637,7 +643,7 @@ class Toggle(ctk.CTkFrame):
                 fill="#FFFFFF",
                 outline="",
             )
-        self._knob.place(x=knob_pad, y=knob_pad, width=knob_d, height=knob_d)
+        self._knob.place(x=knob_pad, y=knob_pad)
 
         # Bind clicks on BOTH the track and the knob so the entire
         # widget surface toggles regardless of which child the cursor
@@ -692,7 +698,7 @@ class Toggle(ctk.CTkFrame):
                     pass
             knob_d = self._ch - 2 * self._pad
             kx = (self._cw - knob_d - self._pad) if on else self._pad
-            self._knob.place(x=kx, y=self._pad, width=knob_d, height=knob_d)
+            self._knob.place(x=kx, y=self._pad)
         except tk.TclError:
             pass
 
