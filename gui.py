@@ -290,14 +290,14 @@ _SYMBOL_ALIASES = {
 # ── COL_SPEC ────────────────────────────────────────────────
 # (col_index, header, min_width, weight, anchor)
 COL_SPEC = [
-    (0, "ON", 36, 0, "center"),
-    (1, "", 20, 0, "center"),
-    (2, "ИМЯ", 72, 0, "w"),
-    (3, "ЛОГИН", 72, 0, "w"),
-    (4, "БАЛАНС", 88, 0, "e"),
-    (5, "ЭКВИТИ", 88, 0, "e"),
-    (6, "P&L", 72, 0, "e"),
-    (7, "СИМВОЛЫ", 100, 1, "w"),
+    (0, "ON", 29, 0, "center"),
+    (1, "", 16, 0, "center"),
+    (2, "ИМЯ", 58, 0, "w"),
+    (3, "ЛОГИН", 58, 0, "w"),
+    (4, "БАЛАНС", 70, 0, "e"),
+    (5, "ЭКВИТИ", 70, 0, "e"),
+    (6, "P&L", 58, 0, "e"),
+    (7, "СИМВОЛЫ", 80, 1, "w"),
     (8, "РИСК", 60, 0, "e"),
     (9, "СДЕЛ/Д", 54, 0, "center"),
     (10, "УБЫТ/Д", 110, 0, "center"),
@@ -910,17 +910,17 @@ class AccountRow:
         # ── col 0 — enable switch ───────────────────────
         enabled = d.get("enabled", True)
         self.var_enabled = tk.BooleanVar(value=enabled)
-        # iOS-style toggle (CTkFrame-based — no canvas seams).  Track
-        # 32×18 with knob 12×12 (3px padding ring); compact enough to
-        # match the dense slave row but still has clear track around
-        # the knob, like the reference SaaS toggle.
+        # iOS-style toggle (Canvas-knob — see widgets.Toggle).  -20% scale
+        # in the slave-table pass on 2026-06-20: track 26×14 with knob 8×8
+        # (3px padding ring) keeps the iOS proportions intact at the new
+        # row density.
         self.sw_enabled = _widgets.Toggle(
             self._parent, variable=self.var_enabled,
             command=self._toggle,
-            width=32, height=18, knob_pad=3,
+            width=26, height=14, knob_pad=3,
             bg_color=bg,
         )
-        self.sw_enabled.grid(row=r, column=0, padx=(16, 8), pady=4,
+        self.sw_enabled.grid(row=r, column=0, padx=(12, 6), pady=3,
                              sticky="w")
         _bind_tip(self.sw_enabled, "Включить / выключить аккаунт")
         self._widgets.append(self.sw_enabled)
@@ -930,9 +930,9 @@ class AccountRow:
 
         # ── col 1 — status dot via IconCircle ───────────
         self._dot = _widgets.IconCircle(
-            self._parent, size=10, tint=p.FG_DIM,
+            self._parent, size=8, tint=p.FG_DIM,
         )
-        self._dot.grid(row=r, column=1, padx=(0, 8), pady=4, sticky="")
+        self._dot.grid(row=r, column=1, padx=(0, 6), pady=3, sticky="")
         self._widgets.append(self._dot)
 
         # ── col 2 — name ────────────────────────────────
@@ -940,7 +940,7 @@ class AccountRow:
             self._parent, text=d.get("name", "\u2014"),
             bg=bg, fg=p.FG, font=("Segoe UI", 9, "bold"), anchor="w",
         )
-        self.lbl_name.grid(row=r, column=2, padx=8, pady=4, sticky="ew")
+        self.lbl_name.grid(row=r, column=2, padx=6, pady=3, sticky="ew")
         self._widgets.append(self.lbl_name)
 
         # ── col 3 — login (mono) ────────────────────────
@@ -948,7 +948,7 @@ class AccountRow:
             self._parent, text="", bg=bg, fg=p.FG_DIM,
             font=("Segoe UI", 9), anchor="w",
         )
-        self.lbl_login.grid(row=r, column=3, padx=8, pady=4, sticky="ew")
+        self.lbl_login.grid(row=r, column=3, padx=6, pady=3, sticky="ew")
         self._widgets.append(self.lbl_login)
 
         # ── col 4 — balance ─────────────────────────────
@@ -956,7 +956,7 @@ class AccountRow:
             self._parent, text="", bg=bg, fg=p.FG,
             font=("Segoe UI", 9, "bold"), anchor="e",
         )
-        self.lbl_balance.grid(row=r, column=4, padx=8, pady=4, sticky="ew")
+        self.lbl_balance.grid(row=r, column=4, padx=6, pady=3, sticky="ew")
         self._widgets.append(self.lbl_balance)
 
         # ── col 5 — equity ──────────────────────────────
@@ -964,7 +964,7 @@ class AccountRow:
             self._parent, text="", bg=bg, fg=p.FG_LABEL,
             font=("Segoe UI", 9), anchor="e",
         )
-        self.lbl_equity.grid(row=r, column=5, padx=8, pady=4, sticky="ew")
+        self.lbl_equity.grid(row=r, column=5, padx=6, pady=3, sticky="ew")
         self._widgets.append(self.lbl_equity)
 
         # ── col 6 — P&L ─────────────────────────────────
@@ -972,12 +972,12 @@ class AccountRow:
             self._parent, text="", bg=bg, fg=p.FG_DIM,
             font=("Segoe UI", 9, "bold"), anchor="e",
         )
-        self.lbl_pnl.grid(row=r, column=6, padx=8, pady=4, sticky="ew")
+        self.lbl_pnl.grid(row=r, column=6, padx=6, pady=3, sticky="ew")
         self._widgets.append(self.lbl_pnl)
 
         # ── col 7 — symbol chips (overflow becomes "+N") ─
         self._sym_frame = ctk.CTkFrame(self._parent, fg_color="transparent")
-        self._sym_frame.grid(row=r, column=7, padx=8, pady=4, sticky="w")
+        self._sym_frame.grid(row=r, column=7, padx=6, pady=3, sticky="w")
         self._build_symbol_chips(d.get("symbol_map", {}))
         self._widgets.append(self._sym_frame)
 
@@ -989,7 +989,7 @@ class AccountRow:
             self._parent, text=risk_text, bg=bg, fg=p.TINT_ORANGE_FG,
             font=("Segoe UI", 9, "bold"), anchor="e",
         )
-        self.lbl_risk.grid(row=r, column=8, padx=8, pady=4, sticky="ew")
+        self.lbl_risk.grid(row=r, column=8, padx=6, pady=3, sticky="ew")
         self._widgets.append(self.lbl_risk)
 
         # ── col 9 — trades per day ──────────────────────
@@ -999,7 +999,7 @@ class AccountRow:
             bg=bg, fg=p.FG_DIM, font=("Segoe UI", 9),
             anchor="center",
         )
-        self.lbl_trades_day.grid(row=r, column=9, padx=8, pady=4, sticky="ew")
+        self.lbl_trades_day.grid(row=r, column=9, padx=6, pady=3, sticky="ew")
         self._widgets.append(self.lbl_trades_day)
 
         # ── col 10 — daily-loss RiskBar ─────────────────
@@ -1014,12 +1014,12 @@ class AccountRow:
         # no information.
         if not dll:
             self._risk_bar.set_disabled("\u2014")
-        self._risk_bar.grid(row=r, column=10, padx=8, pady=4, sticky="ew")
+        self._risk_bar.grid(row=r, column=10, padx=6, pady=3, sticky="ew")
         self._widgets.append(self._risk_bar)
 
         # ── col 11 — action buttons ─────────────────────
         bf = ctk.CTkFrame(self._parent, fg_color="transparent")
-        bf.grid(row=r, column=11, padx=(8, 16), pady=4, sticky="e")
+        bf.grid(row=r, column=11, padx=(6, 12), pady=3, sticky="e")
         self._build_actions(bf)
         self._widgets.append(bf)
 
@@ -1050,7 +1050,7 @@ class AccountRow:
         # also cap the row at 2 chips before falling back to a ``+N``
         # overflow badge — three full-width chips never fit at the
         # column's min width anyway.
-        SYM_CHIP_MAX_CHARS = 10
+        SYM_CHIP_MAX_CHARS = 8
         SYM_CHIP_MAX_VISIBLE = 2
         items = list(sym_map.items())
         visible = items[:SYM_CHIP_MAX_VISIBLE]
@@ -1065,51 +1065,51 @@ class AccountRow:
             chip = _widgets.Chip(
                 self._sym_frame, text=text, tint="blue", bold=False,
             )
-            chip.pack(side="left", padx=(0, SPACE_8))
+            chip.pack(side="left", padx=(0, 4))
         if overflow > 0:
             extra = _widgets.Chip(
                 self._sym_frame, text=f"+{overflow}",
                 tint="neutral", bold=True,
             )
-            extra.pack(side="left", padx=(0, SPACE_8))
+            extra.pack(side="left", padx=(0, 4))
 
     def _build_actions(self, parent):
         # Open terminal (chart) — neutral ghost.
         btn_open = _widgets.IconButton(
-            parent, icon=_lucide.icon("chart-no-axes-column", 14, "label"),
-            variant="ghost", size=SPACE_32, command=self._open_terminal,
+            parent, icon=_lucide.icon("chart-no-axes-column", 12, "label"),
+            variant="ghost", size=22, command=self._open_terminal,
         )
-        btn_open.pack(side="left", padx=(0, SPACE_8))
+        btn_open.pack(side="left", padx=(0, 4))
         _bind_tip(btn_open, "Открыть терминал")
 
         # Close all positions on this slave — danger ghost.
         btn_close = _widgets.IconButton(
-            parent, icon=_lucide.icon("circle-x", 14, "danger"),
-            variant="ghost", size=SPACE_32, command=self._close_all,
+            parent, icon=_lucide.icon("circle-x", 12, "danger"),
+            variant="ghost", size=22, command=self._close_all,
         )
-        btn_close.pack(side="left", padx=(0, SPACE_8))
+        btn_close.pack(side="left", padx=(0, 4))
         _bind_tip(btn_close, "Закрыть все позиции")
 
         # Test BUY 0.01 — warn ghost.
         btn_test = _widgets.IconButton(
-            parent, icon=_lucide.icon("triangle-alert", 14, "warn"),
-            variant="ghost", size=SPACE_32, command=self._test,
+            parent, icon=_lucide.icon("triangle-alert", 12, "warn"),
+            variant="ghost", size=22, command=self._test,
         )
-        btn_test.pack(side="left", padx=(0, SPACE_8))
+        btn_test.pack(side="left", padx=(0, 4))
         _bind_tip(btn_test, "Тест: BUY 0.01 лот")
 
         # Settings — ghost.
         btn_edit = _widgets.IconButton(
-            parent, icon=_lucide.icon("settings", 14, "label"),
-            variant="ghost", size=SPACE_32, command=self._edit,
+            parent, icon=_lucide.icon("settings", 12, "label"),
+            variant="ghost", size=22, command=self._edit,
         )
-        btn_edit.pack(side="left", padx=(0, SPACE_8))
+        btn_edit.pack(side="left", padx=(0, 4))
         _bind_tip(btn_edit, "Настройки")
 
         # Delete — ghost with x.
         btn_del = _widgets.IconButton(
-            parent, icon=_lucide.icon("x", 14, "label"),
-            variant="ghost", size=SPACE_32, command=self._delete,
+            parent, icon=_lucide.icon("x", 12, "label"),
+            variant="ghost", size=22, command=self._delete,
         )
         btn_del.pack(side="left", padx=(0, 0))
         _bind_tip(btn_del, "Удалить аккаунт")
@@ -2059,7 +2059,13 @@ class App(ctk.CTk):
                 self._logo_img = tk.PhotoImage(file=logo_path)
                 self._logo_label = Label(left, image=self._logo_img,
                                          bg=p.BG_DEEP, text="")
-                self._logo_label.pack(side="left", padx=(0, SPACE_16))
+                # padx=(2, SPACE_16): the cards below this header (МАСТЕР
+                # strip, KPI dashboard, slave card) have rounded corners
+                # whose visible body starts ~2 px inside the card box.
+                # The logo PNG is a hard rectangle, so without this 2 px
+                # nudge its black left edge sat slightly to the LEFT of
+                # the card bodies and read as misaligned.
+                self._logo_label.pack(side="left", padx=(2, SPACE_16))
             except Exception:
                 pass
 
@@ -2402,7 +2408,7 @@ class App(ctk.CTk):
                 font=("Segoe UI", 9, "normal"),
                 anchor=anchor,
             )
-            lbl_h.grid(row=0, column=idx, padx=SPACE_8, pady=(0, SPACE_16), sticky="ew")
+            lbl_h.grid(row=0, column=idx, padx=6, pady=(0, 10), sticky="ew")
 
         self._next_row = 1
 
@@ -2478,9 +2484,12 @@ class App(ctk.CTk):
         # Bar grows naturally to fit its labels (no fixed ``height=``).
         # The previous SPACE_32 (28 px) cap clipped the version label
         # at the tightened 2026-06-20 scale because label font ascent +
-        # SPACE_8 top/bottom pady exceeded the bar box.
+        # SPACE_8 top/bottom pady exceeded the bar box.  Packed with
+        # ``side="bottom"`` BEFORE the slaves/log paned (see
+        # ``_build_ui``) so the paned's ``expand=True`` can't steal the
+        # bar's slice of vertical space and squash it to 0 height.
         bar = ctk.CTkFrame(self, fg_color=p.BG_DEEP)
-        bar.pack(fill="x", padx=SPACE_24, pady=(0, SPACE_8))
+        bar.pack(side="bottom", fill="x", padx=SPACE_24, pady=(0, SPACE_8))
 
         # Off-screen stub so legacy `.set(...)` calls don't NPE.
         self._status_pill = _widgets.StatusPill(
