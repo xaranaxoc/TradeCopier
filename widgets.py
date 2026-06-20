@@ -165,12 +165,17 @@ class KPICard(Card):
         super().__init__(master, **kw)
 
         self.columnconfigure(1, weight=1)
+        # Two-row layout (label + value).  Both rows share the inner card
+        # space evenly so every KPI tile ends up the same height regardless
+        # of value length, and the bottom whitespace below the value is
+        # identical across all four tiles in the dashboard.
+        self.rowconfigure(0, weight=1)
+        self.rowconfigure(1, weight=1)
 
-        # Compact KPI scale matching the legacy WinForms density:
-        # LABEL 9 bold uppercase, VALUE 18 bold, no sub-text air.
-        # Icon 32px on a 12px gutter.
-        self._icon = IconCircle(self, size=32, tint=tint, icon=icon, glyph=glyph)
-        self._icon.grid(row=0, column=0, rowspan=3, padx=(14, 12), pady=14, sticky="n")
+        # IconCircle 28px (was 32) and inner padding 12/10/12 trims ~10%
+        # off the tile footprint without touching label/value typography.
+        self._icon = IconCircle(self, size=28, tint=tint, icon=icon, glyph=glyph)
+        self._icon.grid(row=0, column=0, rowspan=2, padx=(12, 10), pady=12, sticky="")
 
         self._lbl = ctk.CTkLabel(
             self,
@@ -179,38 +184,38 @@ class KPICard(Card):
             font=("Segoe UI", 9, "bold"),
             anchor="w",
         )
-        self._lbl.grid(row=0, column=1, sticky="ew", padx=(0, 14), pady=(14, 0))
+        # ``sticky="sew"`` pins the label to the bottom of its row so the
+        # label/value pair reads as a tight unit instead of floating apart
+        # when row weights expand the cells.
+        self._lbl.grid(row=0, column=1, sticky="sew", padx=(0, 12), pady=(12, 0))
 
+        # Value font 16 (was 18) — together with the smaller icon this
+        # makes the KPI row land roughly 10% shorter overall.
         self._val = ctk.CTkLabel(
             self,
             text=value,
             text_color=p.FG,
-            font=("Segoe UI", 18, "bold"),
+            font=("Segoe UI", 16, "bold"),
             anchor="w",
         )
-        self._val.grid(row=1, column=1, sticky="ew", padx=(0, 14), pady=(2, 0))
+        self._val.grid(row=1, column=1, sticky="new", padx=(0, 12), pady=(2, 12))
 
-        self._sub = ctk.CTkLabel(
-            self,
-            text=sub_text,
-            text_color=sub_color or p.GREEN_DIM,
-            font=("Segoe UI", 9, "normal"),
-            anchor="w",
-        )
-        self._sub.grid(row=2, column=1, sticky="ew", padx=(0, 14), pady=(2, 14))
+        # Sub-text row was removed in the 2026-06-20 redesign pass: two
+        # of the four tiles never had sub-content and the asymmetry made
+        # the dashboard read as ragged.  The ``_sub`` attribute is kept
+        # as ``None`` so any leftover ``set_value(sub_text=...)`` call
+        # site no-ops gracefully instead of raising.
+        self._sub = None
 
     def set_value(
         self,
         value: str,
         *,
-        sub_text: Optional[str] = None,
-        sub_color: Optional[str] = None,
+        sub_text: Optional[str] = None,   # accepted for back-compat
+        sub_color: Optional[str] = None,  # accepted for back-compat
     ) -> None:
         self._val.configure(text=value)
-        if sub_text is not None:
-            self._sub.configure(text=sub_text)
-        if sub_color is not None:
-            self._sub.configure(text_color=sub_color)
+        # sub_text / sub_color intentionally ignored — see ``__init__``.
 
 
 # ── StatusPill — rounded pill with dot + text ───────────────────────
@@ -557,13 +562,28 @@ class Toggle(ctk.CTkFrame):
         self._disabled = False
 
         knob_d = height - 2 * knob_pad
-        self._knob = ctk.CTkFrame(
+        # The previous CTkFrame-based knob picked up visible rendering
+        # artifacts at small sizes (knob_d ≤ 16): CTk draws rounded
+        # rectangles as 4 corner arcs + 2 rectangles, and when w == h and
+        # corner_radius == w//2 the corner arcs don't always align at
+        # sub-pixel boundaries, producing a slightly squished / non-round
+        # outline.  A plain ``tk.Canvas`` ``create_oval`` rasterises as a
+        # clean anti-aliased circle, matching the SaaS reference toggle.
+        # We keep the canvas background in sync with the track colour
+        # (see ``_update``) so the square canvas blends into the pill
+        # track around the white oval.
+        self._knob = tk.Canvas(
             self,
             width=knob_d,
             height=knob_d,
-            corner_radius=knob_d // 2,
-            fg_color="#FFFFFF",
-            border_width=0,
+            bg=self._track_off,
+            highlightthickness=0,
+            borderwidth=0,
+        )
+        self._knob.create_oval(
+            0, 0, knob_d, knob_d,
+            fill="#FFFFFF",
+            outline="",
         )
         self._knob.place(x=knob_pad, y=knob_pad)
 
@@ -606,7 +626,15 @@ class Toggle(ctk.CTkFrame):
     def _update(self) -> None:
         try:
             on = bool(self._var.get())
-            self.configure(fg_color=self._track_on if on else self._track_off)
+            track = self._track_on if on else self._track_off
+            self.configure(fg_color=track)
+            # Keep the knob canvas bg in sync with the track so the four
+            # square corners of the canvas blend invisibly into the pill
+            # track surrounding the white oval.
+            try:
+                self._knob.configure(bg=track)
+            except tk.TclError:
+                pass
             knob_d = self._ch - 2 * self._pad
             kx = (self._cw - knob_d - self._pad) if on else self._pad
             self._knob.place(x=kx, y=self._pad)

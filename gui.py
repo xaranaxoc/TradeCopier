@@ -178,12 +178,19 @@ def __getattr__(name: str):
 # Keep the redesign on an 8px grid.  These constants intentionally stay
 # local to gui.py so the legacy neon/light-pro code paths are not forced
 # through a larger token migration.
+#
+# 2026-06-20 redesign pass: trimmed ~10% off every spacing/sizing token so
+# the UI reads denser across the board.  The 8 px base unit is kept (any
+# smaller stops registering as a real gap at 96 DPI); 16/24/32 step down
+# to 14/20/28, and the action-button height/width drops a notch with them.
+# Anything that *derives* its padding from these constants picks the new
+# scale up automatically, so the diff at every call site stays clean.
 SPACE_8 = 8
-SPACE_16 = 16
-SPACE_24 = 24
-SPACE_32 = 32
-BTN_HEIGHT = 40
-BTN_MIN_W = 96
+SPACE_16 = 14
+SPACE_24 = 20
+SPACE_32 = 28
+BTN_HEIGHT = 36
+BTN_MIN_W = 88
 
 
 # ── Persistence: trades ─────────────────────────────────────
@@ -1034,16 +1041,34 @@ class AccountRow:
                 text_color=p.FG_DIM, font=("Segoe UI", 10),
             ).pack(side="left")
             return
+        # Each chip's natural width is its text width + chip padding, and
+        # the Chip widget doesn't clip to its column.  Long mappings like
+        # ``I225.S→Nikkei225`` therefore used to bleed into the РИСК
+        # column on the right (and visually got chopped off because CTk
+        # painted siblings on top).  Fix: head-truncate the chip text
+        # with an ellipsis so the chip stays inside its column box.  We
+        # also cap the row at 2 chips before falling back to a ``+N``
+        # overflow badge — three full-width chips never fit at the
+        # column's min width anyway.
+        SYM_CHIP_MAX_CHARS = 10
+        SYM_CHIP_MAX_VISIBLE = 2
         items = list(sym_map.items())
-        for k, v in items[:3]:
+        visible = items[:SYM_CHIP_MAX_VISIBLE]
+        overflow = len(items) - len(visible)
+        for k, v in visible:
             text = f"{k}\u2192{v}" if v and v != k else k
+            if len(text) > SYM_CHIP_MAX_CHARS:
+                # Show the start of the mapping (the source symbol is on
+                # the left of the arrow) followed by a single-character
+                # ellipsis so a glance still tells you what the chip is.
+                text = text[: SYM_CHIP_MAX_CHARS - 1] + "\u2026"
             chip = _widgets.Chip(
                 self._sym_frame, text=text, tint="blue", bold=False,
             )
             chip.pack(side="left", padx=(0, SPACE_8))
-        if len(items) > 3:
+        if overflow > 0:
             extra = _widgets.Chip(
-                self._sym_frame, text=f"+{len(items) - 3}",
+                self._sym_frame, text=f"+{overflow}",
                 tint="neutral", bold=True,
             )
             extra.pack(side="left", padx=(0, SPACE_8))
@@ -2010,8 +2035,9 @@ class App(ctk.CTk):
 
         Layout (left → right):
 
-            [logo] FTH Trade Copier [MT5]   …   [▶ Старт][■ Стоп] · \
-[🚀 Запустить терминалы][⏻ Закрыть] · [⚙][ⓘ]
+            [logo] FTH Trade Copier [MT5]   …
+                КОПИТРЕЙДЕР [▶ Старт][■ Стоп] · \
+ТЕРМИНАЛЫ [🚀 Запустить][⏻ Закрыть] · [⚙][ⓘ]
 
         The header has no separate ``BG_HEADER`` strip — it sits flush
         on the page background (``BG_DEEP``) and is separated from the
@@ -2039,7 +2065,7 @@ class App(ctk.CTk):
 
         ctk.CTkLabel(
             left, text="Trade Copier",
-            text_color=p.FG, font=("Segoe UI", 16, "bold"),
+            text_color=p.FG, font=("Segoe UI", 14, "bold"),
         ).pack(side="left", padx=(0, SPACE_8), pady=(2, 0))
         # MT5 chip sits to the right of the title.  pady=(6, 0) lines
         # its vertical centre up with the cap-height of the 16pt title.
@@ -2070,7 +2096,7 @@ class App(ctk.CTk):
             compound="left", command=self._start,
             fg_color=p.ACCENT, hover_color=p.ACCENT_H, text_color=p.ACCENT_FG,
             corner_radius=p.RADIUS_MD, border_width=0,
-            width=BTN_MIN_W, height=BTN_HEIGHT, font=("Segoe UI", 11, "bold"),
+            width=BTN_MIN_W, height=BTN_HEIGHT, font=("Segoe UI", 10, "bold"),
         )
         self.btn_start.pack(side="left", padx=(0, SPACE_8))
         _bind_tip(self.btn_start, "Запустить копирование сделок")
@@ -2081,7 +2107,7 @@ class App(ctk.CTk):
             fg_color="transparent", hover_color=p.BG_ROW_HOVER,
             text_color=p.FG, corner_radius=p.RADIUS_MD,
             border_width=1, border_color=p.BORDER,
-            width=BTN_MIN_W, height=BTN_HEIGHT, font=("Segoe UI", 11, "bold"),
+            width=BTN_MIN_W, height=BTN_HEIGHT, font=("Segoe UI", 10, "bold"),
             state="disabled",
         )
         # SPACE_24 between the copy-trader group (Старт/Стоп) and the
@@ -2090,15 +2116,28 @@ class App(ctk.CTk):
         self.btn_stop.pack(side="left", padx=(0, SPACE_24))
         _bind_tip(self.btn_stop, "Остановить копирование")
 
-        # Terminal controls — Launch / Shutdown.
+        # ТЕРМИНАЛЫ caption mirrors the КОПИТРЕЙДЕР caption above so the
+        # two button groups read as parallel controls instead of one
+        # long header-button row.  Same muted 9pt bold uppercase token,
+        # same SPACE_24 right pad before the first action.
+        ctk.CTkLabel(
+            right, text="ТЕРМИНАЛЫ",
+            text_color=p.FG_LABEL, font=("Segoe UI", 9, "bold"),
+        ).pack(side="left", padx=(0, SPACE_24))
+
+        # Terminal controls — Launch / Shutdown.  Width pinned to
+        # BTN_MIN_W so the two terminal buttons form a visually-equal
+        # pair to Старт/Стоп (which use the same width).  Button text is
+        # the bare verb ("Запустить" / "Закрыть") because the leading
+        # ТЕРМИНАЛЫ caption already scopes the group.
         btn_launch = ctk.CTkButton(
-            right, text="Запустить терминалы",
+            right, text="Запустить",
             image=_lucide.icon("rocket", 14, "label"), compound="left",
             command=self._launch_all,
             fg_color="transparent", hover_color=p.BG_ROW_HOVER,
             text_color=p.FG, corner_radius=p.RADIUS_MD,
             border_width=1, border_color=p.BORDER,
-            height=BTN_HEIGHT, font=("Segoe UI", 11),
+            width=BTN_MIN_W, height=BTN_HEIGHT, font=("Segoe UI", 10, "bold"),
         )
         btn_launch.pack(side="left", padx=(0, SPACE_8))
         _bind_tip(btn_launch, "Запустить все терминалы (свёрнутые)")
@@ -2110,7 +2149,7 @@ class App(ctk.CTk):
             fg_color="transparent", hover_color=p.RED_GLOW,
             text_color=p.RED, corner_radius=p.RADIUS_MD,
             border_width=1, border_color=p.BORDER,
-            height=BTN_HEIGHT, font=("Segoe UI", 11),
+            width=BTN_MIN_W, height=BTN_HEIGHT, font=("Segoe UI", 10, "bold"),
         )
         # SPACE_24 between terminal group and icon-only utilities (gear /
         # info) so the two halves of the right cluster breathe apart.
@@ -2261,7 +2300,7 @@ class App(ctk.CTk):
                 dash,
                 label=label,
                 value="\u2014",
-                icon=_lucide.icon(icon_name, 20, icon_fg),
+                icon=_lucide.icon(icon_name, 18, icon_fg),
                 tint=tint,
             )
             pad_left = 0 if col == 0 else SPACE_16
@@ -2971,7 +3010,10 @@ class App(ctk.CTk):
             f"${total_eq:,.2f}" if total_eq > 0 else "\u2014",
         )
 
-        # Net P&L summed across all slaves; sub-text colour-codes the sign.
+        # Net P&L summed across all slaves.  The sub-text caption
+        # (прибыль / убыток) was dropped in the 2026-06-20 redesign pass
+        # — the leading +/- in the value already carries the sign cue
+        # and removing the caption keeps all four KPI tiles uniform.
         net_pnl = 0.0
         for row in self._rows:
             try:
@@ -2983,30 +3025,18 @@ class App(ctk.CTk):
                 pass
         if net_pnl > 0:
             pnl_str = f"+${net_pnl:,.2f}"
-            pnl_color = p.GREEN
         elif net_pnl < 0:
             pnl_str = f"-${abs(net_pnl):,.2f}"
-            pnl_color = p.RED
         else:
             pnl_str = "\u2014"
-            pnl_color = p.FG_DIM
-        # KPICard.set_value colours the sub-text, not the big number — we
-        # tint the *sub* instead, which keeps the value glyph stable for
-        # the eye while still telegraphing gain/loss with the small caption.
-        self._kpi_cards["kpi_pnl"].set_value(
-            pnl_str,
-            sub_text=("прибыль" if net_pnl > 0 else "убыток" if net_pnl < 0 else ""),
-            sub_color=pnl_color,
-        )
+        self._kpi_cards["kpi_pnl"].set_value(pnl_str)
 
-        # Connected = enabled slaves / total slaves; sub-text shows the
-        # connectivity percentage so the card matches the mockup pattern.
+        # Connected = enabled slaves / total slaves.  Sub-caption
+        # ("N% активно") removed for the same reason as kpi_pnl above.
         connected = sum(1 for row in self._rows if row.var_enabled.get())
         total = len(self._rows)
-        pct = (connected * 100 // total) if total else 0
         self._kpi_cards["kpi_conn"].set_value(
             f"{connected}/{total}" if total else "\u2014",
-            sub_text=f"{pct}% активно" if total else "",
         )
 
     def _start(self):
