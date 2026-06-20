@@ -235,11 +235,40 @@ class _Tip:
         cls.hide()
         tw = tk.Toplevel(widget)
         tw.wm_overrideredirect(True)
-        tw.configure(bg=p.ACCENT)
         tw.wm_attributes("-topmost", True)
-        lbl = tk.Label(tw, text=text, bg=p.ACCENT, fg=p.ACCENT_FG,
-                       font=("Segoe UI", 9), padx=8, pady=4)
-        lbl.pack()
+        # Render the body as a rounded CTkFrame card so the tooltip
+        # matches the rest of the app's rounded-corner aesthetic.  The
+        # Toplevel itself is set to a magenta bg that Windows treats as
+        # transparent (``-transparentcolor`` attribute) so the area
+        # outside the card's rounded corners shows through to the
+        # desktop instead of clipping to a rectangle.  On non-Windows
+        # platforms ``-transparentcolor`` raises TclError, and we fall
+        # back to a solid-rectangle tooltip with the same colours.
+        TRANSPARENT_KEY = "#FF00FE"  # avoid common palette colours
+        rounded = False
+        try:
+            tw.wm_attributes("-transparentcolor", TRANSPARENT_KEY)
+            tw.configure(bg=TRANSPARENT_KEY)
+            rounded = True
+        except tk.TclError:
+            tw.configure(bg=p.ACCENT)
+
+        if rounded:
+            card = ctk.CTkFrame(
+                tw, fg_color=p.ACCENT,
+                corner_radius=p.RADIUS_MD, border_width=0,
+            )
+            card.pack(padx=0, pady=0)
+            ctk.CTkLabel(
+                card, text=text, text_color=p.ACCENT_FG,
+                font=("Segoe UI", 9), fg_color="transparent",
+            ).pack(padx=10, pady=4)
+        else:
+            tk.Label(
+                tw, text=text, bg=p.ACCENT, fg=p.ACCENT_FG,
+                font=("Segoe UI", 9), padx=8, pady=4,
+            ).pack()
+
         tw.update_idletasks()
         tw_w = tw.winfo_width()
         tw_h = tw.winfo_height()
@@ -877,33 +906,29 @@ class AccountRow:
         d = self.slave_data
         r = self._row
 
-        # Card-row chrome: rounded white background with a hair-thin
-        # divider border (BORDER_LIGHT == slate-100).  padx=0 lets the
-        # row sit flush with the parent's SPACE_16 inset so the card
-        # spans the full content width; vertical pady=4 gives 8px
-        # between adjacent account cards (4 + 4).
-        self._parent.rowconfigure(r, minsize=ui_scaling.scale(48))
+        # Row card chrome — rounded white background with a hair-thin
+        # divider border (BORDER_LIGHT == slate-100).  Sized so the
+        # vertical gap between chip/cell content and the card's top/
+        # bottom borders matches the inter-chip horizontal gap (~4 px):
+        #
+        #   rowconfigure minsize = scale(34)   ← total row band height
+        #   bg_frame pady=3                    ← visual card gap to its row band
+        #   cell pady=3 (set per cell below)   ← inner cell padding
+        #
+        # With a 22 px chip naturally centred via sticky="w", the chip
+        # top sits 6 px below the row band's top edge and 3 px below
+        # the visible card's top edge — i.e. the chip lives ~4 px
+        # inside the card's interior, matching the inter-chip gap.
+        self._parent.rowconfigure(r, minsize=ui_scaling.scale(34))
         self._bg_frame = ctk.CTkFrame(
             self._parent,
             fg_color=p.BG_ROW,
             corner_radius=p.RADIUS_LG,
             border_width=1,
             border_color=p.BORDER_LIGHT,
-            height=44,
         )
         self._bg_frame.grid(row=r, column=0, columnspan=12,
-                            sticky="nsew", pady=4, padx=0)
-        self._bg_frame.lower()  # stay behind cell widgets
-        self._bg_frame = ctk.CTkFrame(
-            self._parent,
-            fg_color=p.BG_ROW,
-            corner_radius=p.RADIUS_LG,
-            border_width=1,
-            border_color=p.BORDER_LIGHT,
-            height=52,
-        )
-        self._bg_frame.grid(row=r, column=0, columnspan=12,
-                            sticky="nsew", pady=5, padx=0)
+                            sticky="nsew", pady=3, padx=0)
         self._bg_frame.lower()  # stay behind cell widgets
 
         bg = p.BG_ROW

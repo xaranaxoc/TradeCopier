@@ -91,12 +91,25 @@ class Card(ctk.CTkFrame):
 # ── IconCircle — tinted circular badge ──────────────────────────────
 
 
-class IconCircle(ctk.CTkFrame):
-    """A circular tinted badge that hosts a single icon or short text.
+class IconCircle(tk.Canvas):
+    """Tinted circular badge that hosts a single icon or short text.
 
-    The circle is faked with ``corner_radius=RADIUS_PILL`` on a fixed
-    square frame (CTk's rounded rectangle approximates a circle when w==h
-    and radius is very large).
+    Implemented on a plain ``tk.Canvas`` (not ``ctk.CTkFrame``).  Why:
+    CTkFrame draws its rounded background by querying ``winfo_width()``
+    / ``winfo_height()`` at draw time, which means the visible "circle"
+    follows whatever size the geometry manager allocates instead of the
+    ``width=``/``height=`` requested in the constructor — even with
+    ``grid_propagate(False)`` and ``pack_propagate(False)``.  In a
+    ``KPICard``-style layout (mixed grid + place, rowspan, sticky="n",
+    place(rely=0.5, anchor="w"), …) this caused the circle to stretch
+    into a vertical or horizontal pill instead of staying round.
+
+    ``tk.Canvas`` with an explicit ``width``/``height`` is rock-solid:
+    the canvas keeps the requested size, and a single ``create_oval``
+    inside renders a true anti-aliased circle.  An optional Lucide icon
+    (``CTkImage``) is overlaid via a child ``CTkLabel`` placed at the
+    canvas centre; a Unicode glyph is drawn via ``create_text`` on the
+    canvas directly.
     """
 
     def __init__(
@@ -111,32 +124,48 @@ class IconCircle(ctk.CTkFrame):
         **kw: Any,
     ) -> None:
         bg, fg = _normalise_tint(tint)
+        # The canvas's flat bg has to match the visible container around
+        # the disc so the four square corners blend invisibly into the
+        # parent.  CTk parents return either a hex string or a tuple
+        # (light_hex, dark_hex) from ``cget("fg_color")``; "transparent"
+        # falls back to the card bg.
+        parent_bg = p.BG_ROW
+        try:
+            pbg = master.cget("fg_color")
+            if isinstance(pbg, (tuple, list)):
+                pbg = pbg[0]
+            if isinstance(pbg, str) and pbg.startswith("#"):
+                parent_bg = pbg
+        except Exception:
+            pass
         super().__init__(
             master,
             width=size,
             height=size,
-            fg_color=bg,
-            corner_radius=p.RADIUS_PILL,
-            border_width=0,
+            bg=parent_bg,
+            highlightthickness=0,
+            borderwidth=0,
             **kw,
         )
-        # Lock size so the frame stays square (otherwise child packing
-        # would let it collapse vertically and look like a pill).
-        self.grid_propagate(False)
-        self.pack_propagate(False)
+        # Filled disc covering the full canvas.
+        self.create_oval(0, 0, size, size, fill=bg, outline="")
         self._tint_bg = bg
         self._tint_fg = fg
+        # Overlay the icon glyph at the canvas centre.  CTkImage icons
+        # render through a child CTkLabel (placed); plain Unicode glyphs
+        # are drawn directly via ``create_text`` so we don't pay for a
+        # whole CTkLabel just to host one character.
         if icon is not None:
-            lbl = ctk.CTkLabel(self, image=icon, text="")
-            lbl.place(relx=0.5, rely=0.5, anchor="center")
-        elif glyph:
             lbl = ctk.CTkLabel(
-                self,
-                text=glyph,
-                text_color=fg,
-                font=("Segoe UI Symbol", glyph_size, "bold"),
+                self, image=icon, text="", fg_color="transparent",
             )
             lbl.place(relx=0.5, rely=0.5, anchor="center")
+        elif glyph:
+            self.create_text(
+                size / 2, size / 2,
+                text=glyph, fill=fg,
+                font=("Segoe UI Symbol", glyph_size, "bold"),
+            )
 
 
 # ── KPICard — big number tile ───────────────────────────────────────
@@ -185,9 +214,10 @@ class KPICard(Card):
         # mid-height with its natural 28×28 size, irrespective of how
         # much height the value row reserves.
         self._icon = IconCircle(self, size=ICON_BOX, tint=tint, icon=icon, glyph=glyph)
-        # CTk forbids ``width=/height=`` on ``.place(...)``; the
-        # IconCircle already locks its size to ICON_BOX×ICON_BOX via the
-        # constructor + grid_propagate/pack_propagate(False).
+        # IconCircle is now a ``tk.Canvas`` so its size is rock-solid:
+        # the canvas keeps the requested 28×28 regardless of how the
+        # parent geometry manager allocates the cell.  ``place(rely=0.5,
+        # anchor="w")`` centres the disc vertically without stretching.
         self._icon.place(x=ICON_LEFT, rely=0.5, anchor="w")
 
         self._lbl = ctk.CTkLabel(
