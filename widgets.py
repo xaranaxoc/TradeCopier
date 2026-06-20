@@ -1,1 +1,776 @@
-__WIDGETS_PLACEHOLDER__
+"""
+widgets — reusable CTk primitives for the *Light Soft* redesign.
+
+These are the small building blocks used by the new card-based UI:
+
+  * ``Card``         — white rounded container (frame).
+  * ``IconCircle``   — tinted circular badge that hosts an icon.
+  * ``KPICard``      — big-number tile (icon circle + label + value + sub).
+  * ``StatusPill``   — rounded pill with a dot + label (e.g. *● Running*).
+  * ``Chip``         — coloured rounded badge (BUY/SELL/symbol chips).
+  * ``IconButton``   — square icon-only button (variants: ghost / primary /
+                       danger / warn / success).
+  * ``SectionHeader``— title + optional counter row.
+  * ``RiskBar``      — slim progress bar + numeric label.
+
+All widgets read colours and radii from ``palette.palette_proxy`` so they
+follow the active theme automatically.  When the theme is switched at
+runtime, the host application is expected to call ``apply_theme()`` which
+already triggers ``_apply_runtime_theme`` in ``gui.py`` — that path
+rebuilds widgets, so the new colours pick up on first paint.
+
+Designed to render correctly even when no PIL ``CTkImage`` is provided
+for an icon: the icon slot simply stays empty, which is useful for early
+phases of the redesign before the Lucide icon set is wired in.
+"""
+
+from __future__ import annotations
+
+from typing import Any, Callable, Optional, Tuple, Union
+
+import tkinter as tk
+
+import customtkinter as ctk
+
+from palette import palette_proxy as p, fonts_proxy as f
+
+
+# ── Helpers ──────────────────────────────────────────────────────────
+
+
+def _normalise_tint(name: Optional[str]) -> Tuple[str, str]:
+    """Map a tint *name* to ``(bg, fg)`` colour pair from the palette.
+
+    Accepts: ``blue``, ``purple``, ``green``, ``orange``, ``red`` (case
+    insensitive) or a literal ``"#RRGGBB"`` hex string for *bg* with the
+    accent foreground.  Returns ``(BG, FG)``.
+    """
+    if not name:
+        return p.TINT_BLUE, p.TINT_BLUE_FG
+    n = name.lower()
+    table = {
+        "blue":   (p.TINT_BLUE,   p.TINT_BLUE_FG),
+        "purple": (p.TINT_PURPLE, p.TINT_PURPLE_FG),
+        "green":  (p.TINT_GREEN,  p.TINT_GREEN_FG),
+        "orange": (p.TINT_ORANGE, p.TINT_ORANGE_FG),
+        "red":    (p.TINT_RED,    p.TINT_RED_FG),
+        # Semantic aliases reused by status pills.
+        "success": (p.TINT_GREEN,  p.TINT_GREEN_FG),
+        "danger":  (p.TINT_RED,    p.TINT_RED_FG),
+        "warn":    (p.TINT_ORANGE, p.TINT_ORANGE_FG),
+        "info":    (p.TINT_BLUE,   p.TINT_BLUE_FG),
+        "neutral": (p.BORDER_LIGHT, p.FG_LABEL),
+    }
+    if n in table:
+        return table[n]
+    if isinstance(name, str) and name.startswith("#"):
+        return name, p.ACCENT_FG
+    return p.TINT_BLUE, p.TINT_BLUE_FG
+
+
+# ── Card — generic white rounded container ──────────────────────────
+
+
+class Card(ctk.CTkFrame):
+    """White rounded card with thin border. Drop-shadow-less by design
+    (Tk has no shadows; we lean on the border + soft page background).
+    """
+
+    def __init__(self, master: Any, *, padding: int = 16, **kw: Any) -> None:
+        super().__init__(
+            master,
+            fg_color=kw.pop("fg_color", p.BG_ROW),
+            corner_radius=kw.pop("corner_radius", p.RADIUS_LG),
+            border_width=kw.pop("border_width", 1),
+            border_color=kw.pop("border_color", p.BORDER),
+            **kw,
+        )
+        self._padding = padding
+
+
+# ── IconCircle — tinted circular badge ──────────────────────────────
+
+
+class IconCircle(tk.Canvas):
+    """Tinted circular badge that hosts a single icon or short text.
+
+    Implemented on a plain ``tk.Canvas`` (not ``ctk.CTkFrame``).  Why:
+    CTkFrame draws its rounded background by querying ``winfo_width()``
+    / ``winfo_height()`` at draw time, which means the visible "circle"
+    follows whatever size the geometry manager allocates instead of the
+    ``width=``/``height=`` requested in the constructor — even with
+    ``grid_propagate(False)`` and ``pack_propagate(False)``.  In a
+    ``KPICard``-style layout (mixed grid + place, rowspan, sticky="n",
+    place(rely=0.5, anchor="w"), …) this caused the circle to stretch
+    into a vertical or horizontal pill instead of staying round.
+
+    ``tk.Canvas`` with an explicit ``width``/``height`` is rock-solid:
+    the canvas keeps the requested size, and a single ``create_oval``
+    inside renders a true anti-aliased circle.  An optional Lucide icon
+    (``CTkImage``) is overlaid via a child ``CTkLabel`` placed at the
+    canvas centre; a Unicode glyph is drawn via ``create_text`` on the
+    canvas directly.
+    """
+
+    def __init__(
+        self,
+        master: Any,
+        *,
+        size: int = 44,
+        tint: Optional[str] = "blue",
+        icon: Optional[Any] = None,
+        glyph: Optional[str] = None,
+        glyph_size: int = 18,
+        **kw: Any,
+    ) -> None:
+        bg, fg = _normalise_tint(tint)
+        # The canvas's flat bg has to match the visible container around
+        # the disc so the four square corners blend invisibly into the
+        # parent.  Walking up the master chain matters because parents
+        # often use ``fg_color="transparent"`` (CTkScrollableFrame's
+        # inner frame, transparent action holders, ...) where
+        # ``cget("fg_color")`` returns the string ``"transparent"`` and
+        # we have to keep climbing to find the actual painted colour
+        # behind us.  Without this walk the canvas bg falls back to
+        # ``p.BG_ROW`` which only happens to match in some places — in
+        # others (status dot living over a tinted hover band, etc.) the
+        # square canvas corners show as a 1-2 px halo around the disc
+        # and look like the dot is "clipped".
+        def _resolve_parent_bg(w):
+            cur = w
+            for _ in range(8):
+                if cur is None:
+                    break
+                try:
+                    v = cur.cget("fg_color")
+                except Exception:
+                    v = None
+                if isinstance(v, (tuple, list)):
+                    v = v[0] if v else None
+                if isinstance(v, str) and v.startswith("#"):
+                    return v
+                try:
+                    v2 = cur.cget("bg")
+                    if isinstance(v2, str) and v2.startswith("#"):
+                        return v2
+                except Exception:
+                    pass
+                cur = getattr(cur, "master", None)
+            return p.BG_ROW
+        parent_bg = _resolve_parent_bg(master)
+        super().__init__(
+            master,
+            width=size,
+            height=size,
+            bg=parent_bg,
+            highlightthickness=0,
+            borderwidth=0,
+            **kw,
+        )
+        # Filled disc covering the full canvas.  ``create_oval`` in Tk
+        # uses an inclusive bounding box but the right/bottom pixel of
+        # the rectangle is excluded by the renderer; subtracting 1 from
+        # the bottom-right corner avoids the visible 1-px clipping that
+        # made tiny (size<=12) dots look chopped on the right/bottom
+        # edge.
+        self.create_oval(0, 0, size - 1, size - 1, fill=bg, outline="")
+        self._tint_bg = bg
+        self._tint_fg = fg
+        # Overlay the icon glyph at the canvas centre.  CTkImage icons
+        # render through a child CTkLabel placed at the centre — critical
+        # subtlety: passing ``fg_color="transparent"`` here lights up the
+        # CTkLabel's white default because the master is a ``tk.Canvas``,
+        # not a CTkFrame, so CTk has no fg_color to inherit and falls
+        # back to the system default (white in light theme).  That's the
+        # "white rectangle behind the icon" that haunted the 28 px KPI
+        # discs.  Setting the label's ``fg_color`` to the *disc tint*
+        # makes the rectangle blend invisibly into the oval beneath it.
+        if icon is not None:
+            lbl = ctk.CTkLabel(
+                self, image=icon, text="", fg_color=bg,
+            )
+            lbl.place(relx=0.5, rely=0.5, anchor="center")
+        elif glyph:
+            self.create_text(
+                size / 2, size / 2,
+                text=glyph, fill=fg,
+                font=("Segoe UI Symbol", glyph_size, "bold"),
+            )
+
+
+# ── KPICard — big number tile ───────────────────────────────────────
+
+
+class KPICard(Card):
+    """Card with: tinted icon circle + uppercase label + big number +
+    sub-text (e.g. *+3.24% today*).
+
+    Use ``set_value()`` to update the displayed number after construction.
+    """
+
+    def __init__(
+        self,
+        master: Any,
+        *,
+        label: str = "",
+        value: str = "—",
+        sub_text: str = "",
+        sub_color: Optional[str] = None,
+        tint: str = "blue",
+        icon: Optional[Any] = None,
+        glyph: Optional[str] = None,
+        **kw: Any,
+    ) -> None:
+        super().__init__(master, **kw)
+
+        # Two-column layout: icon on the left (placed at fixed coords —
+        # see below), label + value stacked on the right in a grid that
+        # owns column 1.  Column 0 is reserved purely as whitespace via
+        # ``minsize`` so the label/value text never overlaps the icon.
+        ICON_BOX = 28          # IconCircle side length
+        ICON_LEFT = 12         # inset from card's left edge
+        ICON_RIGHT = 10        # gap between icon and the text column
+        self.columnconfigure(0, minsize=ICON_LEFT + ICON_BOX + ICON_RIGHT)
+        self.columnconfigure(1, weight=1)
+
+        # IconCircle is positioned with ``place(...)`` instead of grid so
+        # tk's grid manager cannot stretch its drawn box vertically.
+        # Symptom that caused this workaround: with rowspan=2 + sticky="n"
+        # CTk's CTkFrame engine still painted the tinted background up to
+        # the rowspan cell's full allocated height (~card height), turning
+        # the 28×28 circle into a tall vertical pill that clipped against
+        # the card's top and bottom borders.  ``place(... rely=0.5
+        # anchor="w")`` pins the icon's vertical centre to the card's
+        # mid-height with its natural 28×28 size, irrespective of how
+        # much height the value row reserves.
+        self._icon = IconCircle(self, size=ICON_BOX, tint=tint, icon=icon, glyph=glyph)
+        # IconCircle is now a ``tk.Canvas`` so its size is rock-solid:
+        # the canvas keeps the requested 28×28 regardless of how the
+        # parent geometry manager allocates the cell.  ``place(rely=0.5,
+        # anchor="w")`` centres the disc vertically without stretching.
+        self._icon.place(x=ICON_LEFT, rely=0.5, anchor="w")
+
+        self._lbl = ctk.CTkLabel(
+            self,
+            text=label.upper(),
+            text_color=p.FG_LABEL,
+            font=("Segoe UI", 9, "bold"),
+            anchor="w",
+        )
+        self._lbl.grid(row=0, column=1, sticky="ew", padx=(0, 12), pady=(12, 0))
+
+        # Value font 16 (was 18) — together with the smaller icon this
+        # makes the KPI row land roughly 10% shorter overall.
+        self._val = ctk.CTkLabel(
+            self,
+            text=value,
+            text_color=p.FG,
+            font=("Segoe UI", 16, "bold"),
+            anchor="w",
+        )
+        self._val.grid(row=1, column=1, sticky="ew", padx=(0, 12), pady=(2, 12))
+
+        # Sub-text row was removed in the 2026-06-20 redesign pass: two
+        # of the four tiles never had sub-content and the asymmetry made
+        # the dashboard read as ragged.  The ``_sub`` attribute is kept
+        # as ``None`` so any leftover ``set_value(sub_text=...)`` call
+        # site no-ops gracefully instead of raising.
+        self._sub = None
+
+    def set_value(
+        self,
+        value: str,
+        *,
+        sub_text: Optional[str] = None,   # accepted for back-compat
+        sub_color: Optional[str] = None,  # accepted for back-compat
+    ) -> None:
+        self._val.configure(text=value)
+        # sub_text / sub_color intentionally ignored — see ``__init__``.
+
+
+# ── StatusPill — rounded pill with dot + text ───────────────────────
+
+
+class StatusPill(ctk.CTkFrame):
+    """Rounded pill: coloured dot + label, e.g. ``● Running``.
+
+    ``state`` accepts the same colour aliases as ``tint``: ``success`` /
+    ``danger`` / ``warn`` / ``info`` / ``neutral``.
+    """
+
+    _DOT_COLOR = {
+        "success": "GREEN",
+        "danger":  "RED",
+        "warn":    "YELLOW",
+        "info":    "ACCENT",
+        "neutral": "FG_DIM",
+    }
+
+    def __init__(
+        self,
+        master: Any,
+        *,
+        text: str = "",
+        state: str = "success",
+        **kw: Any,
+    ) -> None:
+        bg, _fg = _normalise_tint(state)
+        super().__init__(
+            master,
+            fg_color=bg,
+            corner_radius=p.RADIUS_PILL,
+            border_width=0,
+            **kw,
+        )
+        # Pill geometry: 6 vertical / 12 horizontal padding — smaller
+        # than the previous 8/14 since the larger version read as a
+        # button.  Dot 10pt, label 10pt bold so the pill stays in the
+        # supporting-element scale.
+        self._dot = ctk.CTkLabel(
+            self,
+            text="●",
+            text_color=getattr(p, self._DOT_COLOR.get(state, "GREEN")),
+            font=("Segoe UI", 10, "bold"),
+        )
+        self._dot.pack(side="left", padx=(12, 5), pady=6)
+        self._lbl = ctk.CTkLabel(
+            self,
+            text=text,
+            text_color=getattr(p, self._DOT_COLOR.get(state, "GREEN")),
+            font=("Segoe UI", 10, "bold"),
+        )
+        self._lbl.pack(side="left", padx=(0, 12), pady=6)
+
+    def set(self, text: str, *, state: Optional[str] = None) -> None:
+        self._lbl.configure(text=text)
+        if state is not None:
+            bg, _ = _normalise_tint(state)
+            colour = getattr(p, self._DOT_COLOR.get(state, "GREEN"))
+            self.configure(fg_color=bg)
+            self._dot.configure(text_color=colour)
+            self._lbl.configure(text_color=colour)
+
+
+# ── Chip — coloured rounded badge (BUY / SELL / symbol) ─────────────
+
+
+class Chip(ctk.CTkLabel):
+    """Coloured rounded badge with no icon. Used for BUY/SELL chips,
+    symbol-pairs, status markers in the trade log."""
+
+    def __init__(
+        self,
+        master: Any,
+        *,
+        text: str = "",
+        tint: str = "blue",
+        bold: bool = True,
+        **kw: Any,
+    ) -> None:
+        bg, fg = _normalise_tint(tint)
+        super().__init__(
+            master,
+            text=text,
+            fg_color=bg,
+            text_color=fg,
+            corner_radius=p.RADIUS_PILL,
+            # 9pt is the standard chip size — bigger reads as a button.
+            # 3px vertical pad still gives the chip a pill shape but keeps
+            # it visually small next to 18pt headings (so it sits as a
+            # tag, not as a sibling element).
+            font=("Segoe UI", 9, "bold" if bold else "normal"),
+            padx=10,
+            pady=3,
+            **kw,
+        )
+
+
+# ── IconButton — square icon-only button ────────────────────────────
+
+
+class IconButton(ctk.CTkButton):
+    """Square icon-only button. Variants:
+
+      * ``ghost``    — transparent bg, neutral icon, used in row actions.
+      * ``primary``  — accent-blue filled, white icon.
+      * ``success``  — green filled.
+      * ``danger``   — red filled.
+      * ``warn``     — amber filled.
+      * ``soft``     — tinted bg matching the icon meaning (subtle).
+    """
+
+    _VARIANTS = {
+        "ghost":   ("transparent", "FG_LABEL",  "BG_ROW_HOVER"),
+        "primary": ("ACCENT",      "ACCENT_FG", "ACCENT_H"),
+        "success": ("GREEN",       "ACCENT_FG", "GREEN_DIM"),
+        "danger":  ("RED",         "ACCENT_FG", "RED_DIM"),
+        "warn":    ("YELLOW",      "ACCENT_FG", "YELLOW_DIM"),
+    }
+
+    def __init__(
+        self,
+        master: Any,
+        *,
+        icon: Optional[Any] = None,
+        text: str = "",
+        variant: str = "ghost",
+        size: int = 32,
+        command: Optional[Callable[[], None]] = None,
+        **kw: Any,
+    ) -> None:
+        bg_tok, fg_tok, hover_tok = self._VARIANTS.get(variant, self._VARIANTS["ghost"])
+        bg = bg_tok if bg_tok == "transparent" else getattr(p, bg_tok)
+        fg = getattr(p, fg_tok)
+        hover = getattr(p, hover_tok) if hover_tok != "transparent" else None
+        super().__init__(
+            master,
+            width=size,
+            height=size,
+            text=text,
+            image=icon,
+            fg_color=bg,
+            hover_color=hover or bg,
+            text_color=fg,
+            corner_radius=p.RADIUS_MD,
+            border_width=0,
+            command=command,
+            **kw,
+        )
+
+
+# ── SectionHeader — section title + optional counter ────────────────
+
+
+class SectionHeader(ctk.CTkFrame):
+    """One-line header row: ``TITLE  2/10  …actions…``.
+
+    Use ``add_action(widget)`` to append a button to the right side.
+    """
+
+    def __init__(
+        self,
+        master: Any,
+        *,
+        title: str = "",
+        counter: Optional[str] = None,
+        **kw: Any,
+    ) -> None:
+        super().__init__(
+            master,
+            fg_color=kw.pop("fg_color", "transparent"),
+            **kw,
+        )
+        self.columnconfigure(2, weight=1)
+
+        # Section title reads as a heading: 12pt bold uppercase, neutral
+        # FG colour.  Counter pill sits 12px after the title and uses the
+        # accent colour so it can be parsed as metadata, not text body.
+        self._title = ctk.CTkLabel(
+            self,
+            text=title.upper(),
+            text_color=p.FG,
+            font=("Segoe UI", 12, "bold"),
+        )
+        self._title.grid(row=0, column=0, padx=(0, 12), sticky="w")
+
+        self._counter = ctk.CTkLabel(
+            self,
+            text=counter or "",
+            text_color=p.ACCENT,
+            font=("Segoe UI", 11, "bold"),
+        )
+        self._counter.grid(row=0, column=1, sticky="w")
+
+        # Right-side actions live in a sub-frame for easy ``pack``.
+        self._actions = ctk.CTkFrame(self, fg_color="transparent")
+        self._actions.grid(row=0, column=3, sticky="e")
+
+    def set_counter(self, text: str) -> None:
+        self._counter.configure(text=text)
+
+    def add_action(self, widget: Any, *, padx: Tuple[int, int] = (6, 0)) -> None:
+        widget.pack(in_=self._actions, side="left", padx=padx)
+
+
+# ── RiskBar — slim progress bar + numeric label ─────────────────────
+
+
+class RiskBar(ctk.CTkFrame):
+    """Slim progress bar with a numeric label (e.g. ``1.0%``).
+
+    ``value`` is in ``[0, 1]``. Colour shifts from accent → warn → danger
+    as the value crosses ``warn_at`` / ``danger_at`` thresholds.
+    """
+
+    def __init__(
+        self,
+        master: Any,
+        *,
+        value: float = 0.0,
+        label: Optional[str] = None,
+        width: int = 110,
+        warn_at: float = 0.6,
+        danger_at: float = 0.85,
+        **kw: Any,
+    ) -> None:
+        super().__init__(master, fg_color="transparent", **kw)
+        self._warn_at = warn_at
+        self._danger_at = danger_at
+
+        self._label = ctk.CTkLabel(
+            self,
+            text=label if label is not None else f"{value * 100:.1f}%",
+            text_color=p.FG,
+            font=("Segoe UI", 9, "bold"),
+            anchor="e",
+        )
+        self._label.pack(side="top", anchor="e", pady=(0, 2))
+
+        self._bar = ctk.CTkProgressBar(
+            self,
+            width=width,
+            height=6,
+            corner_radius=p.RADIUS_PILL,
+            fg_color=p.BORDER,
+            progress_color=p.ACCENT,
+        )
+        self._bar.set(max(0.0, min(1.0, value)))
+        self._bar.pack(side="top", fill="x")
+        self.set(value, label=label)
+
+    def _colour_for(self, value: float) -> str:
+        if value >= self._danger_at:
+            return p.RED
+        if value >= self._warn_at:
+            return p.YELLOW
+        return p.ACCENT
+
+    def set(self, value: float, *, label: Optional[str] = None) -> None:
+        # Re-show the bar in case it was hidden by ``set_disabled``.
+        if not self._bar.winfo_ismapped():
+            self._bar.pack(side="top", fill="x")
+            self._label.pack_configure(anchor="e", pady=(0, 2))
+        v = max(0.0, min(1.0, value))
+        self._bar.set(v)
+        self._bar.configure(progress_color=self._colour_for(v))
+        self._label.configure(
+            text=label if label is not None else f"{v * 100:.1f}%"
+        )
+
+    def set_disabled(self, label: str = "—") -> None:
+        """Hide the progress bar entirely and show only a centred label.
+
+        Used when a slave account has no ``daily_loss_limit`` configured
+        — the bar would just sit at 0% with no semantic, so we drop it.
+        """
+        try:
+            self._bar.pack_forget()
+        except Exception:
+            pass
+        # Re-anchor label to the centre so the row column doesn't look
+        # off-balance with a right-aligned dash above an empty space.
+        self._label.pack_configure(anchor="center", pady=0)
+        self._label.configure(text=label, anchor="center")
+
+
+# ── Toggle ── iOS-style switch built from CTkFrames (no Canvas seams) ──
+
+
+class Toggle(ctk.CTkFrame):
+    """iOS-style toggle implemented with two ``CTkFrame``s.
+
+    Why not ``tk.Canvas`` (the previous implementation)?  On Windows
+    Tcl's Canvas renders ``create_oval`` + ``create_rectangle`` with
+    integer-pixel rasterisation; at non-integer joint coordinates the
+    pill ends up with visible seams between the end-caps and the
+    middle bar.  ``CTkFrame`` with ``corner_radius=height/2`` draws a
+    real smooth pill via CTk's drawing engine and looks identical to
+    the SaaS reference.
+
+    Public API matches the previous Toggle (and the CTkSwitch it
+    replaced enough for AccountRow's needs):
+
+      * ``variable=tk.BooleanVar`` (required)
+      * ``command=callable`` (optional)
+      * ``set_disabled(bool)`` to lock interaction
+    """
+
+    # ── knob image cache ─────────────────────────────────
+    #
+    # Maps knob diameter (px) → CTkImage of a clean anti-aliased white
+    # disc.  Shared across all Toggle instances so dozens of slave-row
+    # toggles don't each rasterise their own copy.
+
+    @classmethod
+    def _knob_image(cls, diameter: int):
+        cache = getattr(cls, "_knob_img_cache", None)
+        if cache is None:
+            cache = {}
+            cls._knob_img_cache = cache
+        if diameter in cache:
+            return cache[diameter]
+        try:
+            from PIL import Image, ImageDraw
+            ss = 4  # 4× supersample for anti-aliased downsample
+            big = Image.new("RGBA", (diameter * ss, diameter * ss), (0, 0, 0, 0))
+            ImageDraw.Draw(big).ellipse(
+                [0, 0, diameter * ss - 1, diameter * ss - 1],
+                fill=(255, 255, 255, 255),
+            )
+            small = big.resize((diameter, diameter), Image.LANCZOS)
+            cache[diameter] = ctk.CTkImage(
+                light_image=small, dark_image=small,
+                size=(diameter, diameter),
+            )
+        except Exception:
+            cache[diameter] = None
+        return cache[diameter]
+
+    def __init__(
+        self,
+        master: Any,
+        *,
+        variable: Optional[tk.BooleanVar] = None,
+        command: Optional[Any] = None,
+        width: int = 36,
+        height: int = 20,
+        knob_pad: int = 3,
+        bg_color: Optional[str] = None,
+        **kw: Any,
+    ) -> None:
+        super().__init__(
+            master,
+            width=width,
+            height=height,
+            corner_radius=height // 2,
+            fg_color=p.FG_DIM,
+            border_width=0,
+            bg_color=bg_color if bg_color is not None else "transparent",
+            **kw,
+        )
+        # Lock the track size — without this the inner CTkFrame would
+        # let the knob's place() expand the track height.
+        self.grid_propagate(False)
+        self.pack_propagate(False)
+
+        self._var = variable if variable is not None else tk.BooleanVar(value=False)
+        self._command = command
+        self._cw = width
+        self._ch = height
+        self._pad = knob_pad
+        self._track_on = p.GREEN
+        self._track_off = p.FG_DIM
+        self._disabled = False
+
+        knob_d = height - 2 * knob_pad
+        # PIL-rendered white circle as the knob.  Earlier attempts used a
+        # ``tk.Canvas`` ``create_oval`` and a ``CTkFrame`` with
+        # ``corner_radius=knob_d/2``; both rasterised poorly at very
+        # small sizes (knob_d ≤ 10) and the knob read as a squarish
+        # blob or vertical pill instead of a circle.  Drawing the
+        # ellipse with PIL at 4× supersample and downsizing via
+        # Lanczos gives a fully anti-aliased disc that's pixel-perfect
+        # at any size.  The image is cached per-diameter on the class.
+        knob_img = Toggle._knob_image(knob_d)
+        if knob_img is not None:
+            # CTkLabel with a transparent ``fg_color`` lets the track's
+            # colour show around the white disc; the label only paints
+            # the cached image, no additional draw box to clip the disc.
+            # Width/height are set on the constructor (CTk forbids them
+            # on ``.place(...)``).
+            self._knob = ctk.CTkLabel(
+                self,
+                text="",
+                image=knob_img,
+                fg_color="transparent",
+                width=knob_d,
+                height=knob_d,
+            )
+        else:
+            # Fallback for environments without PIL: keep the canvas
+            # oval path — slightly less smooth at small sizes but
+            # functional.
+            self._knob = tk.Canvas(
+                self,
+                width=knob_d,
+                height=knob_d,
+                bg=self._track_off,
+                highlightthickness=0,
+                borderwidth=0,
+            )
+            self._knob.create_oval(
+                0, 0, knob_d, knob_d,
+                fill="#FFFFFF",
+                outline="",
+            )
+        self._knob.place(x=knob_pad, y=knob_pad)
+
+        # Bind clicks on BOTH the track and the knob so the entire
+        # widget surface toggles regardless of which child the cursor
+        # happens to hit.
+        for w in (self, self._knob):
+            w.bind("<Button-1>", self._on_click)
+
+        try:
+            self._trace = self._var.trace_add("write", lambda *_a: self._update())
+        except Exception:
+            self._trace = None
+        # Defer first paint so place() applies after the track is mapped.
+        self.after_idle(self._update)
+
+    # ── state ──────────────────────────────────────────────────────
+
+    def set_disabled(self, disabled: bool = True) -> None:
+        self._disabled = bool(disabled)
+
+    def select(self) -> None:
+        self._var.set(True)
+
+    def deselect(self) -> None:
+        self._var.set(False)
+
+    # ── internals ──────────────────────────────────────────────────
+
+    def _on_click(self, _event: Any = None) -> None:
+        if self._disabled:
+            return
+        self._var.set(not self._var.get())
+        if self._command:
+            try:
+                self._command()
+            except Exception:
+                pass
+
+    def _update(self) -> None:
+        try:
+            on = bool(self._var.get())
+            track = self._track_on if on else self._track_off
+            self.configure(fg_color=track)
+            # Canvas knob needs the bg colour synced to blend the four
+            # square corners of the canvas into the surrounding pill
+            # track.  CTkLabel knob (PIL-image path) has fg_color
+            # "transparent" so the track colour already shows around
+            # the disc — nothing to update.
+            if isinstance(self._knob, tk.Canvas):
+                try:
+                    self._knob.configure(bg=track)
+                except tk.TclError:
+                    pass
+            knob_d = self._ch - 2 * self._pad
+            kx = (self._cw - knob_d - self._pad) if on else self._pad
+            self._knob.place(x=kx, y=self._pad)
+        except tk.TclError:
+            pass
+
+
+__all__ = [
+    "Card",
+    "IconCircle",
+    "KPICard",
+    "StatusPill",
+    "Chip",
+    "IconButton",
+    "SectionHeader",
+    "RiskBar",
+    "Toggle",
+]
