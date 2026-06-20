@@ -920,7 +920,7 @@ class AccountRow:
             width=32, height=18, knob_pad=3,
             bg_color=bg,
         )
-        self.sw_enabled.grid(row=r, column=0, padx=(16, 8), pady=8,
+        self.sw_enabled.grid(row=r, column=0, padx=(16, 8), pady=4,
                              sticky="w")
         _bind_tip(self.sw_enabled, "Включить / выключить аккаунт")
         self._widgets.append(self.sw_enabled)
@@ -932,7 +932,7 @@ class AccountRow:
         self._dot = _widgets.IconCircle(
             self._parent, size=10, tint=p.FG_DIM,
         )
-        self._dot.grid(row=r, column=1, padx=(0, 8), pady=8, sticky="")
+        self._dot.grid(row=r, column=1, padx=(0, 8), pady=4, sticky="")
         self._widgets.append(self._dot)
 
         # ── col 2 — name ────────────────────────────────
@@ -940,7 +940,7 @@ class AccountRow:
             self._parent, text=d.get("name", "\u2014"),
             bg=bg, fg=p.FG, font=("Segoe UI", 9, "bold"), anchor="w",
         )
-        self.lbl_name.grid(row=r, column=2, padx=8, pady=8, sticky="ew")
+        self.lbl_name.grid(row=r, column=2, padx=8, pady=4, sticky="ew")
         self._widgets.append(self.lbl_name)
 
         # ── col 3 — login (mono) ────────────────────────
@@ -948,7 +948,7 @@ class AccountRow:
             self._parent, text="", bg=bg, fg=p.FG_DIM,
             font=("Segoe UI", 9), anchor="w",
         )
-        self.lbl_login.grid(row=r, column=3, padx=8, pady=8, sticky="ew")
+        self.lbl_login.grid(row=r, column=3, padx=8, pady=4, sticky="ew")
         self._widgets.append(self.lbl_login)
 
         # ── col 4 — balance ─────────────────────────────
@@ -956,7 +956,7 @@ class AccountRow:
             self._parent, text="", bg=bg, fg=p.FG,
             font=("Segoe UI", 9, "bold"), anchor="e",
         )
-        self.lbl_balance.grid(row=r, column=4, padx=8, pady=8, sticky="ew")
+        self.lbl_balance.grid(row=r, column=4, padx=8, pady=4, sticky="ew")
         self._widgets.append(self.lbl_balance)
 
         # ── col 5 — equity ──────────────────────────────
@@ -964,7 +964,7 @@ class AccountRow:
             self._parent, text="", bg=bg, fg=p.FG_LABEL,
             font=("Segoe UI", 9), anchor="e",
         )
-        self.lbl_equity.grid(row=r, column=5, padx=8, pady=8, sticky="ew")
+        self.lbl_equity.grid(row=r, column=5, padx=8, pady=4, sticky="ew")
         self._widgets.append(self.lbl_equity)
 
         # ── col 6 — P&L ─────────────────────────────────
@@ -972,12 +972,12 @@ class AccountRow:
             self._parent, text="", bg=bg, fg=p.FG_DIM,
             font=("Segoe UI", 9, "bold"), anchor="e",
         )
-        self.lbl_pnl.grid(row=r, column=6, padx=8, pady=8, sticky="ew")
+        self.lbl_pnl.grid(row=r, column=6, padx=8, pady=4, sticky="ew")
         self._widgets.append(self.lbl_pnl)
 
         # ── col 7 — symbol chips (overflow becomes "+N") ─
         self._sym_frame = ctk.CTkFrame(self._parent, fg_color="transparent")
-        self._sym_frame.grid(row=r, column=7, padx=8, pady=8, sticky="w")
+        self._sym_frame.grid(row=r, column=7, padx=8, pady=4, sticky="w")
         self._build_symbol_chips(d.get("symbol_map", {}))
         self._widgets.append(self._sym_frame)
 
@@ -989,7 +989,7 @@ class AccountRow:
             self._parent, text=risk_text, bg=bg, fg=p.TINT_ORANGE_FG,
             font=("Segoe UI", 9, "bold"), anchor="e",
         )
-        self.lbl_risk.grid(row=r, column=8, padx=8, pady=8, sticky="ew")
+        self.lbl_risk.grid(row=r, column=8, padx=8, pady=4, sticky="ew")
         self._widgets.append(self.lbl_risk)
 
         # ── col 9 — trades per day ──────────────────────
@@ -999,7 +999,7 @@ class AccountRow:
             bg=bg, fg=p.FG_DIM, font=("Segoe UI", 9),
             anchor="center",
         )
-        self.lbl_trades_day.grid(row=r, column=9, padx=8, pady=8, sticky="ew")
+        self.lbl_trades_day.grid(row=r, column=9, padx=8, pady=4, sticky="ew")
         self._widgets.append(self.lbl_trades_day)
 
         # ── col 10 — daily-loss RiskBar ─────────────────
@@ -1014,12 +1014,12 @@ class AccountRow:
         # no information.
         if not dll:
             self._risk_bar.set_disabled("\u2014")
-        self._risk_bar.grid(row=r, column=10, padx=8, pady=8, sticky="ew")
+        self._risk_bar.grid(row=r, column=10, padx=8, pady=4, sticky="ew")
         self._widgets.append(self._risk_bar)
 
         # ── col 11 — action buttons ─────────────────────
         bf = ctk.CTkFrame(self._parent, fg_color="transparent")
-        bf.grid(row=r, column=11, padx=(8, 16), pady=8, sticky="e")
+        bf.grid(row=r, column=11, padx=(8, 16), pady=4, sticky="e")
         self._build_actions(bf)
         self._widgets.append(bf)
 
@@ -2475,7 +2475,11 @@ class App(ctk.CTk):
         ``set(text, state=...)``.  ``lbl_stats`` is the running
         ✅/❌ counter that ``_on_trade`` updates.
         """
-        bar = ctk.CTkFrame(self, fg_color=p.BG_DEEP, height=SPACE_32)
+        # Bar grows naturally to fit its labels (no fixed ``height=``).
+        # The previous SPACE_32 (28 px) cap clipped the version label
+        # at the tightened 2026-06-20 scale because label font ascent +
+        # SPACE_8 top/bottom pady exceeded the bar box.
+        bar = ctk.CTkFrame(self, fg_color=p.BG_DEEP)
         bar.pack(fill="x", padx=SPACE_24, pady=(0, SPACE_8))
 
         # Off-screen stub so legacy `.set(...)` calls don't NPE.
@@ -2483,18 +2487,23 @@ class App(ctk.CTk):
             self, text="", state="success",
         )  # NOT packed — invisible.
 
+        # IMPORTANT: pack the version tag FIRST (side="right") so the
+        # right edge reserves its space before lbl_stats claims the rest.
+        # Otherwise a long stats string at narrow window widths can
+        # push the version label off the right edge of the bar
+        # (tk's pack allocates space in declaration order — last in
+        # gets only whatever's left over).
+        if _UPD_OK:
+            Label(
+                bar, text=f"v{upd_mod.VERSION}",
+                bg=p.BG_DEEP, fg=p.FG_DIM, font=f.SM,
+            ).pack(side="right", padx=(0, SPACE_8), pady=4)
+
         # Running session stats (▶/⏹ counters).  Subtle on left.
         self.lbl_stats = Label(
             bar, text="", bg=p.BG_DEEP, fg=p.FG_DIM, font=f.SM,
         )
-        self.lbl_stats.pack(side="left", padx=(SPACE_8, 0), pady=SPACE_8)
-
-        if _UPD_OK:
-            # Version tag on the right — muted, matches reference.
-            Label(
-                bar, text=f"v{upd_mod.VERSION}",
-                bg=p.BG_DEEP, fg=p.FG_DIM, font=f.SM,
-            ).pack(side="right", padx=(0, SPACE_8), pady=SPACE_8)
+        self.lbl_stats.pack(side="left", padx=(SPACE_8, 0), pady=4)
 
     # ── Info toggle ─────────────────────────────────────────
 

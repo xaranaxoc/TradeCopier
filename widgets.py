@@ -165,17 +165,24 @@ class KPICard(Card):
         super().__init__(master, **kw)
 
         self.columnconfigure(1, weight=1)
-        # Two-row layout (label + value).  Both rows share the inner card
-        # space evenly so every KPI tile ends up the same height regardless
-        # of value length, and the bottom whitespace below the value is
-        # identical across all four tiles in the dashboard.
-        self.rowconfigure(0, weight=1)
-        self.rowconfigure(1, weight=1)
+        # Two-row natural layout: label row + value row, no extra row
+        # weights.  Letting the rows size to their content keeps the
+        # IconCircle's grid cell at the icon's natural 28px height
+        # instead of stretching it to fill the (taller) card box —
+        # otherwise the rowspan=2 + weight=1 combo would force the
+        # icon's tinted frame to grow vertically and clip against the
+        # card's top/bottom borders.  All four KPI tiles share the same
+        # label/value content structure, so their natural heights match
+        # automatically without needing row weights.
 
         # IconCircle 28px (was 32) and inner padding 12/10/12 trims ~10%
         # off the tile footprint without touching label/value typography.
         self._icon = IconCircle(self, size=28, tint=tint, icon=icon, glyph=glyph)
-        self._icon.grid(row=0, column=0, rowspan=2, padx=(12, 10), pady=12, sticky="")
+        # ``sticky="n"`` anchors the icon to the top of its rowspan cell
+        # so it lines up with the LABEL baseline (which sits at the top
+        # of row 0).  Vertical pady=12 gives equal breathing room top
+        # and bottom inside the card.
+        self._icon.grid(row=0, column=0, rowspan=2, padx=(12, 10), pady=12, sticky="n")
 
         self._lbl = ctk.CTkLabel(
             self,
@@ -187,7 +194,7 @@ class KPICard(Card):
         # ``sticky="sew"`` pins the label to the bottom of its row so the
         # label/value pair reads as a tight unit instead of floating apart
         # when row weights expand the cells.
-        self._lbl.grid(row=0, column=1, sticky="sew", padx=(0, 12), pady=(12, 0))
+        self._lbl.grid(row=0, column=1, sticky="ew", padx=(0, 12), pady=(12, 0))
 
         # Value font 16 (was 18) — together with the smaller icon this
         # makes the KPI row land roughly 10% shorter overall.
@@ -198,7 +205,7 @@ class KPICard(Card):
             font=("Segoe UI", 16, "bold"),
             anchor="w",
         )
-        self._val.grid(row=1, column=1, sticky="new", padx=(0, 12), pady=(2, 12))
+        self._val.grid(row=1, column=1, sticky="ew", padx=(0, 12), pady=(2, 12))
 
         # Sub-text row was removed in the 2026-06-20 redesign pass: two
         # of the four tiles never had sub-content and the asymmetry made
