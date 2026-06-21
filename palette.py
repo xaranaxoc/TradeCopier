@@ -273,11 +273,14 @@ class Theme:
     palette: Palette
     fonts: Fonts
     appearance: str = "dark"  # "dark" or "light" — drives ctk.set_appearance_mode
+    hidden: bool = False  # if True, skipped by available_themes()/UI pickers
 
 
 THEMES: Dict[str, Theme] = {
     "neon_cyan": Theme(palette=NEON_CYAN, fonts=DEFAULT_FONTS, appearance="dark"),
-    "light_pro": Theme(palette=LIGHT_PRO, fonts=DEFAULT_FONTS, appearance="light"),
+    # light_pro is kept registered so saved configs that still point at it
+    # resolve correctly, but hidden=True keeps it out of the UI picker.
+    "light_pro": Theme(palette=LIGHT_PRO, fonts=DEFAULT_FONTS, appearance="light", hidden=True),
     "light_soft": Theme(palette=LIGHT_SOFT, fonts=DEFAULT_FONTS, appearance="light"),
 }
 
@@ -357,9 +360,18 @@ def get_theme_appearance() -> str:
     return THEMES[_current_theme_name].appearance
 
 
-def available_themes() -> List[str]:
-    """Return a sorted list of registered theme names (builtins + custom)."""
-    return sorted(THEMES.keys())
+def available_themes(*, include_hidden: bool = False) -> List[str]:
+    """Return a sorted list of registered theme names (builtins + custom).
+
+    Hidden themes (``Theme.hidden=True``, e.g. deprecated ones kept only
+    for backwards compatibility with saved configs) are skipped unless
+    ``include_hidden=True``.  The UI theme picker uses the default
+    filtered list; theme-resolution code that needs ALL themes should
+    pass ``include_hidden=True``.
+    """
+    if include_hidden:
+        return sorted(THEMES.keys())
+    return sorted(n for n, th in THEMES.items() if not th.hidden)
 
 
 def is_builtin_theme(name: str) -> bool:
@@ -412,17 +424,23 @@ def register_theme(
     fonts: Optional[Fonts] = None,
     label: Optional[str] = None,
     appearance: str = "dark",
+    hidden: bool = False,
 ) -> None:
     """Register or override a theme by name.
 
     Built-ins cannot be overwritten — pass a different *name*.
+    ``hidden=True`` keeps the theme registered (so saved configs still
+    resolve) but hides it from the UI picker via ``available_themes()``.
     Notifies listeners so any open theme picker can refresh.
     """
     if name in _BUILTIN_THEMES and name in THEMES:
         raise ValueError(f"'{name}' is a built-in theme and cannot be overridden")
     if appearance not in ("dark", "light"):
         raise ValueError("appearance must be 'dark' or 'light'")
-    THEMES[name] = Theme(palette=palette, fonts=fonts or DEFAULT_FONTS, appearance=appearance)
+    THEMES[name] = Theme(
+        palette=palette, fonts=fonts or DEFAULT_FONTS,
+        appearance=appearance, hidden=hidden,
+    )
     if label is not None:
         THEME_LABELS[name] = label
     elif name not in THEME_LABELS:

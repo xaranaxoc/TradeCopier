@@ -338,12 +338,19 @@ COL_SPEC = [
 # ── SymbolPickerDialog ──────────────────────────────────────
 
 class SymbolPickerDialog(Toplevel):
+    """Light-Soft styled symbol picker: search input + listbox + actions card.
+
+    Visual chrome rewritten in 2026-06 to match the main window's card-based
+    look. Behaviour (search filter, double-click pick, return-pick, .selected
+    attribute) is unchanged so call sites keep working.
+    """
+
     def __init__(self, parent, symbols: List[str], title_text: str = "Выбор символа"):
         super().__init__(parent)
         self.selected: Optional[str] = None
         self._all_symbols = symbols
         self.title(title_text)
-        self.configure(fg_color=p.BG)
+        self.configure(fg_color=p.BG_DEEP)
         self.resizable(False, False)
         icon = ICON_CYAN if (hasattr(parent, '_parent_app') and
             getattr(parent._parent_app, '_trader', None) and
@@ -361,56 +368,74 @@ class SymbolPickerDialog(Toplevel):
         self.update_idletasks()
         pw, py = parent.winfo_rootx(), parent.winfo_rooty()
         pw2, py2 = parent.winfo_width(), parent.winfo_height()
-        w = ui_scaling.scale(300)
-        h = ui_scaling.scale(380)
+        w = ui_scaling.scale(320)
+        h = ui_scaling.scale(420)
         x = pw + (pw2 - w) // 2
         y = py + (py2 - h) // 2
-        # Clamp into the work area of the parent's monitor so the dialog never
-        # opens off-screen on multi-monitor setups or tiny laptops.
         wa = ui_scaling.get_work_area_for_window(parent)
         x, y, w, h = ui_scaling.clamp_to_work_area(x, y, w, h, wa)
         self.geometry(f"{w}x{h}+{x}+{y}")
 
     def _build(self):
-        frm = Frame(self, bg=p.BG)
-        frm.pack(fill="x", padx=10, pady=8)
+        # Single Card host — mirrors the main window's section cards.
+        card = _widgets.Card(self, padding=0)
+        card.pack(fill="both", expand=True, padx=SPACE_16, pady=SPACE_16)
+
+        # Search row.
         self.var_search = tk.StringVar()
         self.var_search.trace_add("write", lambda *_: self._filter())
-        ent = Entry(frm, textvariable=self.var_search, width=28,
-                    bg=p.BG_INPUT, fg=p.FG, font=f.DEFAULT,
-                    highlightthickness=1,
-                    highlightbackground=p.BORDER, highlightcolor=p.ACCENT)
-        ent.pack(fill="x")
+        ent = ctk.CTkEntry(
+            card, textvariable=self.var_search,
+            placeholder_text="Поиск…",
+            fg_color=p.BG_ROW, border_color=p.BORDER, border_width=1,
+            text_color=p.FG, placeholder_text_color=p.FG_DIM,
+            corner_radius=p.RADIUS_MD, height=BTN_HEIGHT,
+            font=("Segoe UI", 10),
+        )
+        ent.pack(fill="x", padx=SPACE_16, pady=(SPACE_16, SPACE_8))
         ent.focus_set()
 
-        frm_list = Frame(self, bg=p.BG)
-        frm_list.pack(fill="both", expand=True, padx=10, pady=(0, 4))
-        # tk.Listbox stays — CTk has no equivalent.
-        self.listbox = tk.Listbox(frm_list, bg=p.BG_ROW, fg=p.FG, font=f.DEFAULT,
-                                   selectbackground=p.ACCENT, selectforeground=p.ACCENT_FG,
-                                   relief="flat", highlightthickness=0, activestyle="none",
-                                   borderwidth=0)
-        sb = ttk.Scrollbar(frm_list, orient="vertical", command=self.listbox.yview)
+        # Listbox lives in a thin bordered frame so it picks up the soft
+        # card aesthetic.  tk.Listbox itself can't be replaced (CTk has no
+        # equivalent) but its container is styled to match.
+        list_wrap = ctk.CTkFrame(
+            card, fg_color=p.BG_ROW, corner_radius=p.RADIUS_MD,
+            border_width=1, border_color=p.BORDER,
+        )
+        list_wrap.pack(fill="both", expand=True, padx=SPACE_16, pady=(0, SPACE_8))
+        self.listbox = tk.Listbox(
+            list_wrap, bg=p.BG_ROW, fg=p.FG, font=("Segoe UI", 10),
+            selectbackground=p.ACCENT, selectforeground=p.ACCENT_FG,
+            relief="flat", highlightthickness=0, activestyle="none",
+            borderwidth=0,
+        )
+        sb = ttk.Scrollbar(list_wrap, orient="vertical", command=self.listbox.yview)
         self.listbox.configure(yscrollcommand=sb.set)
-        sb.pack(side="right", fill="y")
-        self.listbox.pack(side="left", fill="both", expand=True)
+        sb.pack(side="right", fill="y", padx=(0, 4), pady=4)
+        self.listbox.pack(side="left", fill="both", expand=True, padx=(6, 0), pady=4)
         self.listbox.bind("<Double-1>", lambda e: self._pick())
         self.listbox.bind("<Return>", lambda e: self._pick())
         for s in self._all_symbols:
             self.listbox.insert("end", s)
 
-        btn_frame = Frame(self, bg=p.BG)
-        btn_frame.pack(fill="x", padx=10, pady=(0, 8))
-        self._btn(btn_frame, "Выбрать", self._pick, accent=True).pack(side="left", padx=(0, 6))
-        self._btn(btn_frame, "Отмена", self.destroy).pack(side="left")
-
-    def _btn(self, parent, text, cmd, accent=False):
-        bg = p.ACCENT if accent else p.BG_INPUT
-        fg = p.ACCENT_FG if accent else p.FG_DIM
-        abg = p.ACCENT_H if accent else p.BG_ROW_HOVER
-        return Button(parent, text=text, command=cmd, bg=bg, fg=fg,
-                      font=f.BOLD if accent else f.DEFAULT,
-                      activebackground=abg, padx=12, pady=2)
+        # Action row — primary "Choose" + ghost "Cancel".
+        actions = ctk.CTkFrame(card, fg_color="transparent")
+        actions.pack(fill="x", padx=SPACE_16, pady=(0, SPACE_16))
+        btn_pick = ctk.CTkButton(
+            actions, text="Выбрать", command=self._pick,
+            fg_color=p.ACCENT, hover_color=p.ACCENT_H,
+            text_color=p.ACCENT_FG, corner_radius=p.RADIUS_MD,
+            height=BTN_HEIGHT, font=("Segoe UI", 10, "bold"),
+        )
+        btn_pick.pack(side="left", padx=(0, SPACE_8))
+        btn_cancel = ctk.CTkButton(
+            actions, text="Отмена", command=self.destroy,
+            fg_color="transparent", hover_color=p.BG_ROW_HOVER,
+            text_color=p.FG, border_color=p.BORDER, border_width=1,
+            corner_radius=p.RADIUS_MD, height=BTN_HEIGHT,
+            font=("Segoe UI", 10),
+        )
+        btn_cancel.pack(side="left")
 
     def _filter(self):
         query = self.var_search.get().strip().upper()
@@ -429,6 +454,16 @@ class SymbolPickerDialog(Toplevel):
 # ── SlaveDialog ─────────────────────────────────────────────
 
 class SlaveDialog(Toplevel):
+    """Light-Soft styled slave-account configuration dialog.
+
+    Visual chrome rewritten 2026-06 to match the main window's card-based
+    layout: a single rounded ``_widgets.Card`` host with three sections
+    (Account / Symbols / Risk) separated by light dividers.  All form
+    fields use the soft CTkEntry styling (rounded corners, BORDER border,
+    BG_ROW fill) and buttons use CTkButton with RADIUS_MD corners.
+    Behaviour, variable names, callbacks, and geometry are unchanged.
+    """
+
     def __init__(self, parent, slave_data: Optional[Dict] = None):
         super().__init__(parent)
         self.result: Optional[Dict] = None
@@ -440,19 +475,13 @@ class SlaveDialog(Toplevel):
         self._skip_suggest = True
         self._edit_id = (slave_data or {}).get("id", "")
         self.title("Настройки аккаунта")
-        # Horizontal-only resize. The form is sized vertically to its content
-        # so vertical growth would just create empty space below the buttons;
-        # horizontally the user may want extra width for long symbol pairs
-        # ("US500.cash → SPX500") or terminal paths. minsize is set below from
-        # the layout's requested size so the dialog can never be shrunk
-        # smaller than what fits its widgets.
+        # Horizontal-only resize. The form sizes vertically to content; horizontal
+        # growth gives extra room to symbol-pair inputs and terminal paths.
         self.resizable(True, False)
-        self.configure(fg_color=p.BG)
+        self.configure(fg_color=p.BG_DEEP)
         self.withdraw()
         icon = ICON_CYAN if getattr(parent, '_trader', None) and parent._trader.is_running() else ICON_DEFAULT
         if os.path.exists(icon):
-            # CTkToplevel sets its own icon late, overriding any earlier
-            # iconbitmap. Defer ours so it sticks.
             try:
                 self.after(250, lambda: self.iconbitmap(icon))
             except Exception:
@@ -469,13 +498,8 @@ class SlaveDialog(Toplevel):
         self.update_idletasks()
         pw, py = parent.winfo_rootx(), parent.winfo_rooty()
         pw2, py2 = parent.winfo_width(), parent.winfo_height()
-        # Dialog is .withdraw()'n at this point, so winfo_width/height return
-        # 1×1. Use the layout's *requested* size instead, otherwise we set the
-        # geometry to "1x1+x+y" and the dialog opens as a tiny strip.
         w = max(self.winfo_reqwidth(), self.winfo_width())
         h = max(self.winfo_reqheight(), self.winfo_height())
-        # Lock minimum size to the requested size so user-resize can grow but
-        # never shrink below what fits the form fields.
         try:
             self.minsize(w, h)
         except Exception:
@@ -486,130 +510,208 @@ class SlaveDialog(Toplevel):
         x, y, w, h = ui_scaling.clamp_to_work_area(x, y, w, h, wa)
         self.geometry(f"{w}x{h}+{x}+{y}")
 
-    def _lbl(self, parent, text, **kw):
-        return Label(parent, text=text, bg=p.BG, fg=p.FG_LABEL, font=f.SM, **kw)
+    # ── Soft styling helpers ─────────────────────────
+    def _section_title(self, parent, text):
+        return ctk.CTkLabel(
+            parent, text=text.upper(),
+            text_color=p.FG_LABEL, font=("Segoe UI", 9, "bold"),
+            anchor="w",
+        )
 
-    def _ent(self, parent, var=None, width=28, **kw):
-        return Entry(parent, textvariable=var, width=width,
-                     bg=p.BG_INPUT, fg=p.FG, font=f.DEFAULT,
-                     highlightthickness=1, highlightbackground=p.BORDER,
-                     highlightcolor=p.ACCENT, **kw)
+    def _field_label(self, parent, text):
+        return ctk.CTkLabel(
+            parent, text=text, text_color=p.FG_LABEL,
+            font=("Segoe UI", 9), anchor="w",
+        )
 
-    def _btn(self, parent, text, cmd, accent=False, small=False):
-        bg = p.ACCENT if accent else p.BG_INPUT
-        fg = p.ACCENT_FG if accent else p.FG_DIM
-        abg = p.ACCENT_H if accent else p.BG_ROW_HOVER
-        fnt = f.XS if small else (f.BOLD if accent else f.SM)
-        return Button(parent, text=text, command=cmd, bg=bg, fg=fg,
-                      font=fnt, activebackground=abg, padx=10, pady=2)
+    def _soft_entry(self, parent, var=None, width=None, **kw):
+        kw.setdefault("fg_color", p.BG_ROW)
+        kw.setdefault("border_color", p.BORDER)
+        kw.setdefault("border_width", 1)
+        kw.setdefault("text_color", p.FG)
+        kw.setdefault("corner_radius", p.RADIUS_MD)
+        kw.setdefault("height", BTN_HEIGHT)
+        kw.setdefault("font", ("Segoe UI", 10))
+        ent = ctk.CTkEntry(parent, textvariable=var, **kw)
+        if width is not None:
+            # legacy callers pass width in character units — convert to px
+            ent.configure(width=max(60, int(width) * 8))
+        return ent
+
+    def _primary_btn(self, parent, text, cmd, **kw):
+        kw.setdefault("fg_color", p.ACCENT)
+        kw.setdefault("hover_color", p.ACCENT_H)
+        kw.setdefault("text_color", p.ACCENT_FG)
+        kw.setdefault("corner_radius", p.RADIUS_MD)
+        kw.setdefault("height", BTN_HEIGHT)
+        kw.setdefault("font", ("Segoe UI", 10, "bold"))
+        return ctk.CTkButton(parent, text=text, command=cmd, **kw)
+
+    def _ghost_btn(self, parent, text, cmd, small=False, **kw):
+        kw.setdefault("fg_color", "transparent")
+        kw.setdefault("hover_color", p.BG_ROW_HOVER)
+        kw.setdefault("text_color", p.FG)
+        kw.setdefault("border_color", p.BORDER)
+        kw.setdefault("border_width", 1)
+        kw.setdefault("corner_radius", p.RADIUS_MD)
+        kw.setdefault("height", 26 if small else BTN_HEIGHT)
+        kw.setdefault("font", ("Segoe UI", 9 if small else 10))
+        if small:
+            kw.setdefault("width", 32)
+        return ctk.CTkButton(parent, text=text, command=cmd, **kw)
+
+    def _divider(self, parent):
+        return ctk.CTkFrame(parent, fg_color=p.BORDER_LIGHT, height=1)
 
     def _build(self, data: Dict):
-        pad = {"padx": 12, "pady": 3}
-        frm_top = Frame(self, bg=p.BG)
-        frm_top.pack(fill="x", **pad)
-        # Make the input column take all extra horizontal space when the user
-        # widens the dialog (so the "Имя" / "terminal64.exe" entries stretch
-        # instead of leaving an empty strip on the right).
+        # Single Card host
+        card = _widgets.Card(self, padding=0)
+        card.pack(fill="both", expand=True, padx=SPACE_16, pady=SPACE_16)
+
+        # ── Section: АККАУНТ ─────────────────────────────
+        self._section_title(card, "Аккаунт").pack(
+            anchor="w", padx=SPACE_16, pady=(SPACE_16, SPACE_8),
+        )
+
+        frm_top = ctk.CTkFrame(card, fg_color="transparent")
+        frm_top.pack(fill="x", padx=SPACE_16)
         frm_top.columnconfigure(1, weight=1)
 
-        self._lbl(frm_top, "Имя").grid(row=0, column=0, sticky="w", pady=2)
+        self._field_label(frm_top, "Имя").grid(row=0, column=0, sticky="w", pady=4)
         self.var_name = tk.StringVar(value=data.get("name", ""))
-        self._ent(frm_top, self.var_name, 26).grid(row=0, column=1, sticky="ew", padx=(6, 0), pady=2)
+        self._soft_entry(frm_top, self.var_name).grid(
+            row=0, column=1, sticky="ew", padx=(SPACE_8, 0), pady=4,
+        )
 
-        self._lbl(frm_top, "terminal64.exe").grid(row=1, column=0, sticky="w", pady=2)
+        self._field_label(frm_top, "terminal64.exe").grid(row=1, column=0, sticky="w", pady=4)
         self.var_path = tk.StringVar(value=data.get("path", ""))
-        path_frame = Frame(frm_top, bg=p.BG)
-        path_frame.grid(row=1, column=1, sticky="ew", padx=(6, 0), pady=2)
-        self._ent(path_frame, self.var_path, 20).pack(side="left", fill="x", expand=True)
-        btn_browse_s = self._btn(path_frame, "...", self._browse, small=True)
-        btn_browse_s.pack(side="left", padx=(4, 0))
+        path_frame = ctk.CTkFrame(frm_top, fg_color="transparent")
+        path_frame.grid(row=1, column=1, sticky="ew", padx=(SPACE_8, 0), pady=4)
+        self._soft_entry(path_frame, self.var_path).pack(side="left", fill="x", expand=True)
+        btn_browse_s = self._ghost_btn(path_frame, "…", self._browse, small=True)
+        btn_browse_s.pack(side="left", padx=(SPACE_8, 0))
         _bind_tip(btn_browse_s, "Выбрать путь к terminal64.exe слейва")
 
-        Frame(self, bg=p.DIVIDER, height=1).pack(fill="x", padx=12, pady=6)
+        self._divider(card).pack(fill="x", padx=SPACE_16, pady=SPACE_16)
 
-        sym_header = Frame(self, bg=p.BG)
-        sym_header.pack(fill="x", padx=12, pady=(2, 0))
-        self._lbl(sym_header, "Символы (мастер \u2192 слейв)").pack(side="left")
-        btn_load = self._btn(sym_header, "\u21E9 Загрузить", self._load_symbols, small=True)
+        # ── Section: СИМВОЛЫ ─────────────────────────────
+        sym_header = ctk.CTkFrame(card, fg_color="transparent")
+        sym_header.pack(fill="x", padx=SPACE_16, pady=(0, SPACE_8))
+        self._section_title(
+            sym_header, "Символы (мастер → слейв)",
+        ).pack(side="left")
+        btn_load = self._ghost_btn(
+            sym_header, "⇩ Загрузить", self._load_symbols, small=True,
+        )
+        btn_load.configure(width=110)
         btn_load.pack(side="right")
         _bind_tip(btn_load, "Загрузить символы из запущенных терминалов")
 
-        self.lbl_sym_status = Label(self, text="", bg=p.BG, fg=p.FG_DIM, font=f.XS)
-        self.lbl_sym_status.pack(anchor="w", padx=12)
+        self.lbl_sym_status = ctk.CTkLabel(
+            card, text="", text_color=p.FG_DIM, font=("Segoe UI", 9),
+            anchor="w",
+        )
+        self.lbl_sym_status.pack(anchor="w", padx=SPACE_16)
 
-        self.sym_frame = Frame(self, bg=p.BG)
-        self.sym_frame.pack(fill="x", padx=12, pady=2)
+        self.sym_frame = ctk.CTkFrame(card, fg_color="transparent")
+        self.sym_frame.pack(fill="x", padx=SPACE_16, pady=4)
 
         symbol_map = data.get("symbol_map", {})
         for master_sym, slave_sym in symbol_map.items():
             self._add_symbol_row(master_sym, slave_sym)
 
-        btn_add_sym = self._btn(self, "+ Символ", self._add_symbol_row, small=True)
-        btn_add_sym.pack(anchor="w", padx=12, pady=(0, 2))
+        btn_add_sym = self._ghost_btn(card, "+ Символ", self._add_symbol_row, small=True)
+        btn_add_sym.configure(width=110)
+        btn_add_sym.pack(anchor="w", padx=SPACE_16, pady=(2, 0))
         _bind_tip(btn_add_sym, "Добавить строку маппинга символов")
 
-        Frame(self, bg=p.DIVIDER, height=1).pack(fill="x", padx=12, pady=6)
+        self._divider(card).pack(fill="x", padx=SPACE_16, pady=SPACE_16)
 
-        # ── Риск ─────────────────────────────────────────────
-        frm_risk = Frame(self, bg=p.BG)
-        frm_risk.pack(fill="x", padx=12, pady=2)
+        # ── Section: РИСК ──────────────────────────────────
+        self._section_title(card, "Риск").pack(
+            anchor="w", padx=SPACE_16, pady=(0, SPACE_8),
+        )
+        frm_risk = ctk.CTkFrame(card, fg_color="transparent")
+        frm_risk.pack(fill="x", padx=SPACE_16)
 
         self.var_risk_type = tk.StringVar(value=data.get("risk_type", "percent"))
-
         risk_value = data.get("risk_value", 1.0)
         risk_type = data.get("risk_type", "percent")
 
-        self._lbl(frm_risk, "Риск %").grid(row=0, column=0, sticky="w", pady=2)
-        pct_frame = Frame(frm_risk, bg=p.BG)
-        pct_frame.grid(row=0, column=1, sticky="w", padx=(6, 0), pady=2)
+        # Compact-numeric width for short money/percent inputs.
+        NUM_W = 90
+
+        self._field_label(frm_risk, "Риск %").grid(row=0, column=0, sticky="w", pady=3)
         self.var_risk_pct = tk.StringVar(
             value=str(risk_value) if risk_type == "percent" else "")
-        self._ent(pct_frame, self.var_risk_pct, 8).pack(side="left")
+        ent_pct = self._soft_entry(frm_risk, self.var_risk_pct)
+        ent_pct.configure(width=NUM_W)
+        ent_pct.grid(row=0, column=1, sticky="w", padx=(SPACE_8, 0), pady=3)
 
-        self._lbl(frm_risk, "Риск $").grid(row=1, column=0, sticky="w", pady=2)
-        doll_frame = Frame(frm_risk, bg=p.BG)
-        doll_frame.grid(row=1, column=1, sticky="w", padx=(6, 0), pady=2)
+        self._field_label(frm_risk, "Риск $").grid(row=1, column=0, sticky="w", pady=3)
         self.var_risk_doll = tk.StringVar(
             value=str(risk_value) if risk_type == "fixed" else "")
-        self._ent(doll_frame, self.var_risk_doll, 8).pack(side="left")
+        ent_doll = self._soft_entry(frm_risk, self.var_risk_doll)
+        ent_doll.configure(width=NUM_W)
+        ent_doll.grid(row=1, column=1, sticky="w", padx=(SPACE_8, 0), pady=3)
 
-        self.lbl_risk_hint = Label(frm_risk, text="", bg=p.BG, fg=p.FG_DIM, font=f.XS)
+        self.lbl_risk_hint = ctk.CTkLabel(
+            frm_risk, text="", text_color=p.FG_DIM, font=("Segoe UI", 9),
+            anchor="w",
+        )
         self.lbl_risk_hint.grid(row=2, column=0, columnspan=2, sticky="w", pady=(2, 0))
 
         self.var_risk_pct.trace_add("write", lambda *_: self._sync_risk("percent"))
         self.var_risk_doll.trace_add("write", lambda *_: self._sync_risk("fixed"))
 
-        self._lbl(frm_risk, "Лот без SL").grid(row=3, column=0, sticky="w", pady=2)
+        self._field_label(frm_risk, "Лот без SL").grid(row=3, column=0, sticky="w", pady=3)
         self.var_default_lot = tk.StringVar(value=str(data.get("default_lot", "0.01")))
-        self._ent(frm_risk, self.var_default_lot, 8).grid(row=3, column=1, sticky="w", padx=(6, 0), pady=2)
+        ent_lot = self._soft_entry(frm_risk, self.var_default_lot)
+        ent_lot.configure(width=NUM_W)
+        ent_lot.grid(row=3, column=1, sticky="w", padx=(SPACE_8, 0), pady=3)
 
-        self._lbl(frm_risk, "Макс. просадка %").grid(row=4, column=0, sticky="w", pady=2)
+        self._field_label(frm_risk, "Макс. просадка %").grid(row=4, column=0, sticky="w", pady=3)
         self.var_max_drawdown = tk.StringVar(value=str(data.get("max_drawdown", 0)))
-        self._ent(frm_risk, self.var_max_drawdown, 8).grid(row=4, column=1, sticky="w", padx=(6, 0), pady=2)
-        Label(frm_risk, text="0 = выкл", bg=p.BG, fg=p.FG_DIM, font=f.XS).grid(
-            row=5, column=1, sticky="w", padx=(6, 0))
+        ent_dd = self._soft_entry(frm_risk, self.var_max_drawdown)
+        ent_dd.configure(width=NUM_W)
+        ent_dd.grid(row=4, column=1, sticky="w", padx=(SPACE_8, 0), pady=3)
+        ctk.CTkLabel(
+            frm_risk, text="0 = выкл", text_color=p.FG_DIM,
+            font=("Segoe UI", 9),
+        ).grid(row=5, column=1, sticky="w", padx=(SPACE_8, 0))
 
-        self._lbl(frm_risk, "Макс. сделок/день").grid(row=6, column=0, sticky="w", pady=2)
+        self._field_label(frm_risk, "Макс. сделок/день").grid(row=6, column=0, sticky="w", pady=3)
         self.var_max_trades = tk.StringVar(value=str(data.get("max_trades_per_day", 0)))
-        self._ent(frm_risk, self.var_max_trades, 8).grid(row=6, column=1, sticky="w", padx=(6, 0), pady=2)
-        Label(frm_risk, text="0 = выкл", bg=p.BG, fg=p.FG_DIM, font=f.XS).grid(
-            row=7, column=1, sticky="w", padx=(6, 0))
+        ent_trd = self._soft_entry(frm_risk, self.var_max_trades)
+        ent_trd.configure(width=NUM_W)
+        ent_trd.grid(row=6, column=1, sticky="w", padx=(SPACE_8, 0), pady=3)
+        ctk.CTkLabel(
+            frm_risk, text="0 = выкл", text_color=p.FG_DIM,
+            font=("Segoe UI", 9),
+        ).grid(row=7, column=1, sticky="w", padx=(SPACE_8, 0))
 
-        self._lbl(frm_risk, "Макс. убыт/день $").grid(row=8, column=0, sticky="w", pady=2)
+        self._field_label(frm_risk, "Макс. убыт/день $").grid(row=8, column=0, sticky="w", pady=3)
         self.var_daily_loss = tk.StringVar(value=str(data.get("daily_loss_limit", 0)))
-        self._ent(frm_risk, self.var_daily_loss, 8).grid(row=8, column=1, sticky="w", padx=(6, 0), pady=2)
-        Label(frm_risk, text="0 = выкл", bg=p.BG, fg=p.FG_DIM, font=f.XS).grid(
-            row=9, column=1, sticky="w", padx=(6, 0))
+        ent_dl = self._soft_entry(frm_risk, self.var_daily_loss)
+        ent_dl.configure(width=NUM_W)
+        ent_dl.grid(row=8, column=1, sticky="w", padx=(SPACE_8, 0), pady=3)
+        ctk.CTkLabel(
+            frm_risk, text="0 = выкл", text_color=p.FG_DIM,
+            font=("Segoe UI", 9),
+        ).grid(row=9, column=1, sticky="w", padx=(SPACE_8, 0))
 
-        Frame(self, bg=p.DIVIDER, height=1).pack(fill="x", padx=12, pady=6)
+        self._divider(card).pack(fill="x", padx=SPACE_16, pady=SPACE_16)
 
-        btn_frame = Frame(self, bg=p.BG)
-        btn_frame.pack(pady=(0, 10))
-        btn_save = self._btn(btn_frame, "Сохранить", self._save, accent=True)
-        btn_save.pack(side="left", padx=6)
+        # ── Actions row ────────────────────────────────────
+        btn_frame = ctk.CTkFrame(card, fg_color="transparent")
+        btn_frame.pack(pady=(0, SPACE_16))
+        btn_save = self._primary_btn(btn_frame, "Сохранить", self._save)
+        btn_save.configure(width=140)
+        btn_save.pack(side="left", padx=SPACE_8)
         _bind_tip(btn_save, "Сохранить настройки аккаунта")
-        btn_cancel = self._btn(btn_frame, "Отмена", self.destroy)
-        btn_cancel.pack(side="left", padx=6)
+        btn_cancel = self._ghost_btn(btn_frame, "Отмена", self.destroy)
+        btn_cancel.configure(width=120)
+        btn_cancel.pack(side="left", padx=SPACE_8)
         _bind_tip(btn_cancel, "Закрыть без сохранения")
 
     def _get_ref_balance(self) -> float:
@@ -634,7 +736,10 @@ class SlaveDialog(Toplevel):
                     bal = self._get_ref_balance()
                     if bal > 0:
                         self.var_risk_doll.set(f"{bal * pct_val / 100.0:.2f}")
-                    self.lbl_risk_hint.config(text=f"{pct_val}% от баланса", fg=p.ACCENT)
+                    self.lbl_risk_hint.configure(
+                        text=f"{pct_val}% от баланса",
+                        text_color=p.ACCENT,
+                    )
                 except (ValueError, tk.TclError):
                     pass
             elif source == "fixed":
@@ -644,7 +749,10 @@ class SlaveDialog(Toplevel):
                     bal = self._get_ref_balance()
                     if bal > 0:
                         self.var_risk_pct.set(f"{doll_val / bal * 100.0:.2f}")
-                    self.lbl_risk_hint.config(text=f"${doll_val:.2f} фиксированный", fg=p.ACCENT)
+                    self.lbl_risk_hint.configure(
+                        text=f"${doll_val:.2f} фиксированный",
+                        text_color=p.ACCENT,
+                    )
                 except (ValueError, tk.TclError):
                     pass
         finally:
@@ -659,7 +767,7 @@ class SlaveDialog(Toplevel):
 
     def _load_symbols(self):
         if not _MT5_OK:
-            self.lbl_sym_status.config(text="MT5 не установлен", fg=p.RED)
+            self.lbl_sym_status.configure(text="MT5 не установлен", text_color=p.RED)
             return
         master_path = self._get_master_path()
         slave_path = self.var_path.get().strip()
@@ -673,9 +781,15 @@ class SlaveDialog(Toplevel):
         if self._slave_symbols:
             parts.append(f"слейв: {len(self._slave_symbols)}")
         if parts:
-            self.lbl_sym_status.config(text="Загружено: " + ", ".join(parts), fg=p.GREEN_DIM)
+            self.lbl_sym_status.configure(
+                text="Загружено: " + ", ".join(parts),
+                text_color=p.GREEN_DIM,
+            )
         else:
-            self.lbl_sym_status.config(text="Символы не загружены — запустите терминалы", fg=p.FG_DIM)
+            self.lbl_sym_status.configure(
+                text="Символы не загружены — запустите терминалы",
+                text_color=p.FG_DIM,
+            )
 
     def _get_master_path(self) -> str:
         parent = self.master
@@ -685,10 +799,16 @@ class SlaveDialog(Toplevel):
 
     def _fetch_symbols(self, path: str, label: str) -> List[str]:
         if not path or not is_terminal_running(path):
-            self.lbl_sym_status.config(text=f"Терминал {label} не запущен", fg=p.YELLOW)
+            self.lbl_sym_status.configure(
+                text=f"Терминал {label} не запущен",
+                text_color=p.YELLOW,
+            )
             return []
         if not mt5.initialize(path=path):
-            self.lbl_sym_status.config(text=f"Ошибка подключения к {label}", fg=p.YELLOW)
+            self.lbl_sym_status.configure(
+                text=f"Ошибка подключения к {label}",
+                text_color=p.YELLOW,
+            )
             return []
         try:
             symbols = mt5.symbols_get()
@@ -711,18 +831,15 @@ class SlaveDialog(Toplevel):
 
     def _auto_match(self, master_sym: str) -> str:
         master_upper = master_sym.upper().rstrip(".")
-        # 1. Точное совпадение (с точкой или без)
         for s in self._slave_symbols:
             if s.upper().rstrip(".") == master_upper:
                 return s
-        # 2. Алиас (XAUUSD → GOLD и т.д.)
         alias = _SYMBOL_ALIASES.get(master_upper)
         if alias:
             alias_upper = alias.upper().rstrip(".")
             for s in self._slave_symbols:
                 if s.upper().rstrip(".") == alias_upper:
                     return s
-        # 3. Совпадение с суффиксом брокера (GBPUSD → GBPUSD., XAUUSD → XAUUSDb)
         for s in self._slave_symbols:
             s_base = s.upper().rstrip(".")
             if s_base.startswith(master_upper) and len(s_base) - len(master_upper) <= 2:
@@ -732,14 +849,12 @@ class SlaveDialog(Toplevel):
         return ""
 
     def _add_symbol_row(self, master_sym: str = "", slave_sym: str = ""):
-        row_frame = Frame(self.sym_frame, bg=p.BG)
-        row_frame.pack(fill="x", pady=1)
+        row_frame = ctk.CTkFrame(self.sym_frame, fg_color="transparent")
+        row_frame.pack(fill="x", pady=2)
         var_master = tk.StringVar(value=master_sym)
         var_slave = tk.StringVar(value=slave_sym)
-        # width=8 sets the natural request size; fill+expand lets the entries
-        # grow horizontally when the dialog is widened (long symbol names like
-        # "EURUSD.r" or "US500.cash" become fully visible).
-        self._ent(row_frame, var_master, 8).pack(side="left", fill="x", expand=True)
+        ent_m = self._soft_entry(row_frame, var_master)
+        ent_m.pack(side="left", fill="x", expand=True)
 
         var_master.trace_add("write", lambda *_: self._auto_suggest(var_master, var_slave))
 
@@ -749,11 +864,14 @@ class SlaveDialog(Toplevel):
             if dlg.selected:
                 var_master.set(dlg.selected)
 
-        btn_pick_m = self._btn(row_frame, "...", pick_m, small=True)
-        btn_pick_m.pack(side="left", padx=1)
+        btn_pick_m = self._ghost_btn(row_frame, "…", pick_m, small=True)
+        btn_pick_m.pack(side="left", padx=(4, 0))
         _bind_tip(btn_pick_m, "Выбрать символ мастера из списка")
-        Label(row_frame, text="\u2192", bg=p.BG, fg=p.FG_DIM, font=f.SM).pack(side="left", padx=3)
-        self._ent(row_frame, var_slave, 8).pack(side="left", fill="x", expand=True)
+        ctk.CTkLabel(
+            row_frame, text="→", text_color=p.FG_DIM, font=("Segoe UI", 11),
+        ).pack(side="left", padx=6)
+        ent_s = self._soft_entry(row_frame, var_slave)
+        ent_s.pack(side="left", fill="x", expand=True)
 
         def pick_s():
             dlg = SymbolPickerDialog(self, self._slave_symbols, "Слейв")
@@ -761,16 +879,16 @@ class SlaveDialog(Toplevel):
             if dlg.selected:
                 var_slave.set(dlg.selected)
 
-        btn_pick_s = self._btn(row_frame, "...", pick_s, small=True)
-        btn_pick_s.pack(side="left", padx=1)
+        btn_pick_s = self._ghost_btn(row_frame, "…", pick_s, small=True)
+        btn_pick_s.pack(side="left", padx=(4, 0))
         _bind_tip(btn_pick_s, "Выбрать символ слейва из списка")
 
         def remove():
             row_frame.destroy()
             self._symbol_rows = [r for r in self._symbol_rows if r["frame"] != row_frame]
 
-        btn_rm = self._btn(row_frame, "\u00D7", remove, small=True)
-        btn_rm.pack(side="left", padx=(2, 0))
+        btn_rm = self._ghost_btn(row_frame, "×", remove, small=True)
+        btn_rm.pack(side="left", padx=(6, 0))
         _bind_tip(btn_rm, "Удалить строку маппинга")
         self._symbol_rows.append({"frame": row_frame, "master": var_master, "slave": var_slave})
 
@@ -1444,6 +1562,13 @@ class TradesTable(tk.Frame):
 # ── ActivationWindow ──────────────────────────────────────────
 
 class ActivationWindow(Toplevel):
+    """Light-Soft styled license activation window.
+
+    Visual chrome rewritten 2026-06 to match the main window's card-based
+    look. Behaviour (Telegram code request, code verify, status messages,
+    forced quit on close-without-activation) is unchanged.
+    """
+
     def __init__(self, parent):
         super().__init__(parent)
         self.title("FTH Trade Copier — Активация")
@@ -1461,17 +1586,16 @@ class ActivationWindow(Toplevel):
         self._center_on_screen()
 
     def _on_close(self):
-        # Закрытие окна активации без успешной активации = выход из всей программы.
         if self._activated:
             self.destroy()
             return
         app = self.master
         self.destroy()
         try:
-            app._real_quit()  # graceful: стоп трейдера, стоп tray, сохранение конфига
+            app._real_quit()
         except Exception:
             pass
-        os._exit(0)  # страховка: гарантированно завершить процесс
+        os._exit(0)
 
     def _center_on_screen(self):
         self.update_idletasks()
@@ -1483,96 +1607,128 @@ class ActivationWindow(Toplevel):
         y = wt + ((wb - wt) - h) // 2
         x, y, w, h = ui_scaling.clamp_to_work_area(x, y, w, h, wa)
         self.geometry(f"{w}x{h}+{x}+{y}")
-        # Now that the window has its final width, set wraplength on the
-        # status label so long messages wrap inside the visible area.
         self.update_idletasks()
         try:
-            fw = self._status_frm.winfo_width()
+            fw = self._status_card.winfo_width()
             if fw > 20:
-                self.lbl_status.config(wraplength=fw - 8)
+                self.lbl_status.configure(wraplength=fw - 16)
         except Exception:
             pass
 
     def _set_status(self, text, fg=None):
-        """Update status label (space is pre-reserved, wraplength is dynamic)."""
-        self.lbl_status.config(text=text, fg=fg or p.FG_DIM)
-
-    def _lbl(self, parent, text, **kw):
-        return Label(parent, text=text, bg=p.BG_DEEP, fg=p.FG_LABEL, font=f.SM, **kw)
+        self.lbl_status.configure(text=text, text_color=fg or p.FG_DIM)
 
     def _paste(self, event=None):
         try:
             clip = self.clipboard_get()
             if clip:
                 widget = self.focus_get()
-                if isinstance(widget, tk.Entry):
+                # CTkEntry exposes the underlying tk.Entry via _entry; both
+                # have insert() with the same signature, so we accept either.
+                try:
                     widget.insert(tk.INSERT, clip)
+                except Exception:
+                    pass
         except Exception:
             pass
         return "break"
 
     def _on_ctrl_key(self, event=None):
-        # Срабатывает на любой раскладке: ловим физическую клавишу V по keycode,
-        # т.к. при русской раскладке keysym = Cyrillic_em ("м"), а не "v".
-        if event is not None and event.keycode == 86:  # V на Windows
+        if event is not None and event.keycode == 86:
             return self._paste(event)
 
-    def _ent(self, parent, var=None, width=28):
-        e = Entry(parent, textvariable=var, width=width,
-                  bg=p.BG_INPUT, fg=p.FG, font=f.DEFAULT,
-                  highlightthickness=1, highlightbackground=p.BORDER,
-                  highlightcolor=p.ACCENT)
-        e.bind("<Control-v>", self._paste)
-        e.bind("<Control-V>", self._paste)
-        e.bind("<Control-KeyPress>", self._on_ctrl_key)
-        return e
+    def _soft_entry(self, parent, var=None, width=240):
+        ent = ctk.CTkEntry(
+            parent, textvariable=var, width=width,
+            fg_color=p.BG_ROW, border_color=p.BORDER, border_width=1,
+            text_color=p.FG, placeholder_text_color=p.FG_DIM,
+            corner_radius=p.RADIUS_MD, height=BTN_HEIGHT,
+            font=("Segoe UI", 10),
+        )
+        ent.bind("<Control-v>", self._paste)
+        ent.bind("<Control-V>", self._paste)
+        ent.bind("<Control-KeyPress>", self._on_ctrl_key)
+        return ent
 
     def _build(self):
-        # tk.Frame's padx/pady set internal padding; CTkFrame doesn't have that
-        # so we apply the padding to the .pack() call instead.
-        frm = Frame(self, bg=p.BG_DEEP)
-        frm.pack(fill="both", expand=True, padx=30, pady=20)
+        # Outer breathing room so the centred card has visible margins on
+        # the page background.
+        outer = ctk.CTkFrame(self, fg_color="transparent")
+        outer.pack(fill="both", expand=True, padx=SPACE_24, pady=SPACE_24)
 
+        card = _widgets.Card(outer, padding=0)
+        card.pack(fill="both", expand=True)
+
+        body = ctk.CTkFrame(card, fg_color="transparent")
+        body.pack(fill="both", expand=True, padx=SPACE_24, pady=SPACE_24)
+
+        # Logo
         logo_path = os.path.join(IMG_DIR, "convertico-fth_48x48.png")
         if os.path.exists(logo_path):
             try:
                 img = tk.PhotoImage(file=logo_path)
-                lbl_logo = Label(frm, image=img, bg=p.BG_DEEP, text="")
+                lbl_logo = ctk.CTkLabel(
+                    body, image=img, text="", fg_color="transparent",
+                )
                 lbl_logo.image = img
-                lbl_logo.grid(row=0, column=0, columnspan=2, pady=(0, 10))
+                lbl_logo.pack(pady=(0, SPACE_8))
             except Exception:
                 pass
 
-        Label(frm, text="Активация", bg=p.BG_DEEP, fg=p.ACCENT,
-              font=f.TITLE).grid(row=1, column=0, columnspan=2, pady=(0, 15))
+        ctk.CTkLabel(
+            body, text="Активация",
+            text_color=p.FG, font=("Segoe UI", 16, "bold"),
+        ).pack(pady=(0, SPACE_16))
 
-        self._lbl(frm, "Telegram ID").grid(row=2, column=0, sticky="w", pady=3)
+        # Section: Telegram ID
+        ctk.CTkLabel(
+            body, text="Telegram ID", text_color=p.FG_LABEL,
+            font=("Segoe UI", 9), anchor="w",
+        ).pack(anchor="w", pady=(0, 4))
         self.var_tg_id = tk.StringVar()
-        self._ent(frm, self.var_tg_id, 22).grid(row=2, column=1, sticky="ew", padx=(8, 0), pady=3)
+        self._soft_entry(body, self.var_tg_id).pack(fill="x", pady=(0, SPACE_8))
 
-        btn_code = Button(frm, text="Получить код", command=self._request_code,
-                          bg=p.ACCENT, fg=p.ACCENT_FG, font=f.BOLD,
-                          activebackground=p.ACCENT_H, padx=12, pady=3)
-        btn_code.grid(row=3, column=0, columnspan=2, pady=(8, 4))
+        btn_code = ctk.CTkButton(
+            body, text="Получить код",
+            command=self._request_code,
+            fg_color=p.ACCENT, hover_color=p.ACCENT_H,
+            text_color=p.ACCENT_FG, corner_radius=p.RADIUS_MD,
+            height=BTN_HEIGHT, font=("Segoe UI", 10, "bold"),
+        )
+        btn_code.pack(fill="x", pady=(0, SPACE_16))
 
-        self._lbl(frm, "Код из Telegram").grid(row=4, column=0, sticky="w", pady=3)
+        # Section: Code
+        ctk.CTkLabel(
+            body, text="Код из Telegram", text_color=p.FG_LABEL,
+            font=("Segoe UI", 9), anchor="w",
+        ).pack(anchor="w", pady=(0, 4))
         self.var_code = tk.StringVar()
-        self._ent(frm, self.var_code, 22).grid(row=4, column=1, sticky="ew", padx=(8, 0), pady=3)
+        self._soft_entry(body, self.var_code).pack(fill="x", pady=(0, SPACE_8))
 
-        btn_verify = Button(frm, text="Подтвердить", command=self._verify,
-                            bg=p.GREEN_DIM, fg=p.ACCENT_FG, font=f.BOLD,
-                            activebackground=p.GREEN, padx=12, pady=3)
-        btn_verify.grid(row=5, column=0, columnspan=2, pady=(8, 4))
+        btn_verify = ctk.CTkButton(
+            body, text="Подтвердить",
+            command=self._verify,
+            fg_color=p.GREEN, hover_color=p.GREEN_DIM,
+            text_color=p.ACCENT_FG, corner_radius=p.RADIUS_MD,
+            height=BTN_HEIGHT, font=("Segoe UI", 10, "bold"),
+        )
+        btn_verify.pack(fill="x", pady=(0, SPACE_16))
 
-        self.lbl_status = Label(frm, text="", bg=p.BG_DEEP, fg=p.FG_DIM, font=f.SM)
-        self.lbl_status.grid(row=6, column=0, columnspan=2, pady=(4, 0), sticky="ew")
-        # Reserve 3 lines of height so the window never resizes when status
-        # text appears. Actual wraplength is set in _center_on_screen once
-        # the window has its final width.
+        # Status area — inside a thin frame so we can read its width to
+        # set wraplength dynamically.
+        self._status_card = ctk.CTkFrame(body, fg_color="transparent")
+        self._status_card.pack(fill="x")
+        self.lbl_status = ctk.CTkLabel(
+            self._status_card, text="", text_color=p.FG_DIM,
+            font=("Segoe UI", 9), anchor="w", justify="left",
+        )
+        self.lbl_status.pack(anchor="w", fill="x")
+        # Reserve 3 lines of height so the window never resizes when
+        # status text appears.
         import tkinter.font as tkfont
-        _sm_h = tkfont.Font(font=f.SM).metrics("linespace")
-        frm.grid_rowconfigure(6, minsize=_sm_h * 3 + 8)
-        self._status_frm = frm
+        _sm_h = tkfont.Font(family="Segoe UI", size=9).metrics("linespace")
+        self._status_card.configure(height=_sm_h * 3 + 8)
+        self._status_card.pack_propagate(False)
 
     def _request_code(self):
         tg = self.var_tg_id.get().strip()
@@ -1587,11 +1743,14 @@ class ActivationWindow(Toplevel):
         if not _LIC_OK:
             self._set_status("Модуль лицензии не найден", fg=p.RED)
             return
-        self._set_status("Отправка кода...", fg=p.FG_DIM)
+        self._set_status("Отправка кода…", fg=p.FG_DIM)
         self.update()
         ok, msg = lic_mod.request_code(tg_id)
         if ok:
-            self._set_status("Код отправлен в Telegram. Проверьте личные сообщения.", fg=p.GREEN_DIM)
+            self._set_status(
+                "Код отправлен в Telegram. Проверьте личные сообщения.",
+                fg=p.GREEN_DIM,
+            )
         else:
             self._set_status(f"Ошибка: {msg}", fg=p.RED)
 
@@ -1609,18 +1768,19 @@ class ActivationWindow(Toplevel):
         if not _LIC_OK:
             self._set_status("Модуль лицензии не найден", fg=p.RED)
             return
-        self._set_status("Проверка...", fg=p.FG_DIM)
+        self._set_status("Проверка…", fg=p.FG_DIM)
         self.update()
         ok, result = lic_mod.verify_code(tg_id, code)
         if ok:
             self._set_status("Активация успешна!", fg=p.GREEN_DIM)
-            self._activated = True  # успешная активация закрывает только окно, не прогу
+            self._activated = True
             self.after(500, self.destroy)
         elif result and result.startswith("device_limit"):
             max_d = result.split(":")[-1]
             self._set_status(
                 f"Лимит устройств ({max_d}) превышён.\nИспользуйте /reset в боте для сброса.",
-                fg=p.RED)
+                fg=p.RED,
+            )
         else:
             self._set_status(f"Ошибка: {result}", fg=p.RED)
 
@@ -1628,10 +1788,20 @@ class ActivationWindow(Toplevel):
 # ── SettingsDialog ───────────────────────────────────────────
 
 class SettingsDialog(Toplevel):
+    """Light-Soft styled settings dialog.
+
+    Visual chrome rewritten 2026-06 to match the main window's card-based
+    look. Behaviour (profile switch, name edit, theme change with live
+    repaint, config-folder shortcut, update check) is unchanged. The
+    theme picker now skips themes flagged ``hidden`` in palette.py so
+    deprecated entries (light_pro) don\'t appear here, while saved
+    configs that still reference them keep resolving via the registry.
+    """
+
     def __init__(self, parent: 'App'):
         super().__init__(parent)
         self.title("Настройки")
-        self.configure(fg_color=p.BG)
+        self.configure(fg_color=p.BG_DEEP)
         self.resizable(False, False)
         self.transient(parent)
         self.grab_set()
@@ -1643,75 +1813,125 @@ class SettingsDialog(Toplevel):
         self._app = parent
         self._active = parent._active_profile
 
-        frm = Frame(self, bg=p.BG)
-        frm.pack(fill="both", expand=True, padx=16, pady=12)
+        # Outer breathing room around the central card.
+        outer = ctk.CTkFrame(self, fg_color="transparent")
+        outer.pack(fill="both", expand=True, padx=SPACE_16, pady=SPACE_16)
 
-        Label(frm, text="ПРОФИЛИ", bg=p.BG, fg=p.FG_DIM, font=f.BOLD).pack(anchor="w", pady=(0, 6))
+        card = _widgets.Card(outer, padding=0)
+        card.pack(fill="both", expand=True)
 
-        tabs_f = Frame(frm, bg=p.BG)
+        body = ctk.CTkFrame(card, fg_color="transparent")
+        body.pack(fill="both", expand=True, padx=SPACE_24, pady=SPACE_24)
+
+        # ── Section: ПРОФИЛИ ────────────────────────────
+        ctk.CTkLabel(
+            body, text="Профили".upper(),
+            text_color=p.FG_LABEL, font=("Segoe UI", 9, "bold"),
+            anchor="w",
+        ).pack(anchor="w", pady=(0, SPACE_8))
+
+        tabs_f = ctk.CTkFrame(body, fg_color="transparent")
         tabs_f.pack(fill="x")
         self._profile_btns = []
         self._profile_names = []
         for i in range(5):
             name = parent._profiles[i].get("name", f"Профиль {i + 1}")
             self._profile_names.append(tk.StringVar(value=name))
-            btn = Button(tabs_f, text=f" {name} ", command=lambda idx=i: self._select(idx),
-                         bg=p.BG_INPUT if i != self._active else p.ACCENT,
-                         fg=p.ACCENT_FG if i == self._active else p.FG_DIM,
-                         font=f.SM, activebackground=p.ACCENT_H, padx=6, pady=3)
-            btn.pack(side="left", padx=2)
+            is_active = (i == self._active)
+            btn = ctk.CTkButton(
+                tabs_f, text=name, command=lambda idx=i: self._select(idx),
+                fg_color=p.ACCENT if is_active else "transparent",
+                hover_color=p.ACCENT_H if is_active else p.BG_ROW_HOVER,
+                text_color=p.ACCENT_FG if is_active else p.FG,
+                border_color=p.BORDER, border_width=0 if is_active else 1,
+                corner_radius=p.RADIUS_MD, height=28,
+                font=("Segoe UI", 9, "bold" if is_active else "normal"),
+                width=60,
+            )
+            btn.pack(side="left", padx=(0, 4))
             self._profile_btns.append(btn)
 
-        Frame(frm, bg=p.DIVIDER, height=1).pack(fill="x", pady=8)
-
-        row_name = Frame(frm, bg=p.BG)
-        row_name.pack(fill="x", pady=(0, 4))
-        Label(row_name, text="Имя профиля:", bg=p.BG, fg=p.FG, font=f.DEFAULT).pack(side="left")
-        self._ent_name = Entry(row_name, bg=p.BG_INPUT, fg=p.FG, font=f.DEFAULT, width=24)
-        self._ent_name.pack(side="left", padx=(8, 0))
+        # Name input row
+        row_name = ctk.CTkFrame(body, fg_color="transparent")
+        row_name.pack(fill="x", pady=(SPACE_16, 0))
+        ctk.CTkLabel(
+            row_name, text="Имя профиля",
+            text_color=p.FG_LABEL, font=("Segoe UI", 9), anchor="w",
+        ).pack(side="left")
+        self._ent_name = ctk.CTkEntry(
+            row_name, fg_color=p.BG_ROW, border_color=p.BORDER, border_width=1,
+            text_color=p.FG, corner_radius=p.RADIUS_MD, height=BTN_HEIGHT,
+            font=("Segoe UI", 10), width=200,
+        )
+        self._ent_name.pack(side="left", padx=(SPACE_8, 0), fill="x", expand=True)
         self._ent_name.insert(0, self._profile_names[self._active].get())
         self._ent_name.bind("<KeyRelease>", self._on_name_change)
 
-        Frame(frm, bg=p.DIVIDER, height=1).pack(fill="x", pady=8)
+        # Divider
+        ctk.CTkFrame(body, fg_color=p.BORDER_LIGHT, height=1).pack(
+            fill="x", pady=SPACE_16,
+        )
 
-        # ── Theme picker ───────────────────────────────────────────
-        Label(frm, text="ТЕМА", bg=p.BG, fg=p.FG_DIM, font=f.BOLD).pack(anchor="w", pady=(0, 6))
+        # ── Section: ТЕМА ─────────────────────────────────
+        ctk.CTkLabel(
+            body, text="Тема".upper(),
+            text_color=p.FG_LABEL, font=("Segoe UI", 9, "bold"),
+            anchor="w",
+        ).pack(anchor="w", pady=(0, SPACE_8))
 
-        row_theme = Frame(frm, bg=p.BG)
-        row_theme.pack(fill="x", pady=(0, 4))
-        Label(row_theme, text="Оформление:", bg=p.BG, fg=p.FG, font=f.DEFAULT).pack(side="left")
+        row_theme = ctk.CTkFrame(body, fg_color="transparent")
+        row_theme.pack(fill="x")
+        ctk.CTkLabel(
+            row_theme, text="Оформление",
+            text_color=p.FG_LABEL, font=("Segoe UI", 9), anchor="w",
+        ).pack(side="left")
 
+        # Hidden themes (e.g. light_pro) are filtered out by
+        # available_themes()\'s default include_hidden=False.  If the
+        # saved theme happens to be hidden, we still resolve its label
+        # via THEME_LABELS so the dialog opens in a sane state and the
+        # user can pick a visible alternative to migrate to.
         self._theme_names = available_themes()
         self._initial_theme = get_theme_name()
+        if self._initial_theme not in self._theme_names:
+            # Hidden current theme — keep selecting it so the user sees
+            # what is active, but mark it visually.
+            self._theme_names = [self._initial_theme] + self._theme_names
         labels = [THEME_LABELS.get(n, n) for n in self._theme_names]
         cur_label = THEME_LABELS.get(self._initial_theme, self._initial_theme)
         self._var_theme = tk.StringVar(value=cur_label)
 
-        om = tk.OptionMenu(row_theme, self._var_theme, *labels)
-        om.config(bg=p.BG_INPUT, fg=p.FG, font=f.DEFAULT,
-                  activebackground=p.BG_ROW_HOVER, activeforeground=p.FG,
-                  highlightthickness=0, bd=0, relief="flat")
-        om["menu"].config(bg=p.BG_INPUT, fg=p.FG, font=f.DEFAULT,
-                          activebackground=p.ACCENT, activeforeground=p.ACCENT_FG,
-                          bd=0)
-        om.pack(side="left", padx=(8, 0))
-
-        self._lbl_theme_hint = Label(
-            frm, text="Сохраните чтобы применить тему.",
-            bg=p.BG, fg=p.FG_DIM, font=f.SM,
+        om = ctk.CTkOptionMenu(
+            row_theme, variable=self._var_theme, values=labels,
+            fg_color=p.BG_ROW, button_color=p.ACCENT,
+            button_hover_color=p.ACCENT_H,
+            dropdown_fg_color=p.BG_ROW, dropdown_hover_color=p.BG_ROW_HOVER,
+            dropdown_text_color=p.FG,
+            text_color=p.FG, corner_radius=p.RADIUS_MD,
+            height=BTN_HEIGHT, font=("Segoe UI", 10),
         )
-        self._lbl_theme_hint.pack(anchor="w", pady=(2, 0))
+        om.pack(side="left", padx=(SPACE_8, 0), fill="x", expand=True)
 
-        Frame(frm, bg=p.DIVIDER, height=1).pack(fill="x", pady=8)
+        self._lbl_theme_hint = ctk.CTkLabel(
+            body,
+            text="Сохраните чтобы применить тему.",
+            text_color=p.FG_DIM, font=("Segoe UI", 9), anchor="w",
+        )
+        self._lbl_theme_hint.pack(anchor="w", pady=(SPACE_8, 0))
 
-        btn_row = Frame(frm, bg=p.BG)
+        # Divider
+        ctk.CTkFrame(body, fg_color=p.BORDER_LIGHT, height=1).pack(
+            fill="x", pady=SPACE_16,
+        )
+
+        # ── Actions row ────────────────────────────────────
+        btn_row = ctk.CTkFrame(body, fg_color="transparent")
         btn_row.pack(fill="x")
 
         def switch_profile():
             new_name = self._ent_name.get().strip()
             if new_name:
                 self._app._profiles[self._active]["name"] = new_name
-            # Resolve chosen theme by label → internal name.
             chosen_label = self._var_theme.get()
             chosen_name = self._initial_theme
             for _n in self._theme_names:
@@ -1720,8 +1940,6 @@ class SettingsDialog(Toplevel):
                     break
             theme_changed = chosen_name != self._initial_theme
 
-            # Apply theme LIVE (hot-swap), capturing old palette first so we
-            # can remap every widget colour in the running UI.
             if theme_changed:
                 from palette import get_palette as _gp
                 old_pal = _gp()
@@ -1738,25 +1956,24 @@ class SettingsDialog(Toplevel):
             self._app._switch_profile(self._active)
 
             if theme_changed:
-                # Persist new theme into config.json.
                 try:
                     self._app._save_config()
                 except Exception:
                     pass
             self.destroy()
 
-        btn_switch = Button(btn_row, text="Сохранить", command=switch_profile,
-                            bg=p.ACCENT, fg=p.ACCENT_FG, font=f.BOLD,
-                            activebackground=p.ACCENT_H, padx=16, pady=4)
+        btn_switch = ctk.CTkButton(
+            btn_row, text="Сохранить", command=switch_profile,
+            fg_color=p.ACCENT, hover_color=p.ACCENT_H,
+            text_color=p.ACCENT_FG, corner_radius=p.RADIUS_MD,
+            height=BTN_HEIGHT, font=("Segoe UI", 10, "bold"), width=130,
+        )
         btn_switch.pack(side="left")
         _bind_tip(btn_switch, "Сохранить и переключиться на профиль")
 
         def open_config_folder():
             try:
                 os.makedirs(APP_DATA_DIR, exist_ok=True)
-                # On Windows os.startfile on a directory opens it in Explorer
-                # and selects nothing. Pass the folder path itself so users
-                # land in the right directory and can spot config.json.
                 os.startfile(APP_DATA_DIR)
             except Exception as e:
                 messagebox.showerror(
@@ -1765,34 +1982,44 @@ class SettingsDialog(Toplevel):
                     parent=self,
                 )
 
-        btn_open_cfg = Button(
-            btn_row, text="\U0001F4C2 Папка config", command=open_config_folder,
-            bg=p.BG_INPUT, fg=p.FG_DIM, font=f.DEFAULT,
-            activebackground=p.BG_ROW_HOVER, padx=10, pady=4,
+        btn_open_cfg = ctk.CTkButton(
+            btn_row, text="\U0001F4C2 Папка config",
+            command=open_config_folder,
+            fg_color="transparent", hover_color=p.BG_ROW_HOVER,
+            text_color=p.FG, border_color=p.BORDER, border_width=1,
+            corner_radius=p.RADIUS_MD, height=BTN_HEIGHT,
+            font=("Segoe UI", 10), width=140,
         )
-        btn_open_cfg.pack(side="left", padx=(8, 0))
+        btn_open_cfg.pack(side="left", padx=(SPACE_8, 0))
         _bind_tip(btn_open_cfg, f"Открыть папку с config.json в проводнике\n({APP_DATA_DIR})")
 
         def check_updates():
             self.destroy()
             parent._check_update(force=True)
 
-        btn_update = Button(btn_row, text="\U0001F504 Проверить обновления", command=check_updates,
-                            bg=p.BG_INPUT, fg=p.FG_DIM, font=f.DEFAULT,
-                            activebackground=p.BG_ROW_HOVER, padx=10, pady=4)
-        btn_update.pack(side="right")
-        _bind_tip(btn_update, "Проверить наличие новой версии")
+        btn_close = ctk.CTkButton(
+            btn_row, text="Закрыть", command=self.destroy,
+            fg_color="transparent", hover_color=p.BG_ROW_HOVER,
+            text_color=p.FG, border_color=p.BORDER, border_width=1,
+            corner_radius=p.RADIUS_MD, height=BTN_HEIGHT,
+            font=("Segoe UI", 10), width=100,
+        )
+        btn_close.pack(side="right")
 
-        btn_close = Button(btn_row, text="Закрыть", command=self.destroy,
-                           bg=p.BG_INPUT, fg=p.FG_DIM, font=f.DEFAULT,
-                           activebackground=p.BG_ROW_HOVER, padx=10, pady=4)
-        btn_close.pack(side="right", padx=6)
+        btn_update = ctk.CTkButton(
+            btn_row, text="\U0001F504 Обновления",
+            command=check_updates,
+            fg_color="transparent", hover_color=p.BG_ROW_HOVER,
+            text_color=p.FG, border_color=p.BORDER, border_width=1,
+            corner_radius=p.RADIUS_MD, height=BTN_HEIGHT,
+            font=("Segoe UI", 10), width=140,
+        )
+        btn_update.pack(side="right", padx=(0, SPACE_8))
+        _bind_tip(btn_update, "Проверить наличие новой версии")
 
         self.update_idletasks()
         w = self.winfo_reqwidth()
         h = self.winfo_reqheight()
-        # Use rootx/rooty (screen coords) instead of x/y (parent-relative) and
-        # clamp into parent's monitor so the dialog never opens off-screen.
         x = parent.winfo_rootx() + (parent.winfo_width() - w) // 2
         y = parent.winfo_rooty() + (parent.winfo_height() - h) // 2
         wa = ui_scaling.get_work_area_for_window(parent)
@@ -1803,18 +2030,24 @@ class SettingsDialog(Toplevel):
         old_name = self._ent_name.get().strip()
         if old_name:
             self._app._profiles[self._active]["name"] = old_name
-            self._profile_btns[self._active].config(text=f" {old_name} ")
+            self._profile_btns[self._active].configure(text=old_name)
         self._active = idx
         self._ent_name.delete(0, "end")
         self._ent_name.insert(0, self._app._profiles[idx].get("name", f"Профиль {idx + 1}"))
         for i, btn in enumerate(self._profile_btns):
-            btn.config(bg=p.ACCENT if i == idx else p.BG_INPUT,
-                       fg=p.ACCENT_FG if i == idx else p.FG_DIM)
+            is_active = (i == idx)
+            btn.configure(
+                fg_color=p.ACCENT if is_active else "transparent",
+                hover_color=p.ACCENT_H if is_active else p.BG_ROW_HOVER,
+                text_color=p.ACCENT_FG if is_active else p.FG,
+                border_width=0 if is_active else 1,
+                font=("Segoe UI", 9, "bold" if is_active else "normal"),
+            )
 
     def _on_name_change(self, event=None):
         name = self._ent_name.get().strip()
         if name:
-            self._profile_btns[self._active].config(text=f" {name} ")
+            self._profile_btns[self._active].configure(text=name)
 
 
 # ── App ─────────────────────────────────────────────────────
