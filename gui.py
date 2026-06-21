@@ -515,8 +515,10 @@ class SlaveDialog(Toplevel):
         self.update_idletasks()
         pw, py = parent.winfo_rootx(), parent.winfo_rooty()
         pw2, py2 = parent.winfo_width(), parent.winfo_height()
-        w = max(self.winfo_reqwidth(), self.winfo_width())
-        h = max(self.winfo_reqheight(), self.winfo_height())
+        # CTkScrollableFrame doesn't propagate content height to winfo_reqheight,
+        # so we set explicit minimums that accommodate the known form layout.
+        w = max(self.winfo_reqwidth(), self.winfo_width(), ui_scaling.scale(500))
+        h = max(self.winfo_reqheight(), self.winfo_height(), ui_scaling.scale(600))
         wa = ui_scaling.get_work_area_for_window(parent)
         max_h = wa[3] - wa[1] - ui_scaling.scale(8)
         try:
@@ -2065,8 +2067,10 @@ class SettingsDialog(Toplevel):
         _bind_tip(btn_update, "Проверить наличие новой версии")
 
         self.update_idletasks()
-        w = self.winfo_reqwidth()
-        h = self.winfo_reqheight()
+        # CTkScrollableFrame doesn't propagate content height — set explicit
+        # minimums so the dialog opens large enough to show all content.
+        w = max(self.winfo_reqwidth(), ui_scaling.scale(580))
+        h = max(self.winfo_reqheight(), ui_scaling.scale(360))
         x = parent.winfo_rootx() + (parent.winfo_width() - w) // 2
         y = parent.winfo_rooty() + (parent.winfo_height() - h) // 2
         wa = ui_scaling.get_work_area_for_window(parent)
