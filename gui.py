@@ -194,6 +194,24 @@ BTN_HEIGHT = 36
 BTN_MIN_W = 88
 
 
+def _apply_dpi_layout():
+    """Re-compute spacing/sizing constants for the current DPI.
+
+    Called once after ui_scaling.init_root_scaling() in App.__init__,
+    before _build_ui().  Because module globals are resolved at call
+    time, every padx/pady/width/height referencing SPACE_*/BTN_*
+    picks up the DPI-correct value automatically — no per-call-site
+    changes needed.
+    """
+    global SPACE_8, SPACE_16, SPACE_24, SPACE_32, BTN_HEIGHT, BTN_MIN_W
+    SPACE_8 = ui_scaling.scale(8)
+    SPACE_16 = ui_scaling.scale(14)
+    SPACE_24 = ui_scaling.scale(20)
+    SPACE_32 = ui_scaling.scale(28)
+    BTN_HEIGHT = ui_scaling.scale(36)
+    BTN_MIN_W = ui_scaling.scale(88)
+
+
 # ── Persistence: trades ─────────────────────────────────────
 
 def _save_trade(trade: Dict):
@@ -2111,10 +2129,14 @@ class App(ctk.CTk):
         # rendering instead of OS bitmap-scaling. DPI awareness itself is
         # enabled in __main__ before this Tk root is created.
         ui_scaling.init_root_scaling(self)
+        _apply_dpi_layout()
         self.title(f"FTH Trade Copier v{upd_mod.VERSION}" if _UPD_OK else "FTH Trade Copier")
         self.configure(fg_color=p.BG_DEEP)
         self.resizable(True, True)
-        self.minsize(ui_scaling.scale(960), ui_scaling.scale(640))
+        _wa = ui_scaling.get_cursor_work_area(self)
+        _mw = min(ui_scaling.scale(960), _wa[2] - _wa[0] - ui_scaling.scale(16))
+        _mh = min(ui_scaling.scale(640), _wa[3] - _wa[1] - ui_scaling.scale(16))
+        self.minsize(max(1, _mw), max(1, _mh))
 
         # Resolve the window geometry to use for the *first* mapping of the
         # window. If we have a saved geometry on disk (from a previous
@@ -2134,8 +2156,8 @@ class App(ctk.CTk):
                     wa = ui_scaling.get_cursor_work_area(self)
                     sx_, sy_, sw_, sh_ = ui_scaling.clamp_to_work_area(
                         sx_, sy_, sw_, sh_, wa)
-                    mw_ = ui_scaling.scale(960)
-                    mh_ = ui_scaling.scale(640)
+                    mw_ = min(ui_scaling.scale(960), wa[2] - wa[0] - ui_scaling.scale(16))
+                    mh_ = min(ui_scaling.scale(640), wa[3] - wa[1] - ui_scaling.scale(16))
                     sw_ = max(sw_, mw_); sh_ = max(sh_, mh_)
                     initial_geom = (sx_, sy_, sw_, sh_)
                 except Exception:
@@ -3679,8 +3701,8 @@ class App(ctk.CTk):
                     x = int(m.group(3)); y = int(m.group(4))
                     wa = ui_scaling.get_cursor_work_area(self)
                     x, y, w, h = ui_scaling.clamp_to_work_area(x, y, w, h, wa)
-                    mw = ui_scaling.scale(960)
-                    mh = ui_scaling.scale(640)
+                    mw = min(ui_scaling.scale(960), wa[2] - wa[0] - ui_scaling.scale(16))
+                    mh = min(ui_scaling.scale(640), wa[3] - wa[1] - ui_scaling.scale(16))
                     w = max(w, mw); h = max(h, mh)
                     self.geometry(f"{w}x{h}+{x}+{y}")
                 except Exception:
