@@ -530,12 +530,15 @@ class SlaveDialog(Toplevel):
         kw.setdefault("border_width", 1)
         kw.setdefault("text_color", p.FG)
         kw.setdefault("corner_radius", p.RADIUS_MD)
-        kw.setdefault("height", BTN_HEIGHT)
-        kw.setdefault("font", ("Segoe UI", 10))
+        # Compact 28 px entry instead of the global BTN_HEIGHT (36) and a
+        # 9 pt font instead of 10 pt — ~25 % shorter so the whole dialog
+        # shrinks to a more comfortable footprint.
+        kw.setdefault("height", 28)
+        kw.setdefault("font", ("Segoe UI", 9))
         ent = ctk.CTkEntry(parent, textvariable=var, **kw)
         if width is not None:
             # legacy callers pass width in character units — convert to px
-            ent.configure(width=max(60, int(width) * 8))
+            ent.configure(width=max(48, int(width) * 7))
         return ent
 
     def _primary_btn(self, parent, text, cmd, **kw):
@@ -543,8 +546,10 @@ class SlaveDialog(Toplevel):
         kw.setdefault("hover_color", p.ACCENT_H)
         kw.setdefault("text_color", p.ACCENT_FG)
         kw.setdefault("corner_radius", p.RADIUS_MD)
-        kw.setdefault("height", BTN_HEIGHT)
-        kw.setdefault("font", ("Segoe UI", 10, "bold"))
+        # Compact 30 px button in this dialog only (vs the 36 px global
+        # BTN_HEIGHT used by the main window action buttons).
+        kw.setdefault("height", 30)
+        kw.setdefault("font", ("Segoe UI", 9, "bold"))
         return ctk.CTkButton(parent, text=text, command=cmd, **kw)
 
     def _ghost_btn(self, parent, text, cmd, small=False, **kw):
@@ -554,49 +559,55 @@ class SlaveDialog(Toplevel):
         kw.setdefault("border_color", p.BORDER)
         kw.setdefault("border_width", 1)
         kw.setdefault("corner_radius", p.RADIUS_MD)
-        kw.setdefault("height", 26 if small else BTN_HEIGHT)
-        kw.setdefault("font", ("Segoe UI", 9 if small else 10))
+        # Match the compact 30 px / 22 px (small) sizing used elsewhere in
+        # SlaveDialog so all buttons share one consistent rhythm.
+        kw.setdefault("height", 22 if small else 30)
+        kw.setdefault("font", ("Segoe UI", 8 if small else 9))
         if small:
-            kw.setdefault("width", 32)
+            kw.setdefault("width", 28)
         return ctk.CTkButton(parent, text=text, command=cmd, **kw)
 
     def _divider(self, parent):
         return ctk.CTkFrame(parent, fg_color=p.BORDER_LIGHT, height=1)
 
     def _build(self, data: Dict):
+        # Compact dialog: tighter padding than the main-window
+        # SP/SP_SM grid so the whole window shrinks ~25 %.
+        SP = 12   # primary inter-section padding (was SP=14)
+        SP_SM = 8 # tight padding (was SP_SM=8 — unchanged)
         # Single Card host
         card = _widgets.Card(self, padding=0)
-        card.pack(fill="both", expand=True, padx=SPACE_16, pady=SPACE_16)
+        card.pack(fill="both", expand=True, padx=SP, pady=SP)
 
         # ── Section: АККАУНТ ─────────────────────────────
         self._section_title(card, "Аккаунт").pack(
-            anchor="w", padx=SPACE_16, pady=(SPACE_16, SPACE_8),
+            anchor="w", padx=SP, pady=(SP, SP_SM),
         )
 
         frm_top = ctk.CTkFrame(card, fg_color="transparent")
-        frm_top.pack(fill="x", padx=SPACE_16)
+        frm_top.pack(fill="x", padx=SP)
         frm_top.columnconfigure(1, weight=1)
 
         self._field_label(frm_top, "Имя").grid(row=0, column=0, sticky="w", pady=4)
         self.var_name = tk.StringVar(value=data.get("name", ""))
         self._soft_entry(frm_top, self.var_name).grid(
-            row=0, column=1, sticky="ew", padx=(SPACE_8, 0), pady=4,
+            row=0, column=1, sticky="ew", padx=(SP_SM, 0), pady=4,
         )
 
         self._field_label(frm_top, "terminal64.exe").grid(row=1, column=0, sticky="w", pady=4)
         self.var_path = tk.StringVar(value=data.get("path", ""))
         path_frame = ctk.CTkFrame(frm_top, fg_color="transparent")
-        path_frame.grid(row=1, column=1, sticky="ew", padx=(SPACE_8, 0), pady=4)
+        path_frame.grid(row=1, column=1, sticky="ew", padx=(SP_SM, 0), pady=4)
         self._soft_entry(path_frame, self.var_path).pack(side="left", fill="x", expand=True)
         btn_browse_s = self._ghost_btn(path_frame, "…", self._browse, small=True)
-        btn_browse_s.pack(side="left", padx=(SPACE_8, 0))
+        btn_browse_s.pack(side="left", padx=(SP_SM, 0))
         _bind_tip(btn_browse_s, "Выбрать путь к terminal64.exe слейва")
 
-        self._divider(card).pack(fill="x", padx=SPACE_16, pady=SPACE_16)
+        self._divider(card).pack(fill="x", padx=SP, pady=SP)
 
         # ── Section: СИМВОЛЫ ─────────────────────────────
         sym_header = ctk.CTkFrame(card, fg_color="transparent")
-        sym_header.pack(fill="x", padx=SPACE_16, pady=(0, SPACE_8))
+        sym_header.pack(fill="x", padx=SP, pady=(0, SP_SM))
         self._section_title(
             sym_header, "Символы (мастер → слейв)",
         ).pack(side="left")
@@ -611,10 +622,10 @@ class SlaveDialog(Toplevel):
             card, text="", text_color=p.FG_DIM, font=("Segoe UI", 9),
             anchor="w",
         )
-        self.lbl_sym_status.pack(anchor="w", padx=SPACE_16)
+        self.lbl_sym_status.pack(anchor="w", padx=SP)
 
         self.sym_frame = ctk.CTkFrame(card, fg_color="transparent")
-        self.sym_frame.pack(fill="x", padx=SPACE_16, pady=4)
+        self.sym_frame.pack(fill="x", padx=SP, pady=4)
 
         symbol_map = data.get("symbol_map", {})
         for master_sym, slave_sym in symbol_map.items():
@@ -622,38 +633,38 @@ class SlaveDialog(Toplevel):
 
         btn_add_sym = self._ghost_btn(card, "+ Символ", self._add_symbol_row, small=True)
         btn_add_sym.configure(width=110)
-        btn_add_sym.pack(anchor="w", padx=SPACE_16, pady=(2, 0))
+        btn_add_sym.pack(anchor="w", padx=SP, pady=(2, 0))
         _bind_tip(btn_add_sym, "Добавить строку маппинга символов")
 
-        self._divider(card).pack(fill="x", padx=SPACE_16, pady=SPACE_16)
+        self._divider(card).pack(fill="x", padx=SP, pady=SP)
 
         # ── Section: РИСК ──────────────────────────────────
         self._section_title(card, "Риск").pack(
-            anchor="w", padx=SPACE_16, pady=(0, SPACE_8),
+            anchor="w", padx=SP, pady=(0, SP_SM),
         )
         frm_risk = ctk.CTkFrame(card, fg_color="transparent")
-        frm_risk.pack(fill="x", padx=SPACE_16)
+        frm_risk.pack(fill="x", padx=SP)
 
         self.var_risk_type = tk.StringVar(value=data.get("risk_type", "percent"))
         risk_value = data.get("risk_value", 1.0)
         risk_type = data.get("risk_type", "percent")
 
         # Compact-numeric width for short money/percent inputs.
-        NUM_W = 90
+        NUM_W = 68
 
         self._field_label(frm_risk, "Риск %").grid(row=0, column=0, sticky="w", pady=3)
         self.var_risk_pct = tk.StringVar(
             value=str(risk_value) if risk_type == "percent" else "")
         ent_pct = self._soft_entry(frm_risk, self.var_risk_pct)
         ent_pct.configure(width=NUM_W)
-        ent_pct.grid(row=0, column=1, sticky="w", padx=(SPACE_8, 0), pady=3)
+        ent_pct.grid(row=0, column=1, sticky="w", padx=(SP_SM, 0), pady=3)
 
         self._field_label(frm_risk, "Риск $").grid(row=1, column=0, sticky="w", pady=3)
         self.var_risk_doll = tk.StringVar(
             value=str(risk_value) if risk_type == "fixed" else "")
         ent_doll = self._soft_entry(frm_risk, self.var_risk_doll)
         ent_doll.configure(width=NUM_W)
-        ent_doll.grid(row=1, column=1, sticky="w", padx=(SPACE_8, 0), pady=3)
+        ent_doll.grid(row=1, column=1, sticky="w", padx=(SP_SM, 0), pady=3)
 
         self.lbl_risk_hint = ctk.CTkLabel(
             frm_risk, text="", text_color=p.FG_DIM, font=("Segoe UI", 9),
@@ -668,50 +679,50 @@ class SlaveDialog(Toplevel):
         self.var_default_lot = tk.StringVar(value=str(data.get("default_lot", "0.01")))
         ent_lot = self._soft_entry(frm_risk, self.var_default_lot)
         ent_lot.configure(width=NUM_W)
-        ent_lot.grid(row=3, column=1, sticky="w", padx=(SPACE_8, 0), pady=3)
+        ent_lot.grid(row=3, column=1, sticky="w", padx=(SP_SM, 0), pady=3)
 
         self._field_label(frm_risk, "Макс. просадка %").grid(row=4, column=0, sticky="w", pady=3)
         self.var_max_drawdown = tk.StringVar(value=str(data.get("max_drawdown", 0)))
         ent_dd = self._soft_entry(frm_risk, self.var_max_drawdown)
         ent_dd.configure(width=NUM_W)
-        ent_dd.grid(row=4, column=1, sticky="w", padx=(SPACE_8, 0), pady=3)
+        ent_dd.grid(row=4, column=1, sticky="w", padx=(SP_SM, 0), pady=3)
         ctk.CTkLabel(
             frm_risk, text="0 = выкл", text_color=p.FG_DIM,
             font=("Segoe UI", 9),
-        ).grid(row=5, column=1, sticky="w", padx=(SPACE_8, 0))
+        ).grid(row=5, column=1, sticky="w", padx=(SP_SM, 0))
 
         self._field_label(frm_risk, "Макс. сделок/день").grid(row=6, column=0, sticky="w", pady=3)
         self.var_max_trades = tk.StringVar(value=str(data.get("max_trades_per_day", 0)))
         ent_trd = self._soft_entry(frm_risk, self.var_max_trades)
         ent_trd.configure(width=NUM_W)
-        ent_trd.grid(row=6, column=1, sticky="w", padx=(SPACE_8, 0), pady=3)
+        ent_trd.grid(row=6, column=1, sticky="w", padx=(SP_SM, 0), pady=3)
         ctk.CTkLabel(
             frm_risk, text="0 = выкл", text_color=p.FG_DIM,
             font=("Segoe UI", 9),
-        ).grid(row=7, column=1, sticky="w", padx=(SPACE_8, 0))
+        ).grid(row=7, column=1, sticky="w", padx=(SP_SM, 0))
 
         self._field_label(frm_risk, "Макс. убыт/день $").grid(row=8, column=0, sticky="w", pady=3)
         self.var_daily_loss = tk.StringVar(value=str(data.get("daily_loss_limit", 0)))
         ent_dl = self._soft_entry(frm_risk, self.var_daily_loss)
         ent_dl.configure(width=NUM_W)
-        ent_dl.grid(row=8, column=1, sticky="w", padx=(SPACE_8, 0), pady=3)
+        ent_dl.grid(row=8, column=1, sticky="w", padx=(SP_SM, 0), pady=3)
         ctk.CTkLabel(
             frm_risk, text="0 = выкл", text_color=p.FG_DIM,
             font=("Segoe UI", 9),
-        ).grid(row=9, column=1, sticky="w", padx=(SPACE_8, 0))
+        ).grid(row=9, column=1, sticky="w", padx=(SP_SM, 0))
 
-        self._divider(card).pack(fill="x", padx=SPACE_16, pady=SPACE_16)
+        self._divider(card).pack(fill="x", padx=SP, pady=SP)
 
         # ── Actions row ────────────────────────────────────
         btn_frame = ctk.CTkFrame(card, fg_color="transparent")
-        btn_frame.pack(pady=(0, SPACE_16))
+        btn_frame.pack(pady=(0, SP))
         btn_save = self._primary_btn(btn_frame, "Сохранить", self._save)
         btn_save.configure(width=140)
-        btn_save.pack(side="left", padx=SPACE_8)
+        btn_save.pack(side="left", padx=SP_SM)
         _bind_tip(btn_save, "Сохранить настройки аккаунта")
         btn_cancel = self._ghost_btn(btn_frame, "Отмена", self.destroy)
         btn_cancel.configure(width=120)
-        btn_cancel.pack(side="left", padx=SPACE_8)
+        btn_cancel.pack(side="left", padx=SP_SM)
         _bind_tip(btn_cancel, "Закрыть без сохранения")
 
     def _get_ref_balance(self) -> float:
