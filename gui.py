@@ -1109,11 +1109,12 @@ class AccountRow:
         self.sw_enabled = _widgets.Toggle(
             self._parent, variable=self.var_enabled,
             command=self._toggle,
-            width=26, height=14, knob_pad=3,
+            width=ui_scaling.scale(26), height=ui_scaling.scale(14),
+            knob_pad=ui_scaling.scale(3),
             bg_color=bg,
         )
-        self.sw_enabled.grid(row=r, column=0, padx=(12, 6), pady=3,
-                             sticky="w")
+        self.sw_enabled.grid(row=r, column=0, padx=(ui_scaling.scale(12), ui_scaling.scale(6)),
+                             pady=ui_scaling.scale(3), sticky="w")
         _bind_tip(self.sw_enabled, "Включить / выключить аккаунт")
         self._widgets.append(self.sw_enabled)
         # Back-compat: legacy code reads ``lbl_check`` for the on/off icon.
@@ -1127,9 +1128,10 @@ class AccountRow:
         # 10 px gives the AA enough room and matches the chip-row visual
         # weight better.
         self._dot = _widgets.IconCircle(
-            self._parent, size=10, tint=p.FG_DIM,
+            self._parent, size=ui_scaling.scale(10), tint=p.FG_DIM,
         )
-        self._dot.grid(row=r, column=1, padx=(0, 6), pady=3, sticky="")
+        self._dot.grid(row=r, column=1, padx=(0, ui_scaling.scale(6)),
+                       pady=ui_scaling.scale(3), sticky="")
         self._widgets.append(self._dot)
 
         # ── col 2 — name ────────────────────────────────
@@ -1759,7 +1761,7 @@ class ActivationWindow(Toplevel):
         self.lbl_status = ctk.CTkLabel(
             self._status_card, text="", text_color=p.FG_DIM,
             font=("Segoe UI", 9), anchor="w", justify="left",
-            wraplength=200,  # safe fallback before the first <Configure>
+            wraplength=ui_scaling.scale(200),  # safe fallback before the first <Configure>
         )
         self.lbl_status.pack(anchor="w", fill="x")
         # Reserve 3 lines of height so the window never resizes when
@@ -2155,6 +2157,11 @@ class App(ctk.CTk):
             if m:
                 try:
                     sw_ = int(m.group(1)); sh_ = int(m.group(2))
+                    saved_dpi = saved_window.get("dpi")
+                    cur_dpi = ui_scaling.current_dpi()
+                    if isinstance(saved_dpi, (int, float)) and saved_dpi > 0 and saved_dpi != cur_dpi:
+                        _ratio = cur_dpi / saved_dpi
+                        sw_ = int(sw_ * _ratio); sh_ = int(sh_ * _ratio)
                     sx_ = int(m.group(3)); sy_ = int(m.group(4))
                     wa = ui_scaling.get_cursor_work_area(self)
                     sx_, sy_, sw_, sh_ = ui_scaling.clamp_to_work_area(
@@ -2210,6 +2217,7 @@ class App(ctk.CTk):
         self._rows: List[AccountRow] = []
         self._trader = None
         self._check_timer = None
+        self._dpi_timer = None
         self._session_stats = {"copied": 0, "failed": 0}
         self._min_lot_mode = False
         self._tray_icon = None
@@ -2248,6 +2256,7 @@ class App(ctk.CTk):
         self.after(300, self._schedule_license_check)
         self.after(500, self._schedule_check)
         self.after(800, self._check_update)
+        self.after(2000, self._check_dpi_change)
 
     def _first_show(self) -> None:
         """Idle-queue callback that deiconifies the root window and
@@ -2274,6 +2283,25 @@ class App(ctk.CTk):
             self.attributes("-alpha", 1.0)
         except Exception:
             pass
+
+    def _check_dpi_change(self):
+        """Poll the window's monitor DPI every 2 s. If it changed (e.g. the
+        user dragged the window to a 200 % monitor), re-apply tk scaling
+        and layout constants so fonts and new widgets match the new DPI.
+
+        Existing widgets keep their pixel sizes (Tk doesn't auto-relayout on
+        tk scaling changes), but fonts re-render at the correct size and any
+        subsequently created widgets (new slave rows, dialogs) pick up the
+        new scale automatically.
+        """
+        try:
+            new_dpi = ui_scaling.get_window_dpi(self)
+            if new_dpi != ui_scaling.current_dpi():
+                ui_scaling.update_scale_for_dpi(new_dpi, self)
+                _apply_dpi_layout()
+        except Exception:
+            pass
+        self._dpi_timer = self.after(2000, self._check_dpi_change)
 
     def _paste_global(self, event=None):
         try:
@@ -3686,6 +3714,7 @@ class App(ctk.CTk):
                 "geometry": geom,
                 "zoomed": st == "zoomed",
                 "sash_y": sash_y,
+                "dpi": ui_scaling.current_dpi(),
             }
         except Exception:
             # Don't let UI state capture ever break config save.
@@ -3701,6 +3730,14 @@ class App(ctk.CTk):
             if m:
                 try:
                     w = int(m.group(1)); h = int(m.group(2))
+                    # DPI rescaling: if the saved geometry was captured at a
+                    # different DPI, rescale proportionally so the window
+                    # appears at the same physical size.
+                    saved_dpi = st.get("dpi")
+                    cur_dpi = ui_scaling.current_dpi()
+                    if isinstance(saved_dpi, (int, float)) and saved_dpi > 0 and saved_dpi != cur_dpi:
+                        ratio = cur_dpi / saved_dpi
+                        w = int(w * ratio); h = int(h * ratio)
                     x = int(m.group(3)); y = int(m.group(4))
                     wa = ui_scaling.get_cursor_work_area(self)
                     x, y, w, h = ui_scaling.clamp_to_work_area(x, y, w, h, wa)

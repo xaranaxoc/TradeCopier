@@ -111,6 +111,41 @@ def current_dpi() -> int:
     return _DPI
 
 
+def get_window_dpi(root) -> int:
+    """Return the DPI of the monitor the given Tk window is currently on.
+
+    Uses Win10 1607+ ``GetDpiForWindow``; falls back to the cached primary
+    DPI if the API is unavailable or the hwnd can't be resolved.
+    """
+    if sys.platform.startswith("win"):
+        try:
+            hwnd = ctypes.windll.user32.GetParent(int(root.winfo_id()))
+            if not hwnd:
+                hwnd = int(root.winfo_id())
+            dpi = ctypes.windll.user32.GetDpiForWindow(hwnd)
+            if dpi and dpi > 0:
+                return int(dpi)
+        except (AttributeError, OSError, Exception):
+            pass
+    return _DPI
+
+
+def update_scale_for_dpi(dpi: int, root) -> float:
+    """Re-cache ``_SCALE``/``_DPI`` and re-apply ``tk scaling`` for *dpi*.
+
+    Called by the DPI-change handler when the window moves to a monitor
+    with a different DPI.  Returns the new effective scale.
+    """
+    global _SCALE, _DPI
+    _DPI = max(96, int(dpi))
+    _SCALE = max(0.75, _DPI / 96.0)
+    try:
+        root.tk.call("tk", "scaling", _DPI / 72.0)
+    except Exception:
+        pass
+    return _SCALE
+
+
 def get_cursor_work_area(root=None):
     """Return ``(left, top, right, bottom)`` work area (excluding taskbar) of
     the monitor under the mouse cursor.
@@ -251,6 +286,8 @@ __all__ = [
     "fpt",
     "current_scale",
     "current_dpi",
+    "get_window_dpi",
+    "update_scale_for_dpi",
     "get_cursor_work_area",
     "get_work_area_for_window",
     "clamp_to_work_area",
