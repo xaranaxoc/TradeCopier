@@ -1,14 +1,22 @@
 @echo off
 chcp 65001 >nul
 echo ============================================
-echo   FTH Trade Copier — Nuitka Build (onefile)
+echo   FTH Trade Copier — Nuitka Build (standalone/portable)
 echo ============================================
 echo.
 
-set PYTHON=python
+REM --- Python path ---
+set "PYTHON=C:\Users\bu4ukeec\AppData\Local\Programs\Python\Python314\python.exe"
+if not exist "%PYTHON%" set "PYTHON=python"
+"%PYTHON%" --version >nul 2>&1
+if %errorlevel% neq 0 (
+    echo ОШИБКА: Python не найден
+    pause
+    exit /b 1
+)
 
 echo [1/3] Установка зависимостей...
-%PYTHON% -m pip install nuitka ordered-set zstandard MetaTrader5 psutil pystray Pillow requests customtkinter
+"%PYTHON%" -m pip install -r requirements.txt nuitka ordered-set zstandard pystray Pillow
 if %errorlevel% neq 0 (
     echo ОШИБКА: не удалось установить зависимости
     pause
@@ -16,12 +24,11 @@ if %errorlevel% neq 0 (
 )
 
 echo.
-echo [2/3] Компиляция Nuitka (5-15 мин, первый раз дольше — скачает MinGW)...
+echo [2/3] Компиляция Nuitka standalone (5-15 мин)...
 echo.
 
-%PYTHON% -m nuitka ^
+"%PYTHON%" -m nuitka ^
     --standalone ^
-    --onefile ^
     --windows-console-mode=disable ^
     --windows-icon-from-ico=img/convertico-fth.ico ^
     --output-filename=FTHTradeCopier.exe ^
@@ -59,9 +66,20 @@ if %errorlevel% neq 0 (
 )
 
 echo.
-echo [3/3] Готово!
+echo [3/3] Переименование папки...
+if exist "dist\FTHTradeCopier" rmdir /s /q "dist\FTHTradeCopier"
+rename "dist\gui.dist" "FTHTradeCopier"
+if %errorlevel% neq 0 (
+    echo ВНИМАНИЕ: не удалось переименовать gui.dist ^> FTHTradeCopier
+    echo Папка сборки: dist\gui.dist
+) else (
+    echo Папка: dist\FTHTradeCopier
+)
+
+echo.
 echo ============================================
-echo   Файл: dist\FTHTradeCopier.exe
+echo   Готово! Portable: dist\FTHTradeCopier\
+echo   EXE: dist\FTHTradeCopier\FTHTradeCopier.exe
 echo ============================================
 echo.
 pause
