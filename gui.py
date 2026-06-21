@@ -493,9 +493,8 @@ class SlaveDialog(Toplevel):
         self._skip_suggest = True
         self._edit_id = (slave_data or {}).get("id", "")
         self.title("Настройки аккаунта")
-        # Horizontal-only resize. The form sizes vertically to content; horizontal
-        # growth gives extra room to symbol-pair inputs and terminal paths.
-        self.resizable(True, False)
+        # Both axes resizable: vertical scroll kicks in on small screens.
+        self.resizable(True, True)
         self.configure(fg_color=p.BG_DEEP)
         self.withdraw()
         icon = ICON_CYAN if getattr(parent, '_trader', None) and parent._trader.is_running() else ICON_DEFAULT
@@ -518,13 +517,14 @@ class SlaveDialog(Toplevel):
         pw2, py2 = parent.winfo_width(), parent.winfo_height()
         w = max(self.winfo_reqwidth(), self.winfo_width())
         h = max(self.winfo_reqheight(), self.winfo_height())
+        wa = ui_scaling.get_work_area_for_window(parent)
+        max_h = wa[3] - wa[1] - ui_scaling.scale(8)
         try:
-            self.minsize(w, h)
+            self.minsize(max(w, ui_scaling.scale(320)), min(h, max_h))
         except Exception:
             pass
         x = pw + (pw2 - w) // 2
         y = py + (py2 - h) // 2
-        wa = ui_scaling.get_work_area_for_window(parent)
         x, y, w, h = ui_scaling.clamp_to_work_area(x, y, w, h, wa)
         self.geometry(f"{w}x{h}+{x}+{y}")
 
@@ -593,16 +593,18 @@ class SlaveDialog(Toplevel):
         # SP/SP_SM grid so the whole window shrinks ~25 %.
         SP = 12   # primary inter-section padding (was SP=14)
         SP_SM = 8 # tight padding (was SP_SM=8 — unchanged)
-        # Single Card host
         card = _widgets.Card(self, padding=0)
         card.pack(fill="both", expand=True, padx=SP, pady=SP)
+        form = ctk.CTkScrollableFrame(card, fg_color="transparent",
+                                      scrollbar_button_color=p.BG_INPUT)
+        form.pack(fill="both", expand=True)
 
         # ── Section: АККАУНТ ─────────────────────────────
-        self._section_title(card, "Аккаунт").pack(
+        self._section_title(form, "Аккаунт").pack(
             anchor="w", padx=SP, pady=(SP, SP_SM),
         )
 
-        frm_top = ctk.CTkFrame(card, fg_color="transparent")
+        frm_top = ctk.CTkFrame(form, fg_color="transparent")
         frm_top.pack(fill="x", padx=SP)
         frm_top.columnconfigure(1, weight=1)
 
@@ -621,10 +623,10 @@ class SlaveDialog(Toplevel):
         btn_browse_s.pack(side="left", padx=(SP_SM, 0))
         _bind_tip(btn_browse_s, "Выбрать путь к terminal64.exe слейва")
 
-        self._divider(card).pack(fill="x", padx=SP, pady=SP)
+        self._divider(form).pack(fill="x", padx=SP, pady=SP)
 
         # ── Section: СИМВОЛЫ ─────────────────────────────
-        sym_header = ctk.CTkFrame(card, fg_color="transparent")
+        sym_header = ctk.CTkFrame(form, fg_color="transparent")
         sym_header.pack(fill="x", padx=SP, pady=(0, SP_SM))
         self._section_title(
             sym_header, "Символы (мастер → слейв)",
@@ -637,30 +639,30 @@ class SlaveDialog(Toplevel):
         _bind_tip(btn_load, "Загрузить символы из запущенных терминалов")
 
         self.lbl_sym_status = ctk.CTkLabel(
-            card, text="", text_color=p.FG_DIM, font=("Segoe UI", 9),
+            form, text="", text_color=p.FG_DIM, font=("Segoe UI", 9),
             anchor="w",
         )
         self.lbl_sym_status.pack(anchor="w", padx=SP)
 
-        self.sym_frame = ctk.CTkFrame(card, fg_color="transparent")
+        self.sym_frame = ctk.CTkFrame(form, fg_color="transparent")
         self.sym_frame.pack(fill="x", padx=SP, pady=4)
 
         symbol_map = data.get("symbol_map", {})
         for master_sym, slave_sym in symbol_map.items():
             self._add_symbol_row(master_sym, slave_sym)
 
-        btn_add_sym = self._ghost_btn(card, "+ Символ", self._add_symbol_row, small=True)
+        btn_add_sym = self._ghost_btn(form, "+ Символ", self._add_symbol_row, small=True)
         btn_add_sym.configure(width=110)
         btn_add_sym.pack(anchor="w", padx=SP, pady=(2, 0))
         _bind_tip(btn_add_sym, "Добавить строку маппинга символов")
 
-        self._divider(card).pack(fill="x", padx=SP, pady=SP)
+        self._divider(form).pack(fill="x", padx=SP, pady=SP)
 
         # ── Section: РИСК ──────────────────────────────────
-        self._section_title(card, "Риск").pack(
+        self._section_title(form, "Риск").pack(
             anchor="w", padx=SP, pady=(0, SP_SM),
         )
-        frm_risk = ctk.CTkFrame(card, fg_color="transparent")
+        frm_risk = ctk.CTkFrame(form, fg_color="transparent")
         frm_risk.pack(fill="x", padx=SP)
 
         self.var_risk_type = tk.StringVar(value=data.get("risk_type", "percent"))
@@ -729,7 +731,7 @@ class SlaveDialog(Toplevel):
             font=("Segoe UI", 9),
         ).grid(row=9, column=1, sticky="w", padx=(SP_SM, 0))
 
-        self._divider(card).pack(fill="x", padx=SP, pady=SP)
+        self._divider(form).pack(fill="x", padx=SP, pady=SP)
 
         # ── Actions row ────────────────────────────────────
         btn_frame = ctk.CTkFrame(card, fg_color="transparent")
@@ -1844,7 +1846,7 @@ class SettingsDialog(Toplevel):
         super().__init__(parent)
         self.title("Настройки")
         self.configure(fg_color=p.BG_DEEP)
-        self.resizable(False, False)
+        self.resizable(True, True)
         self.transient(parent)
         self.grab_set()
         if os.path.exists(ICON_DEFAULT):
@@ -1862,7 +1864,8 @@ class SettingsDialog(Toplevel):
         card = _widgets.Card(outer, padding=0)
         card.pack(fill="both", expand=True)
 
-        body = ctk.CTkFrame(card, fg_color="transparent")
+        body = ctk.CTkScrollableFrame(card, fg_color="transparent",
+                                      scrollbar_button_color=p.BG_INPUT)
         body.pack(fill="both", expand=True, padx=SPACE_24, pady=SPACE_24)
 
         # ── Section: ПРОФИЛИ ────────────────────────────
