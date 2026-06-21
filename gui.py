@@ -1855,7 +1855,7 @@ class SettingsDialog(Toplevel):
         super().__init__(parent)
         self.title("Настройки")
         self.configure(fg_color=p.BG_DEEP)
-        self.resizable(True, True)
+        self.resizable(False, False)
         self.transient(parent)
         self.grab_set()
         if os.path.exists(ICON_DEFAULT):
@@ -1979,7 +1979,7 @@ class SettingsDialog(Toplevel):
 
         # ── Actions row ────────────────────────────────────
         btn_row = ctk.CTkFrame(body, fg_color="transparent")
-        btn_row.pack(fill="x")
+        btn_row.pack(side="bottom", fill="x")
 
         def switch_profile():
             new_name = self._ent_name.get().strip()
@@ -2057,7 +2057,7 @@ class SettingsDialog(Toplevel):
             corner_radius=p.RADIUS_MD, height=BTN_HEIGHT,
             font=("Segoe UI", 10), width=100,
         )
-        btn_close.pack(side="right")
+        btn_close.pack(side="left", padx=(SPACE_8, 0))
 
         btn_update = ctk.CTkButton(
             btn_row, text="\U0001F504 Обновления",
@@ -2067,12 +2067,12 @@ class SettingsDialog(Toplevel):
             corner_radius=p.RADIUS_MD, height=BTN_HEIGHT,
             font=("Segoe UI", 10), width=140,
         )
-        btn_update.pack(side="right", padx=(0, SPACE_8))
+        btn_update.pack(side="left", padx=(SPACE_8, 0))
         _bind_tip(btn_update, "Проверить наличие новой версии")
 
         self.update_idletasks()
-        w = max(self.winfo_reqwidth(), ui_scaling.scale(580))
-        h = max(self.winfo_reqheight(), ui_scaling.scale(440))
+        w = max(self.winfo_reqwidth(), ui_scaling.scale(520))
+        h = self.winfo_reqheight() + ui_scaling.scale(4)
         wa = ui_scaling.get_work_area_for_window(parent)
         h = min(h, wa[3] - wa[1] - ui_scaling.scale(8))
         w = min(w, wa[2] - wa[0] - ui_scaling.scale(16))
