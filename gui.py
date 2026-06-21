@@ -1606,14 +1606,14 @@ class ActivationWindow(Toplevel):
         x = wl + ((wr - wl) - w) // 2
         y = wt + ((wb - wt) - h) // 2
         x, y, w, h = ui_scaling.clamp_to_work_area(x, y, w, h, wa)
-        self.geometry(f"{w}x{h}+{x}+{y}")
-        self.update_idletasks()
+        # Lock minimum window size to the laid-out requested size so the
+        # user can't shrink it below what fits the form, and the status
+        # label always has enough horizontal space for the longest line.
         try:
-            fw = self._status_card.winfo_width()
-            if fw > 20:
-                self.lbl_status.configure(wraplength=fw - 16)
+            self.minsize(max(w, ui_scaling.scale(360)), h)
         except Exception:
             pass
+        self.geometry(f"{w}x{h}+{x}+{y}")
 
     def _set_status(self, text, fg=None):
         self.lbl_status.configure(text=text, text_color=fg or p.FG_DIM)
@@ -1651,16 +1651,19 @@ class ActivationWindow(Toplevel):
         return ent
 
     def _build(self):
-        # Outer breathing room so the centred card has visible margins on
-        # the page background.
-        outer = ctk.CTkFrame(self, fg_color="transparent")
-        outer.pack(fill="both", expand=True, padx=SPACE_24, pady=SPACE_24)
-
-        card = _widgets.Card(outer, padding=0)
-        card.pack(fill="both", expand=True)
+        # Single Card host on the page bg.  Earlier version wrapped the card
+        # in an outer transparent frame with another 24 px padx/pady, which
+        # combined with the card's own 24 px inner padding ate 96 px of
+        # horizontal real estate at 320 px window width — the status label
+        # ended up with ~220 px usable, not enough for "Код отправлен
+        # в Telegram. Проверьте личные сообщения." which
+        # wrapped/clipped instead of fitting.  Drop the outer wrap and let
+        # the card sit directly on BG_DEEP with its own padding.
+        card = _widgets.Card(self, padding=0)
+        card.pack(fill="both", expand=True, padx=SPACE_16, pady=SPACE_16)
 
         body = ctk.CTkFrame(card, fg_color="transparent")
-        body.pack(fill="both", expand=True, padx=SPACE_24, pady=SPACE_24)
+        body.pack(fill="both", expand=True, padx=SPACE_16, pady=SPACE_16)
 
         # Logo
         logo_path = os.path.join(IMG_DIR, "convertico-fth_48x48.png")
@@ -1714,13 +1717,18 @@ class ActivationWindow(Toplevel):
         )
         btn_verify.pack(fill="x", pady=(0, SPACE_16))
 
-        # Status area — inside a thin frame so we can read its width to
-        # set wraplength dynamically.
+        # Status area.  Fixed-height frame so the window never resizes
+        # when multi-line status text appears; <Configure> binding updates
+        # the label's wraplength to the current frame width so messages
+        # wrap inside the visible area (the previous one-shot reading
+        # happened before the first geometry settle and left wraplength
+        # at 0, clipping long messages on the right).
         self._status_card = ctk.CTkFrame(body, fg_color="transparent")
         self._status_card.pack(fill="x")
         self.lbl_status = ctk.CTkLabel(
             self._status_card, text="", text_color=p.FG_DIM,
             font=("Segoe UI", 9), anchor="w", justify="left",
+            wraplength=200,  # safe fallback before the first <Configure>
         )
         self.lbl_status.pack(anchor="w", fill="x")
         # Reserve 3 lines of height so the window never resizes when
@@ -1729,6 +1737,11 @@ class ActivationWindow(Toplevel):
         _sm_h = tkfont.Font(family="Segoe UI", size=9).metrics("linespace")
         self._status_card.configure(height=_sm_h * 3 + 8)
         self._status_card.pack_propagate(False)
+
+        def _sync_wraplength(event):
+            if event.width > 20:
+                self.lbl_status.configure(wraplength=event.width - 4)
+        self._status_card.bind("<Configure>", _sync_wraplength)
 
     def _request_code(self):
         tg = self.var_tg_id.get().strip()
