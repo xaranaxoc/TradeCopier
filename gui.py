@@ -515,20 +515,24 @@ class SlaveDialog(Toplevel):
         self.update_idletasks()
         pw, py = parent.winfo_rootx(), parent.winfo_rooty()
         pw2, py2 = parent.winfo_width(), parent.winfo_height()
-        # CTkScrollableFrame doesn't propagate content height to winfo_reqheight,
-        # so we set explicit minimums that accommodate the known form layout.
         w = max(self.winfo_reqwidth(), self.winfo_width(), ui_scaling.scale(500))
-        h = max(self.winfo_reqheight(), self.winfo_height(), ui_scaling.scale(600))
+        h = max(self.winfo_reqheight(), self.winfo_height(), ui_scaling.scale(680))
         wa = ui_scaling.get_work_area_for_window(parent)
         max_h = wa[3] - wa[1] - ui_scaling.scale(8)
+        h = min(h, max_h)
+        w = min(w, wa[2] - wa[0] - ui_scaling.scale(16))
         try:
-            self.minsize(max(w, ui_scaling.scale(320)), min(h, max_h))
+            self.minsize(w, h)
         except Exception:
             pass
         x = pw + (pw2 - w) // 2
         y = py + (py2 - h) // 2
         x, y, w, h = ui_scaling.clamp_to_work_area(x, y, w, h, wa)
-        self.geometry(f"{w}x{h}+{x}+{y}")
+        geom = f"{w}x{h}+{x}+{y}"
+        self.force_geometry(geom)
+        # CTkToplevel has 200ms-delayed internal callbacks that can override
+        # the geometry. Re-apply after they settle.
+        self.after(300, lambda: self.force_geometry(geom))
 
     # ── Soft styling helpers ─────────────────────────
     def _section_title(self, parent, text):
@@ -598,8 +602,9 @@ class SlaveDialog(Toplevel):
         card = _widgets.Card(self, padding=0)
         card.pack(fill="both", expand=True, padx=SP, pady=SP)
         form = ctk.CTkScrollableFrame(card, fg_color="transparent",
-                                      scrollbar_button_color=p.BG_INPUT)
-        form.pack(fill="both", expand=True)
+                                      scrollbar_button_color=p.BG_INPUT,
+                                      height=ui_scaling.scale(560))
+        form.pack(side="top", fill="both", expand=True)
 
         # ── Section: АККАУНТ ─────────────────────────────
         self._section_title(form, "Аккаунт").pack(
@@ -737,7 +742,7 @@ class SlaveDialog(Toplevel):
 
         # ── Actions row ────────────────────────────────────
         btn_frame = ctk.CTkFrame(card, fg_color="transparent")
-        btn_frame.pack(pady=(0, SP))
+        btn_frame.pack(side="bottom", fill="x", pady=(0, SP))
         btn_save = self._primary_btn(btn_frame, "Сохранить", self._save)
         btn_save.configure(width=140)
         btn_save.pack(side="left", padx=SP_SM)
@@ -1868,8 +1873,7 @@ class SettingsDialog(Toplevel):
         card = _widgets.Card(outer, padding=0)
         card.pack(fill="both", expand=True)
 
-        body = ctk.CTkScrollableFrame(card, fg_color="transparent",
-                                      scrollbar_button_color=p.BG_INPUT)
+        body = ctk.CTkFrame(card, fg_color="transparent")
         body.pack(fill="both", expand=True, padx=SPACE_24, pady=SPACE_24)
 
         # ── Section: ПРОФИЛИ ────────────────────────────
@@ -2067,15 +2071,21 @@ class SettingsDialog(Toplevel):
         _bind_tip(btn_update, "Проверить наличие новой версии")
 
         self.update_idletasks()
-        # CTkScrollableFrame doesn't propagate content height — set explicit
-        # minimums so the dialog opens large enough to show all content.
         w = max(self.winfo_reqwidth(), ui_scaling.scale(580))
-        h = max(self.winfo_reqheight(), ui_scaling.scale(360))
+        h = max(self.winfo_reqheight(), ui_scaling.scale(440))
+        wa = ui_scaling.get_work_area_for_window(parent)
+        h = min(h, wa[3] - wa[1] - ui_scaling.scale(8))
+        w = min(w, wa[2] - wa[0] - ui_scaling.scale(16))
+        try:
+            self.minsize(w, h)
+        except Exception:
+            pass
         x = parent.winfo_rootx() + (parent.winfo_width() - w) // 2
         y = parent.winfo_rooty() + (parent.winfo_height() - h) // 2
-        wa = ui_scaling.get_work_area_for_window(parent)
         x, y, w, h = ui_scaling.clamp_to_work_area(x, y, w, h, wa)
-        self.geometry(f"{w}x{h}+{x}+{y}")
+        geom = f"{w}x{h}+{x}+{y}"
+        self.force_geometry(geom)
+        self.after(300, lambda: self.force_geometry(geom))
 
     def _select(self, idx):
         old_name = self._ent_name.get().strip()

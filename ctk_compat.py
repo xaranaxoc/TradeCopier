@@ -334,5 +334,23 @@ class Toplevel(ctk.CTkToplevel):
     def config(self, **kwargs):
         return self.configure(**kwargs)
 
+    def force_geometry(self, geom: str) -> None:
+        """Apply a geometry string, bypassing CTkToplevel's override.
+
+        CTkToplevel.geometry() may not reliably set the window size on all
+        platforms (it updates internal bookkeeping but the raw Tk geometry
+        call can be deferred or overridden by CTk's 200ms init callbacks).
+        We call tk.Toplevel.geometry directly — window_scaling is locked to
+        1.0 so no CTk scaling is needed.
+        """
+        import tkinter as _tk
+        try:
+            _tk.Toplevel.geometry(self, geom)
+        except Exception:
+            try:
+                self.geometry(geom)
+            except Exception:
+                pass
+
 
 __all__ = ["Label", "Button", "Entry", "Frame", "Toplevel"]
