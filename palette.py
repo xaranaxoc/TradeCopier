@@ -331,7 +331,7 @@ THEME_LABELS: Dict[str, str] = {
     "light_soft": "Light Soft (карточный)",
 }
 
-DEFAULT_THEME = "neon_cyan"
+DEFAULT_THEME = "light_soft"
 
 # Built-ins cannot be unregistered or overwritten via custom-themes JSON.
 _BUILTIN_THEMES = frozenset({"neon_cyan", "light_pro", "light_soft"})
