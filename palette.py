@@ -139,32 +139,72 @@ class Fonts:
 # ── Built-in palettes ───────────────────────────────────────────────
 
 NEON_CYAN = Palette(
-    BG_DEEP="#080810",
-    BG="#0C0C14",
-    BG_ROW="#111119",
-    BG_ROW_HOVER="#171722",
-    BG_INPUT="#191924",
-    BG_HEADER="#0E0E18",
-    FG="#E4E4EE",
-    FG_DIM="#6A6A80",
-    FG_LABEL="#8888A0",
-    FG_MUTED="#3A3A50",
+    # Dark counterpart of the soft card-based design.  Same card / radii
+    # rhythm as LIGHT_SOFT but inverted for night use: deep slate page,
+    # near-black cards with a soft border, cyan accent, saturated semantic
+    # colours.  Icon-circle tints are dark-theme variants — saturated hue
+    # at ~10% lightness so the icon sits on top of a low-contrast disc
+    # that reads as "tinted" without blowing out the dark surface.
+
+    # Backgrounds: page bg slightly lighter than cards so the cards float.
+    BG_DEEP="#0A0A14",       # page background (slate-950-ish)
+    BG="#0A0A14",            # frames / panels (flat page)
+    BG_ROW="#13131F",        # cards, table rows (slate-900)
+    BG_ROW_HOVER="#1B1B2A",  # subtle hover on row
+    BG_INPUT="#191924",      # entry / combobox
+    BG_HEADER="#13131F",     # section header card (same as row card)
+
+    # Foregrounds: high-contrast primary, slate-toned secondary/labels.
+    FG="#E8E8F4",            # primary text (slate-100-ish)
+    FG_DIM="#7A7A92",        # tertiary text (slate-500)
+    FG_LABEL="#9090A8",      # secondary text / labels (slate-400)
+    FG_MUTED="#4A4A60",      # muted / disabled
+
+    # Cyan accent stays the brand colour.
     ACCENT="#00B4D8",
     ACCENT_H="#00D0F0",
     ACCENT_DIM="#006E88",
     ACCENT_FG="#FFFFFF",
     CYAN_GLOW="#002933",
+
+    # Saturated semantic colours (unchanged — they're already night-ready).
     GREEN="#00E676",
     GREEN_DIM="#00B85E",
-    GREEN_GLOW="#003318",
+    GREEN_GLOW="#0A2A1A",     # row tint (profit) — deep green wash
     RED="#FF3D57",
     RED_DIM="#CC3044",
-    RED_GLOW="#330D14",
+    RED_GLOW="#2A0A14",       # row tint (loss) — deep red wash
     YELLOW="#FFB020",
     YELLOW_DIM="#CC8D1A",
-    BORDER="#1C1C2C",
-    BORDER_LIGHT="#252538",
-    DIVIDER="#111120",
+
+    # Borders: thin slate divider visible on both the page and row bg.
+    BORDER="#1E1E2E",         # card border
+    BORDER_LIGHT="#2A2A3D",   # divider (lighter)
+    DIVIDER="#1A1A28",
+
+    # ── Tinted backgrounds for icon circles ────────────────────
+    # Dark, saturated hues so the 28 px KPI disc reads as a coloured
+    # token against the near-black card.  FG pair is the bright semantic
+    # colour so the icon glyph (or its tinted Lucide PNG) pops on top.
+    TINT_BLUE="#0B2A3A",       # deep teal-blue, pairs with cyan accent
+    TINT_PURPLE="#1F1530",     # deep purple
+    TINT_GREEN="#0E2A1F",      # deep green
+    TINT_ORANGE="#2E1F0A",     # deep amber
+    TINT_RED="#2E0E14",        # deep red
+
+    TINT_BLUE_FG="#00B4D8",    # ACCENT cyan
+    TINT_PURPLE_FG="#A78BFA",  # violet-400
+    TINT_GREEN_FG="#00E676",   # GREEN
+    TINT_ORANGE_FG="#FFB020",  # YELLOW
+    TINT_RED_FG="#FF3D57",     # RED
+
+    # ── Radii ──────────────────────────────────────────────
+    # Match LIGHT_SOFT so the soft / modern card aesthetic stays
+    # consistent when the user toggles between dark and light themes.
+    RADIUS_SM=8,
+    RADIUS_MD=12,
+    RADIUS_LG=16,
+    RADIUS_PILL=999,
 )
 
 LIGHT_PRO = Palette(
