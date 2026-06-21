@@ -34,6 +34,16 @@ import customtkinter as ctk
 
 from palette import palette_proxy as p, fonts_proxy as f
 
+# Optional PIL import: needed only by IconCircle so it can rasterise an
+# icon onto its tk.Canvas via ``create_image`` (no surrounding
+# rectangular CTkLabel that would poke past the disc).  When PIL is
+# missing the icon overlay falls back to the older CTkLabel path.
+try:
+    from PIL import Image as _PIL_Image, ImageTk as _PIL_ImageTk
+except Exception:  # pragma: no cover - PIL is a CTk runtime dep on Windows
+    _PIL_Image = None  # type: ignore[assignment]
+    _PIL_ImageTk = None  # type: ignore[assignment]
+
 
 # ── Helpers ──────────────────────────────────────────────────────────
 
@@ -176,20 +186,64 @@ class IconCircle(tk.Canvas):
         self.create_oval(0, 0, size - 1, size - 1, fill=bg, outline="")
         self._tint_bg = bg
         self._tint_fg = fg
-        # Overlay the icon glyph at the canvas centre.  CTkImage icons
-        # render through a child CTkLabel placed at the centre — critical
-        # subtlety: passing ``fg_color="transparent"`` here lights up the
-        # CTkLabel's white default because the master is a ``tk.Canvas``,
-        # not a CTkFrame, so CTk has no fg_color to inherit and falls
-        # back to the system default (white in light theme).  That's the
-        # "white rectangle behind the icon" that haunted the 28 px KPI
-        # discs.  Setting the label's ``fg_color`` to the *disc tint*
-        # makes the rectangle blend invisibly into the oval beneath it.
+        # Overlay the icon glyph at the canvas centre.
+        #
+        # We MUST avoid hosting the icon inside a CTkLabel placed on the
+        # canvas.  CTkLabel always renders a rectangular background of
+        # its own ``fg_color`` (CTk has no per-pixel transparency on
+        # Windows), so the label sits on the canvas as an opaque box
+        # that is *larger* than the disc — you can see its corners
+        # poking past the round outline.  Setting ``fg_color`` to the
+        # disc tint hides the corners *inside* the disc but the label
+        # still extends beyond the disc edge and renders a tinted square
+        # around it.  Setting ``fg_color`` to the parent bg makes the
+        # icon’s transparent pixels show the parent bg instead of the
+        # tinted disc, which kills the tinted-disc look entirely.
+        #
+        # The fix is to rasterise the icon directly onto the canvas with
+        # ``Canvas.create_image``.  PIL gives us the original alpha
+        # channel, so the icon’s transparent pixels reveal the disc
+        # underneath while the icon strokes sit on top.  We keep a hard
+        # reference on ``self`` so the PhotoImage isn’t GC’d while the
+        # canvas is alive (Tk only weakly references images).
         if icon is not None:
-            lbl = ctk.CTkLabel(
-                self, image=icon, text="", fg_color=bg,
-            )
-            lbl.place(relx=0.5, rely=0.5, anchor="center")
+            self._photo = None
+            placed = False
+            if _PIL_Image is not None and _PIL_ImageTk is not None:
+                try:
+                    pil_src = icon.cget("light_image")
+                    icon_wh = icon.cget("size")
+                    if isinstance(icon_wh, (tuple, list)) and len(icon_wh) == 2:
+                        iw, ih = int(icon_wh[0]), int(icon_wh[1])
+                    else:
+                        iw = ih = max(8, size - 8)
+                    if pil_src is not None:
+                        # Lanczos keeps stroke edges crisp at the target
+                        # display size (icons ship at 48x48; KPI uses 16,
+                        # status dots / tiny ghosts use 12).
+                        try:
+                            resample = _PIL_Image.Resampling.LANCZOS
+                        except AttributeError:
+                            resample = getattr(_PIL_Image, "LANCZOS", 1)
+                        pil_resized = pil_src.resize((iw, ih), resample)
+                        self._photo = _PIL_ImageTk.PhotoImage(pil_resized)
+                        self.create_image(
+                            size / 2, size / 2,
+                            image=self._photo, anchor="center",
+                        )
+                        placed = True
+                except Exception:
+                    placed = False
+            if not placed:
+                # PIL not available (test env, slim build): fall back to
+                # the CTkLabel path with ``fg_color`` matching the disc
+                # tint so the rectangle at least blends with the disc
+                # interior.  Corners may still poke past the disc edge
+                # in this fallback — only affects PIL-less environments.
+                lbl = ctk.CTkLabel(
+                    self, image=icon, text="", fg_color=bg,
+                )
+                lbl.place(relx=0.5, rely=0.5, anchor="center")
         elif glyph:
             self.create_text(
                 size / 2, size / 2,
