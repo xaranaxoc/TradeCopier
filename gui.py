@@ -1592,6 +1592,67 @@ class TradesTable(tk.Frame):
             children = self.tree.get_children()
 
 
+# ── OpenPositionsTable ────────────────────────────────────────
+
+class OpenPositionsTable(tk.Frame):
+    COLS = ["time", "account", "symbol", "type", "lot"]
+    HEADERS = ["Время", "Аккаунт", "Символ", "Тип", "Лот"]
+    WIDTHS = [60, 90, 70, 40, 50]
+
+    def __init__(self, parent):
+        super().__init__(parent, bg=p.BG_ROW)
+        self._hover_iid = ""
+        self._build()
+
+    def _build(self):
+        apply_ttk_styles(scale_fn=ui_scaling.scale)
+
+        self.tree = ttk.Treeview(self, columns=self.COLS, show="headings",
+                                  style="T.Treeview", height=6)
+        for col, hdr, w in zip(self.COLS, self.HEADERS, self.WIDTHS):
+            self.tree.heading(col, text=hdr, anchor="w")
+            sw = ui_scaling.scale(w)
+            self.tree.column(col, width=sw, minwidth=sw, anchor="w", stretch=True)
+
+        sb = ttk.Scrollbar(self, orient="vertical", command=self.tree.yview)
+        self.tree.configure(yscrollcommand=sb.set)
+        sb.pack(side="right", fill="y")
+        self.tree.pack(side="left", fill="both", expand=True)
+        self.tree.tag_configure("even", background=p.BG_ROW, foreground=p.FG)
+        self.tree.tag_configure("odd", background="#FAFBFC", foreground=p.FG)
+        self.tree.tag_configure("hover", background=p.BG_ROW_HOVER, foreground=p.FG)
+        self.tree.bind("<Motion>", self._on_motion, add="+")
+        self.tree.bind("<Leave>", self._clear_hover, add="+")
+
+    def _on_motion(self, event):
+        iid = self.tree.identify_row(event.y)
+        if iid == self._hover_iid:
+            return
+        self._clear_hover()
+        if iid:
+            tags = tuple(t for t in self.tree.item(iid, "tags") if t != "hover")
+            self.tree.item(iid, tags=tags + ("hover",))
+            self._hover_iid = iid
+
+    def _clear_hover(self, _event=None):
+        if not self._hover_iid:
+            return
+        try:
+            tags = tuple(t for t in self.tree.item(self._hover_iid, "tags") if t != "hover")
+            self.tree.item(self._hover_iid, tags=tags)
+        except Exception:
+            pass
+        self._hover_iid = ""
+
+    def refresh(self, rows):
+        """rows — список кортежей (time, account, symbol, type, lot)"""
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+        for idx, row in enumerate(rows):
+            row_tag = "even" if idx % 2 == 0 else "odd"
+            self.tree.insert("", "end", values=row, tags=(row_tag,))
+
+
 # ── ActivationWindow ──────────────────────────────────────────
 
 class ActivationWindow(Toplevel):
@@ -2847,6 +2908,12 @@ class App(ctk.CTk):
                 slave_ticket=t.get("slave_ticket", ""), status=t.get("status", ""),
                 tag=tag)
 
+        # ── Open Positions tab ─────────────────────────
+        open_tab = tk.Frame(self.notebook, bg=p.BG_ROW)
+        self.notebook.add(open_tab, text="  Текущие сделки  ")
+        self.open_positions_table = OpenPositionsTable(open_tab)
+        self.open_positions_table.pack(fill="both", expand=True, padx=0, pady=0)
+
         # ── Log tab ────────────────────────────────────
         log_tab = tk.Frame(self.notebook, bg=p.BG_ROW)
         self.notebook.add(log_tab, text="  Лог  ")
@@ -3270,11 +3337,13 @@ class App(ctk.CTk):
             self.after_cancel(self._check_timer)
         if self._trader and self._trader.is_running():
             self._refresh_dashboard()
+            self._refresh_open_positions_async()
         else:
             self._update_master_info_silent()
             for row, slave in zip(self._rows, self._slaves):
                 self._update_row_info_silent(row, slave)
             self._refresh_dashboard()
+            self._refresh_open_positions_async()
         self._check_timer = self.after(3000, self._schedule_check)
 
     def _check_update(self, force=False):
@@ -3466,6 +3535,51 @@ class App(ctk.CTk):
         self._kpi_cards["kpi_conn"].set_value(
             f"{connected}/{total}" if total else "\u2014",
         )
+
+    def _refresh_open_positions_async(self):
+        if getattr(self, '_pos_thread', None) and self._pos_thread.is_alive():
+            return
+        self._pos_thread = threading.Thread(
+            target=self._refresh_open_positions, daemon=True)
+        self._pos_thread.start()
+
+    def _refresh_open_positions(self):
+        """Fetch open positions from master and enabled slaves (runs in worker thread)."""
+        if not _MT5_OK:
+            self.after(0, lambda: self._apply_open_positions([]))
+            return
+        rows: List[Tuple[str, str, str, str, str]] = []
+        master_path = self.var_master_path.get().strip()
+        if master_path and is_terminal_running(master_path):
+            if mt5.initialize(path=master_path):
+                try:
+                    for pos in (mt5.positions_get() or []):
+                        ts = pos.time.strftime("%H:%M:%S") if pos.time else "—"
+                        direction = "BUY" if pos.type == mt5.ORDER_TYPE_BUY else "SELL"
+                        rows.append((ts, "Мастер", pos.symbol, direction, f"{pos.volume:.2f}"))
+                finally:
+                    mt5.shutdown()
+        for slave in getattr(self, '_slaves', []):
+            if not slave.get("enabled", True):
+                continue
+            s_path = slave.get("path", "")
+            if not s_path or not is_terminal_running(s_path):
+                continue
+            if mt5.initialize(path=s_path):
+                try:
+                    s_name = slave.get("name", slave.get("id", "?"))
+                    for pos in (mt5.positions_get() or []):
+                        ts = pos.time.strftime("%H:%M:%S") if pos.time else "—"
+                        direction = "BUY" if pos.type == mt5.ORDER_TYPE_BUY else "SELL"
+                        rows.append((ts, s_name, pos.symbol, direction, f"{pos.volume:.2f}"))
+                finally:
+                    mt5.shutdown()
+        self.after(0, lambda: self._apply_open_positions(rows))
+
+    def _apply_open_positions(self, rows: List[Tuple[str, ...]]):
+        """Thread-safe UI update for the open-positions table."""
+        if hasattr(self, 'open_positions_table'):
+            self.open_positions_table.refresh(rows)
 
     def _start(self):
         master_path = self.var_master_path.get().strip()
