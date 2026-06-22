@@ -328,7 +328,7 @@ THEMES: Dict[str, Theme] = {
 THEME_LABELS: Dict[str, str] = {
     "neon_cyan": "Neon Cyan (тёмная)",
     "light_pro": "Light Pro (MetaTrader 5)",
-    "light_soft": "Светлая",
+    "light_soft": "Light Soft (светлая)",
 }
 
 DEFAULT_THEME = "light_soft"
