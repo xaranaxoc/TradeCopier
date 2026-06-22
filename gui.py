@@ -597,8 +597,15 @@ class SlaveDialog(Toplevel):
         SP_SM = 8 # tight padding (was SP_SM=8 — unchanged)
         card = _widgets.Card(self, padding=0)
         card.pack(fill="both", expand=True, padx=SP, pady=SP)
+        # Scrollbar styled to match the Slave Accounts table card
+        # (BORDER track, FG_DIM on hover) so the slider is visible
+        # against the card body on both dark and light themes.
+        # Without scrollbar_button_hover_color the slider stays the
+        # same colour as BG_INPUT on hover, which on the dark NEON_CYAN
+        # theme made it essentially invisible.
         form = ctk.CTkScrollableFrame(card, fg_color="transparent",
-                                      scrollbar_button_color=p.BG_INPUT,
+                                      scrollbar_button_color=p.BORDER,
+                                      scrollbar_button_hover_color=p.FG_DIM,
                                       height=ui_scaling.scale(560))
         form.pack(side="top", fill="both", expand=True)
 
