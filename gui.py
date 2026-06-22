@@ -64,6 +64,7 @@ LOGS_DIR = os.path.join(APP_DATA_DIR, "logs")
 TRADES_FILE = os.path.join(APP_DATA_DIR, "trades.json")
 
 try:
+    import numpy
     import MetaTrader5 as mt5
     _MT5_OK = True
 except Exception as _mt5_err:
