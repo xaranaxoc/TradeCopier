@@ -34,6 +34,16 @@ if not exist "%NUMPY_DIR%" (
 echo numpy: %NUMPY_DIR%
 
 echo.
+echo [2b/4] Определение пути MetaTrader5...
+for /f "delims=" %%i in ('"%PYTHON%" -c "import MetaTrader5, os; print(os.path.dirname(MetaTrader5.__file__))"') do set "MT5_DIR=%%i"
+if not exist "%MT5_DIR%" (
+    echo ОШИБКА: MetaTrader5 не найден
+    pause
+    exit /b 1
+)
+echo MetaTrader5: %MT5_DIR%
+
+echo.
 echo [3/4] Компиляция Nuitka standalone (5-15 мин)...
 echo.
 
@@ -45,10 +55,10 @@ echo.
     --include-data-dir=img=img ^
     --include-data-dir=assets=assets ^
     --include-data-dir="%NUMPY_DIR%=numpy" ^
+    --include-data-dir="%MT5_DIR%=MetaTrader5" ^
     --include-module=widgets ^
     --include-module=lucide ^
     --include-package-data=customtkinter ^
-    --include-package-data=MetaTrader5 ^
     --enable-plugin=tk-inter ^
     --include-module=copier ^
     --include-module=license ^
@@ -63,7 +73,6 @@ echo.
     --include-module=PIL ^
     --include-module=PIL.Image ^
     --include-module=requests ^
-    --include-package=MetaTrader5 ^
     --remove-output ^
     --output-dir=dist ^
     --assume-yes-for-downloads ^

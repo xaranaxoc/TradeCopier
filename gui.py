@@ -57,6 +57,12 @@ from theme import apply_theme, init_scaling as _init_ctk_scaling
 import widgets as _widgets
 import lucide as _lucide
 
+APP_DATA_DIR = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "MT5CopyTrader")
+CONFIG_FILE = os.path.join(APP_DATA_DIR, "config.json")
+STATE_FILE = os.path.join(APP_DATA_DIR, "state.json")
+LOGS_DIR = os.path.join(APP_DATA_DIR, "logs")
+TRADES_FILE = os.path.join(APP_DATA_DIR, "trades.json")
+
 try:
     import MetaTrader5 as mt5
     _MT5_OK = True
@@ -115,11 +121,6 @@ else:
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
     _BUNDLE_DIR = BASE_DIR
 
-APP_DATA_DIR = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "MT5CopyTrader")
-CONFIG_FILE = os.path.join(APP_DATA_DIR, "config.json")
-STATE_FILE = os.path.join(APP_DATA_DIR, "state.json")
-LOGS_DIR = os.path.join(APP_DATA_DIR, "logs")
-TRADES_FILE = os.path.join(APP_DATA_DIR, "trades.json")
 TRADES_KEEP_DAYS = 7
 
 IMG_DIR = os.path.join(_BUNDLE_DIR, "img")
