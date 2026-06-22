@@ -2885,9 +2885,11 @@ class App(ctk.CTk):
 
     # Tab keys + display labels for the bottom card's segmented switcher.
     # Order in this list = display order of the pills, left-to-right.
+    # "open_pos" comes first because live open positions are the primary
+    # monitoring surface; the trade log + plain log live on secondary tabs.
     _TAB_SPECS = [
-        ("trades",   "Сделки"),
         ("open_pos", "Текущие сделки"),
+        ("trades",   "Сделки"),
         ("log",      "Лог"),
     ]
 
@@ -3757,7 +3759,13 @@ class App(ctk.CTk):
         self.lbl_stats.config(
             text=f"\u2705 {self._session_stats['copied']}  \u274C {self._session_stats['failed']}")
         _save_trade(info)
-        self._show_tab("trades")
+        # Do NOT auto-switch tabs on a new trade event.  The trade log
+        # (Сделки) already inserts the new row at index 0, so it's
+        # visible as soon as the user does switch tabs.  Forcing the
+        # switch was the legacy behaviour from when "Сделки" was the
+        # default tab; with "Текущие сделки" as the primary monitoring
+        # surface, auto-jumping would constantly pull the user away
+        # from the live open-positions table.
 
     def _update_status(self, terminal_id: str, status: str,
                        balance: float = 0, equity: float = 0,
