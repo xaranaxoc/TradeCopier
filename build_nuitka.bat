@@ -15,8 +15,8 @@ if %errorlevel% neq 0 (
     exit /b 1
 )
 
-echo [1/3] Установка зависимостей...
-"%PYTHON%" -m pip install -r requirements.txt nuitka ordered-set zstandard pystray Pillow
+echo [1/4] Установка зависимостей...
+"%PYTHON%" -m pip install -r requirements.txt nuitka ordered-set zstandard pystray Pillow numpy
 if %errorlevel% neq 0 (
     echo ОШИБКА: не удалось установить зависимости
     pause
@@ -24,7 +24,17 @@ if %errorlevel% neq 0 (
 )
 
 echo.
-echo [2/3] Компиляция Nuitka standalone (5-15 мин)...
+echo [2/4] Определение пути numpy...
+for /f "delims=" %%i in ('"%PYTHON%" -c "import numpy, os; print(os.path.dirname(numpy.__file__))"') do set "NUMPY_DIR=%%i"
+if not exist "%NUMPY_DIR%" (
+    echo ОШИБКА: numpy не найден
+    pause
+    exit /b 1
+)
+echo numpy: %NUMPY_DIR%
+
+echo.
+echo [3/4] Компиляция Nuitka standalone (5-15 мин)...
 echo.
 
 "%PYTHON%" -m nuitka ^
@@ -34,12 +44,12 @@ echo.
     --output-filename=FTHTradeCopier.exe ^
     --include-data-dir=img=img ^
     --include-data-dir=assets=assets ^
+    --include-data-dir="%NUMPY_DIR%=numpy" ^
     --include-module=widgets ^
     --include-module=lucide ^
     --include-package-data=customtkinter ^
     --include-package-data=MetaTrader5 ^
     --enable-plugin=tk-inter ^
-    --enable-plugin=numpy ^
     --include-module=copier ^
     --include-module=license ^
     --include-module=updater ^
@@ -47,13 +57,13 @@ echo.
     --include-module=theme ^
     --include-module=palette ^
     --include-module=ui_scaling ^
-    --include-module=psutil ^
+    --include-package=psutil ^
     --include-module=pystray ^
     --include-module=pystray._win32 ^
     --include-module=PIL ^
     --include-module=PIL.Image ^
     --include-module=requests ^
-    --include-module=MetaTrader5 ^
+    --include-package=MetaTrader5 ^
     --remove-output ^
     --output-dir=dist ^
     --assume-yes-for-downloads ^
@@ -66,7 +76,7 @@ if %errorlevel% neq 0 (
 )
 
 echo.
-echo [3/3] Переименование папки...
+echo [4/4] Переименование папки...
 if exist "dist\FTHTradeCopier" rmdir /s /q "dist\FTHTradeCopier"
 rename "dist\gui.dist" "FTHTradeCopier"
 if %errorlevel% neq 0 (
