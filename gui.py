@@ -611,7 +611,7 @@ class SlaveDialog(Toplevel):
 
         # ── Section: АККАУНТ ─────────────────────────────
         self._section_title(form, "Аккаунт").pack(
-            anchor="w", padx=SP, pady=(SP, SP_SM),
+            anchor="w", padx=SP, pady=(SP_SM, 4),
         )
 
         frm_top = ctk.CTkFrame(form, fg_color="transparent")
@@ -633,7 +633,7 @@ class SlaveDialog(Toplevel):
         btn_browse_s.pack(side="left", padx=(SP_SM, 0))
         _bind_tip(btn_browse_s, "Выбрать путь к terminal64.exe слейва")
 
-        self._divider(form).pack(fill="x", padx=SP, pady=SP)
+        self._divider(form).pack(fill="x", padx=SP, pady=SP_SM)
 
         # ── Section: СИМВОЛЫ ─────────────────────────────
         sym_header = ctk.CTkFrame(form, fg_color="transparent")
@@ -666,7 +666,7 @@ class SlaveDialog(Toplevel):
         btn_add_sym.pack(anchor="w", padx=SP, pady=(2, 0))
         _bind_tip(btn_add_sym, "Добавить строку маппинга символов")
 
-        self._divider(form).pack(fill="x", padx=SP, pady=SP)
+        self._divider(form).pack(fill="x", padx=SP, pady=SP_SM)
 
         # ── Section: РИСК ──────────────────────────────────
         self._section_title(form, "Риск").pack(
@@ -682,70 +682,72 @@ class SlaveDialog(Toplevel):
         # Compact-numeric width for short money/percent inputs.
         NUM_W = 68
 
-        self._field_label(frm_risk, "Риск %").grid(row=0, column=0, sticky="w", pady=3)
+        # 3-column grid: [label] [entry] [inline hint].  Putting the
+        # "0 = выкл" hints in column 2 of the same row as their entry
+        # (instead of on their own row underneath) saves three rows and
+        # ~50 px of vertical space so the whole form fits at the dialog's
+        # minimum height without scrolling.
+        def _hint(text):
+            return ctk.CTkLabel(
+                frm_risk, text=text, text_color=p.FG_DIM,
+                font=("Segoe UI", 9), anchor="w",
+            )
+
+        self._field_label(frm_risk, "Риск %").grid(row=0, column=0, sticky="w", pady=2)
         self.var_risk_pct = tk.StringVar(
             value=str(risk_value) if risk_type == "percent" else "")
         ent_pct = self._soft_entry(frm_risk, self.var_risk_pct)
         ent_pct.configure(width=NUM_W)
-        ent_pct.grid(row=0, column=1, sticky="w", padx=(SP_SM, 0), pady=3)
+        ent_pct.grid(row=0, column=1, sticky="w", padx=(SP_SM, 0), pady=2)
 
-        self._field_label(frm_risk, "Риск $").grid(row=1, column=0, sticky="w", pady=3)
+        self._field_label(frm_risk, "Риск $").grid(row=1, column=0, sticky="w", pady=2)
         self.var_risk_doll = tk.StringVar(
             value=str(risk_value) if risk_type == "fixed" else "")
         ent_doll = self._soft_entry(frm_risk, self.var_risk_doll)
         ent_doll.configure(width=NUM_W)
-        ent_doll.grid(row=1, column=1, sticky="w", padx=(SP_SM, 0), pady=3)
+        ent_doll.grid(row=1, column=1, sticky="w", padx=(SP_SM, 0), pady=2)
 
         self.lbl_risk_hint = ctk.CTkLabel(
             frm_risk, text="", text_color=p.FG_DIM, font=("Segoe UI", 9),
             anchor="w",
         )
-        self.lbl_risk_hint.grid(row=2, column=0, columnspan=2, sticky="w", pady=(2, 0))
+        self.lbl_risk_hint.grid(row=2, column=0, columnspan=3, sticky="w", pady=(2, 0))
 
         self.var_risk_pct.trace_add("write", lambda *_: self._sync_risk("percent"))
         self.var_risk_doll.trace_add("write", lambda *_: self._sync_risk("fixed"))
 
-        self._field_label(frm_risk, "Лот без SL").grid(row=3, column=0, sticky="w", pady=3)
+        self._field_label(frm_risk, "Лот без SL").grid(row=3, column=0, sticky="w", pady=2)
         self.var_default_lot = tk.StringVar(value=str(data.get("default_lot", "0.01")))
         ent_lot = self._soft_entry(frm_risk, self.var_default_lot)
         ent_lot.configure(width=NUM_W)
-        ent_lot.grid(row=3, column=1, sticky="w", padx=(SP_SM, 0), pady=3)
+        ent_lot.grid(row=3, column=1, sticky="w", padx=(SP_SM, 0), pady=2)
 
-        self._field_label(frm_risk, "Макс. просадка %").grid(row=4, column=0, sticky="w", pady=3)
+        self._field_label(frm_risk, "Макс. просадка %").grid(row=4, column=0, sticky="w", pady=2)
         self.var_max_drawdown = tk.StringVar(value=str(data.get("max_drawdown", 0)))
         ent_dd = self._soft_entry(frm_risk, self.var_max_drawdown)
         ent_dd.configure(width=NUM_W)
-        ent_dd.grid(row=4, column=1, sticky="w", padx=(SP_SM, 0), pady=3)
-        ctk.CTkLabel(
-            frm_risk, text="0 = выкл", text_color=p.FG_DIM,
-            font=("Segoe UI", 9),
-        ).grid(row=5, column=1, sticky="w", padx=(SP_SM, 0))
+        ent_dd.grid(row=4, column=1, sticky="w", padx=(SP_SM, 0), pady=2)
+        _hint("0 = выкл").grid(row=4, column=2, sticky="w", padx=(SP_SM, 0), pady=2)
 
-        self._field_label(frm_risk, "Макс. сделок/день").grid(row=6, column=0, sticky="w", pady=3)
+        self._field_label(frm_risk, "Макс. сделок/день").grid(row=5, column=0, sticky="w", pady=2)
         self.var_max_trades = tk.StringVar(value=str(data.get("max_trades_per_day", 0)))
         ent_trd = self._soft_entry(frm_risk, self.var_max_trades)
         ent_trd.configure(width=NUM_W)
-        ent_trd.grid(row=6, column=1, sticky="w", padx=(SP_SM, 0), pady=3)
-        ctk.CTkLabel(
-            frm_risk, text="0 = выкл", text_color=p.FG_DIM,
-            font=("Segoe UI", 9),
-        ).grid(row=7, column=1, sticky="w", padx=(SP_SM, 0))
+        ent_trd.grid(row=5, column=1, sticky="w", padx=(SP_SM, 0), pady=2)
+        _hint("0 = выкл").grid(row=5, column=2, sticky="w", padx=(SP_SM, 0), pady=2)
 
-        self._field_label(frm_risk, "Макс. убыт/день $").grid(row=8, column=0, sticky="w", pady=3)
+        self._field_label(frm_risk, "Макс. убыт/день $").grid(row=6, column=0, sticky="w", pady=2)
         self.var_daily_loss = tk.StringVar(value=str(data.get("daily_loss_limit", 0)))
         ent_dl = self._soft_entry(frm_risk, self.var_daily_loss)
         ent_dl.configure(width=NUM_W)
-        ent_dl.grid(row=8, column=1, sticky="w", padx=(SP_SM, 0), pady=3)
-        ctk.CTkLabel(
-            frm_risk, text="0 = выкл", text_color=p.FG_DIM,
-            font=("Segoe UI", 9),
-        ).grid(row=9, column=1, sticky="w", padx=(SP_SM, 0))
+        ent_dl.grid(row=6, column=1, sticky="w", padx=(SP_SM, 0), pady=2)
+        _hint("0 = выкл").grid(row=6, column=2, sticky="w", padx=(SP_SM, 0), pady=2)
 
-        self._divider(form).pack(fill="x", padx=SP, pady=SP)
+        self._divider(form).pack(fill="x", padx=SP, pady=SP_SM)
 
         # ── Actions row ────────────────────────────────────
         btn_frame = ctk.CTkFrame(card, fg_color="transparent")
-        btn_frame.pack(side="bottom", fill="x", pady=(0, SP))
+        btn_frame.pack(side="bottom", fill="x", pady=(0, SP_SM))
         btn_save = self._primary_btn(btn_frame, "Сохранить", self._save)
         btn_save.configure(width=140)
         btn_save.pack(side="left", padx=SP_SM)
