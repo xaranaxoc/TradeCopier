@@ -1,1 +1,4179 @@
-updated content via from_workspace
+"""
+MT5 Local Copy Trader — GUI (customtkinter)
+
+This module mixes CTk and tk on purpose:
+
+* Top-level windows and most container/control widgets use customtkinter
+  via the wrappers in `ctk_compat` (Frame/Label/Button/Entry/Toplevel).
+  Those wrappers translate tk-style kwargs (``bg=``/``fg=``/``width=N``-chars)
+  to CTk-style kwargs, so the existing FTH palette and idioms keep
+  working without rewriting every call site.
+* Plain tk/ttk widgets are kept where CTk has no equivalent or where
+  emulation would change behaviour: `_Tip` (overrideredirect tooltip),
+  the slave table `ttk.Treeview`, the bottom `ttk.Notebook` tabs,
+  `tk.PanedWindow`, `tk.Listbox`, `tk.Text` (log), `tk.Canvas` (status
+  dot in AccountRow), `tk.Menu`, and all `tk.*Var` variables.
+* `theme.apply_theme()` is called **after** the root `ctk.CTk()` is
+  created — calling it earlier raises a TclError inside CTk (this was
+  one of the regressions during the previous CTk attempt; see the
+  rollback notes).
+"""
+
+import os
+import sys
+import json
+import re
+import uuid
+import subprocess
+import threading
+import ctypes
+import warnings
+
+# Silence CustomTkinter's noisy HighDPI warning about tk.PhotoImage. We
+# use tk.PhotoImage in a handful of places (header logo, slave-row
+# avatars, etc.) where the loss of HighDPI scaling is irrelevant —
+# converting them all to CTkImage would pull Pillow into the import
+# graph for no visible benefit, and the warning floods the console when
+# running gui.py from py.exe.
+warnings.filterwarnings(
+    "ignore",
+    message=r".*Given image is not CTkImage.*",
+    category=UserWarning,
+)
+
+import tkinter as tk
+import customtkinter as ctk
+from datetime import datetime, timedelta
+from tkinter import ttk, filedialog, messagebox
+from typing import Dict, List, Optional, Tuple
+
+from ctk_compat import Label, Button, Entry, Frame, Toplevel
+from theme import apply_theme, init_scaling as _init_ctk_scaling
+# Phase-2 redesign primitives. `widgets` provides Card / KPICard / Chip /
+# StatusPill / IconButton / SectionHeader / RiskBar; `lucide` returns
+# tinted CTkImages for the bundled Lucide icon set. Both modules read
+# colours through palette_proxy, so they automatically follow the
+# active theme on the next rebuild via `_apply_runtime_theme`.
+import widgets as _widgets
+import lucide as _lucide
+
+APP_DATA_DIR = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "MT5CopyTrader")
+CONFIG_FILE = os.path.join(APP_DATA_DIR, "config.json")
+STATE_FILE = os.path.join(APP_DATA_DIR, "state.json")
+LOGS_DIR = os.path.join(APP_DATA_DIR, "logs")
+TRADES_FILE = os.path.join(APP_DATA_DIR, "trades.json")
+
+try:
+    import numpy
+    import MetaTrader5 as mt5
+    _MT5_OK = True
+except Exception as _mt5_err:
+    _MT5_OK = False
+    _mt5_error_msg = f"{type(_mt5_err).__name__}: {_mt5_err}"
+    try:
+        import traceback as _tb
+        _mt5_error_msg += "\n\n" + _tb.format_exc()
+    except Exception:
+        pass
+    try:
+        os.makedirs(APP_DATA_DIR, exist_ok=True)
+        with open(os.path.join(APP_DATA_DIR, "mt5_import_error.log"), "w", encoding="utf-8") as _f:
+            _f.write(_mt5_error_msg)
+    except Exception:
+        pass
+
+try:
+    import pystray
+    from PIL import Image as PILImage
+    _PYSTRAY_OK = True
+except ImportError:
+    _PYSTRAY_OK = False
+
+try:
+    import psutil
+    _PSUTIL_OK = True
+except ImportError:
+    _PSUTIL_OK = False
+
+try:
+    from copier import CopyTrader, is_terminal_running, activate_terminal
+    _COPIER_OK = True
+except ImportError:
+    _COPIER_OK = False
+
+import ui_scaling
+
+try:
+    import license as lic_mod
+    _LIC_OK = True
+except ImportError:
+    _LIC_OK = False
+
+try:
+    import updater as upd_mod
+    _UPD_OK = True
+except ImportError:
+    _UPD_OK = False
+
+if getattr(sys, 'frozen', False):
+    BASE_DIR = os.path.dirname(sys.executable)
+    _BUNDLE_DIR = getattr(sys, '_MEIPASS', os.path.dirname(sys.executable))
+else:
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+    _BUNDLE_DIR = BASE_DIR
+
+TRADES_KEEP_DAYS = 7
+
+IMG_DIR = os.path.join(_BUNDLE_DIR, "img")
+ICON_DEFAULT = os.path.join(IMG_DIR, "convertico-fth.ico")
+ICON_CYAN = os.path.join(IMG_DIR, "convertico-fth-cyan.ico")
+
+import palette as _palette_mod
+from palette import (
+    get_palette, get_fonts, apply_ttk_styles,
+    set_theme, get_theme_name, available_themes, THEME_LABELS,
+    palette_proxy, fonts_proxy,
+    load_custom_themes, save_custom_themes,
+    build_remap, remap_widget_colors,
+)
+
+# ── Custom themes + saved theme ─────────────────────────────────
+# Custom (user-defined) themes live next to config.json so they survive
+# upgrades.  Loading them BEFORE _apply_saved_theme() means a config
+# pointing at a user theme will resolve correctly on startup.
+CUSTOM_THEMES_FILE = os.path.join(APP_DATA_DIR, "custom_themes.json")
+
+
+def _load_custom_themes():
+    """Pull user-defined themes from disk (no-op if file missing/invalid)."""
+    try:
+        load_custom_themes(CUSTOM_THEMES_FILE)
+    except Exception:
+        pass
+
+
+def _apply_saved_theme():
+    """Read theme name from config.json and activate it (if valid)."""
+    try:
+        if os.path.exists(CONFIG_FILE):
+            with open(CONFIG_FILE, "r", encoding="utf-8") as fh:
+                _cfg = json.load(fh)
+            _name = _cfg.get("theme")
+            if _name:
+                set_theme(_name)
+    except Exception:
+        pass  # keep default theme on any error
+
+
+_load_custom_themes()
+_apply_saved_theme()
+
+# ── Theme aliases: lazy proxies ─────────────────────────────────
+# Every ``p.X`` / ``f.X`` access is resolved against the CURRENT theme,
+# so widgets built after a hot theme switch transparently pick up the
+# new colours and fonts without any rebinding.
+p = palette_proxy
+f = fonts_proxy
+
+# Backward-compatible dynamic colour/font aliases for old helpers and
+# smoke tests that still access gui.GREEN / gui.FG_DIM directly.
+_PALETTE_ALIAS_NAMES = set(getattr(_palette_mod.Palette, "__dataclass_fields__", {}))
+_FONT_ALIAS_NAMES = set(getattr(_palette_mod.Fonts, "__dataclass_fields__", {}))
+
+
+def __getattr__(name: str):
+    if name in _PALETTE_ALIAS_NAMES:
+        return getattr(p, name)
+    if name in _FONT_ALIAS_NAMES:
+        return getattr(f, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+# ── Light Soft spacing system ───────────────────────────────
+# Keep the redesign on an 8px grid.  These constants intentionally stay
+# local to gui.py so the legacy neon/light-pro code paths are not forced
+# through a larger token migration.
+#
+# 2026-06-20 redesign pass: trimmed ~10% off every spacing/sizing token so
+# the UI reads denser across the board.  The 8 px base unit is kept (any
+# smaller stops registering as a real gap at 96 DPI); 16/24/32 step down
+# to 14/20/28, and the action-button height/width drops a notch with them.
+# Anything that *derives* its padding from these constants picks the new
+# scale up automatically, so the diff at every call site stays clean.
+SPACE_8 = 8
+SPACE_16 = 14
+SPACE_24 = 20
+SPACE_32 = 28
+BTN_HEIGHT = 36
+BTN_MIN_W = 88
+
+
+def _apply_dpi_layout():
+    """Re-compute spacing/sizing constants for the current DPI.
+
+    Called once after ui_scaling.init_root_scaling() in App.__init__,
+    before _build_ui().  Because module globals are resolved at call
+    time, every padx/pady/width/height referencing SPACE_*/BTN_*
+    picks up the DPI-correct value automatically — no per-call-site
+    changes needed.
+    """
+    global SPACE_8, SPACE_16, SPACE_24, SPACE_32, BTN_HEIGHT, BTN_MIN_W
+    SPACE_8 = ui_scaling.scale(8)
+    SPACE_16 = ui_scaling.scale(14)
+    SPACE_24 = ui_scaling.scale(20)
+    SPACE_32 = ui_scaling.scale(28)
+    BTN_HEIGHT = ui_scaling.scale(36)
+    BTN_MIN_W = ui_scaling.scale(88)
+
+
+# ── Persistence: trades ─────────────────────────────────────
+
+def _save_trade(trade: Dict):
+    try:
+        os.makedirs(APP_DATA_DIR, exist_ok=True)
+        trades = []
+        if os.path.exists(TRADES_FILE):
+            with open(TRADES_FILE, "r", encoding="utf-8") as fh:
+                trades = json.load(fh)
+        trade["date"] = datetime.now().strftime("%Y-%m-%d")
+        trades.append(trade)
+        cutoff = (datetime.now() - timedelta(days=TRADES_KEEP_DAYS)).strftime("%Y-%m-%d")
+        trades = [t for t in trades if t.get("date", "") >= cutoff]
+        with open(TRADES_FILE, "w", encoding="utf-8") as fh:
+            json.dump(trades, fh, ensure_ascii=False, indent=1)
+    except Exception:
+        pass
+
+
+def _load_trades() -> List[Dict]:
+    if not os.path.exists(TRADES_FILE):
+        return []
+    try:
+        with open(TRADES_FILE, "r", encoding="utf-8") as fh:
+            trades = json.load(fh)
+        cutoff = (datetime.now() - timedelta(days=TRADES_KEEP_DAYS)).strftime("%Y-%m-%d")
+        return [t for t in trades if t.get("date", "") >= cutoff]
+    except Exception:
+        return []
+
+# ── Tooltip (info mode) ────────────────────────────────────
+
+class _Tip:
+    enabled = False
+    _active = None
+
+    @classmethod
+    def show(cls, widget, text):
+        cls.hide()
+        tw = tk.Toplevel(widget)
+        tw.wm_overrideredirect(True)
+        tw.wm_attributes("-topmost", True)
+        tw.configure(bg=p.ACCENT)
+
+        card = ctk.CTkFrame(
+            tw, fg_color=p.ACCENT,
+            corner_radius=p.RADIUS_MD, border_width=0,
+        )
+        card.pack(padx=0, pady=0)
+        ctk.CTkLabel(
+            card, text=text, text_color=p.ACCENT_FG,
+            font=("Segoe UI", 9), fg_color="transparent",
+        ).pack(padx=10, pady=4)
+
+        tw.update_idletasks()
+        tw_w = tw.winfo_width()
+        tw_h = tw.winfo_height()
+        wx = widget.winfo_rootx() + widget.winfo_width() // 2 - tw_w // 2
+        wy = widget.winfo_rooty() + widget.winfo_height() + 2
+        # Clamp into the work area of the widget's monitor so the tooltip
+        # never spills off-screen on small displays or when the parent sits
+        # near the right/bottom edge of a secondary monitor.
+        try:
+            wa = ui_scaling.get_work_area_for_window(widget)
+            wx, wy, _, _ = ui_scaling.clamp_to_work_area(wx, wy, tw_w, tw_h, wa)
+        except Exception:
+            pass
+        tw.wm_geometry(f"+{wx}+{wy}")
+        cls._active = tw
+
+    @classmethod
+    def hide(cls):
+        if cls._active:
+            try:
+                cls._active.destroy()
+            except Exception:
+                pass
+            cls._active = None
+
+
+def _bind_tip(widget, text):
+    widget.bind("<Enter>", lambda e: _Tip.show(widget, text) if _Tip.enabled else None)
+    widget.bind("<Leave>", lambda e: _Tip.hide())
+
+# ── Символы-алиасы ─────────────────────────────────────────
+
+_SYMBOL_ALIASES = {
+    "DE30": "DE40", "DE40": "DE30",
+    "DE35": "DE40", "UK100": "UK100USD",
+    "NAS100": "USTECH", "USTECH": "NAS100",
+    "US500": "US30", "SPX500": "US500",
+    "US30": "US30USD", "DJ30": "US30",
+    "XAUUSD": "GOLD", "GOLD": "XAUUSD",
+    "XAGUSD": "SILVER", "SILVER": "XAGUSD",
+    "WTI": "USOIL", "USOIL": "WTI",
+    "BRENT": "UKOIL", "UKOIL": "BRENT",
+    "BTCUSD": "BTCUSDT", "BTCUSDT": "BTCUSD",
+    "ETHUSD": "ETHUSDT", "ETHUSDT": "ETHUSD",
+    "EURUSD": "EURUSD.", "GBPUSD": "GBPUSD.",
+    "USDJPY": "USDJPY.", "AUDUSD": "AUDUSD.",
+}
+
+# ── COL_SPEC ────────────────────────────────────────────────
+# (col_index, header, min_width, weight, anchor)
+COL_SPEC = [
+    (0, "ON", 29, 0, "center"),
+    (1, "", 16, 0, "center"),
+    (2, "ИМЯ", 58, 0, "w"),
+    (3, "ЛОГИН", 58, 0, "w"),
+    (4, "БАЛАНС", 70, 0, "e"),
+    (5, "ЭКВИТИ", 70, 0, "e"),
+    (6, "P&L", 58, 0, "e"),
+    (7, "СИМВОЛЫ", 80, 1, "w"),
+    (8, "РИСК", 60, 0, "e"),
+    (9, "СДЕЛ/Д", 54, 0, "center"),
+    (10, "УБЫТ/Д", 110, 0, "center"),
+    (11, "", 200, 0, "e"),
+]
+
+
+# ── SymbolPickerDialog ──────────────────────────────────────
+
+class SymbolPickerDialog(Toplevel):
+    """Light-Soft styled symbol picker: search input + listbox + actions card.
+
+    Visual chrome rewritten in 2026-06 to match the main window's card-based
+    look. Behaviour (search filter, double-click pick, return-pick, .selected
+    attribute) is unchanged so call sites keep working.
+    """
+
+    def __init__(self, parent, symbols: List[str], title_text: str = "Выбор символа"):
+        super().__init__(parent)
+        self.selected: Optional[str] = None
+        self._all_symbols = symbols
+        self.title(title_text)
+        self.configure(fg_color=p.BG_DEEP)
+        self.resizable(False, False)
+        icon = ICON_CYAN if (hasattr(parent, '_parent_app') and
+            getattr(parent._parent_app, '_trader', None) and
+            parent._parent_app._trader.is_running()) else ICON_DEFAULT
+        if os.path.exists(icon):
+            try:
+                self.after(250, lambda: self.iconbitmap(icon))
+            except Exception:
+                pass
+        self.grab_set()
+        self._build()
+        self._center(parent)
+
+    def _center(self, parent):
+        self.update_idletasks()
+        pw, py = parent.winfo_rootx(), parent.winfo_rooty()
+        pw2, py2 = parent.winfo_width(), parent.winfo_height()
+        w = ui_scaling.scale(320)
+        h = ui_scaling.scale(420)
+        x = pw + (pw2 - w) // 2
+        y = py + (py2 - h) // 2
+        wa = ui_scaling.get_work_area_for_window(parent)
+        x, y, w, h = ui_scaling.clamp_to_work_area(x, y, w, h, wa)
+        self.geometry(f"{w}x{h}+{x}+{y}")
+
+    def _build(self):
+        # Single Card host — mirrors the main window's section cards.
+        card = _widgets.Card(self, padding=0)
+        card.pack(fill="both", expand=True, padx=SPACE_16, pady=SPACE_16)
+
+        # Search row.
+        self.var_search = tk.StringVar()
+        self.var_search.trace_add("write", lambda *_: self._filter())
+        ent = ctk.CTkEntry(
+            card, textvariable=self.var_search,
+            placeholder_text="Поиск…",
+            fg_color=p.BG_ROW, border_color=p.BORDER, border_width=1,
+            text_color=p.FG, placeholder_text_color=p.FG_DIM,
+            corner_radius=p.RADIUS_MD, height=BTN_HEIGHT,
+            font=("Segoe UI", 10),
+        )
+        ent.pack(fill="x", padx=SPACE_16, pady=(SPACE_16, SPACE_8))
+        ent.focus_set()
+
+        # Listbox lives in a thin bordered frame so it picks up the soft
+        # card aesthetic.  tk.Listbox itself can't be replaced (CTk has no
+        # equivalent) but its container is styled to match.
+        list_wrap = ctk.CTkFrame(
+            card, fg_color=p.BG_ROW, corner_radius=p.RADIUS_MD,
+            border_width=1, border_color=p.BORDER,
+        )
+        list_wrap.pack(fill="both", expand=True, padx=SPACE_16, pady=(0, SPACE_8))
+        self.listbox = tk.Listbox(
+            list_wrap, bg=p.BG_ROW, fg=p.FG, font=("Segoe UI", 10),
+            selectbackground=p.ACCENT, selectforeground=p.ACCENT_FG,
+            relief="flat", highlightthickness=0, activestyle="none",
+            borderwidth=0,
+        )
+        sb = ttk.Scrollbar(list_wrap, orient="vertical", command=self.listbox.yview)
+        self.listbox.configure(yscrollcommand=sb.set)
+        sb.pack(side="right", fill="y", padx=(0, 4), pady=4)
+        self.listbox.pack(side="left", fill="both", expand=True, padx=(6, 0), pady=4)
+        self.listbox.bind("<Double-1>", lambda e: self._pick())
+        self.listbox.bind("<Return>", lambda e: self._pick())
+        for s in self._all_symbols:
+            self.listbox.insert("end", s)
+
+        # Action row — primary "Choose" + ghost "Cancel".
+        actions = ctk.CTkFrame(card, fg_color="transparent")
+        actions.pack(fill="x", padx=SPACE_16, pady=(0, SPACE_16))
+        btn_pick = ctk.CTkButton(
+            actions, text="Выбрать", command=self._pick,
+            fg_color=p.ACCENT, hover_color=p.ACCENT_H,
+            text_color=p.ACCENT_FG, corner_radius=p.RADIUS_MD,
+            height=BTN_HEIGHT, font=("Segoe UI", 10, "bold"),
+        )
+        btn_pick.pack(side="left", padx=(0, SPACE_8))
+        btn_cancel = ctk.CTkButton(
+            actions, text="Отмена", command=self.destroy,
+            fg_color="transparent", hover_color=p.BG_ROW_HOVER,
+            text_color=p.FG, border_color=p.BORDER, border_width=1,
+            corner_radius=p.RADIUS_MD, height=BTN_HEIGHT,
+            font=("Segoe UI", 10),
+        )
+        btn_cancel.pack(side="left")
+
+    def _filter(self):
+        query = self.var_search.get().strip().upper()
+        self.listbox.delete(0, "end")
+        for s in self._all_symbols:
+            if not query or query in s.upper():
+                self.listbox.insert("end", s)
+
+    def _pick(self):
+        sel = self.listbox.curselection()
+        if sel:
+            self.selected = self.listbox.get(sel[0])
+            self.destroy()
+
+
+# ── SlaveDialog ─────────────────────────────────────────────
+
+class SlaveDialog(Toplevel):
+    """Light-Soft styled slave-account configuration dialog.
+
+    Visual chrome rewritten 2026-06 to match the main window's card-based
+    layout: a single rounded ``_widgets.Card`` host with three sections
+    (Account / Symbols / Risk) separated by light dividers.  All form
+    fields use the soft CTkEntry styling (rounded corners, BORDER border,
+    BG_ROW fill) and buttons use CTkButton with RADIUS_MD corners.
+    Behaviour, variable names, callbacks, and geometry are unchanged.
+    """
+
+    def __init__(self, parent, slave_data: Optional[Dict] = None):
+        super().__init__(parent)
+        self.result: Optional[Dict] = None
+        self._symbol_rows: List[Dict] = []
+        self._master_symbols: List[str] = []
+        self._slave_symbols: List[str] = []
+        self._parent_app = parent
+        self._updating_risk = False
+        self._skip_suggest = True
+        self._edit_id = (slave_data or {}).get("id", "")
+        self.title("Настройки аккаунта")
+        # Both axes resizable: vertical scroll kicks in on small screens.
+        self.resizable(True, True)
+        self.configure(fg_color=p.BG_DEEP)
+        self.withdraw()
+        icon = ICON_CYAN if getattr(parent, '_trader', None) and parent._trader.is_running() else ICON_DEFAULT
+        if os.path.exists(icon):
+            try:
+                self.after(250, lambda: self.iconbitmap(icon))
+            except Exception:
+                pass
+        data = slave_data or {}
+        self._build(data)
+        self._center(parent)
+        self.deiconify()
+        self.grab_set()
+        self._load_symbols()
+        self._skip_suggest = False
+
+    def _center(self, parent):
+        self.update_idletasks()
+        pw, py = parent.winfo_rootx(), parent.winfo_rooty()
+        pw2, py2 = parent.winfo_width(), parent.winfo_height()
+        w = max(self.winfo_reqwidth(), self.winfo_width(), ui_scaling.scale(500))
+        h = max(self.winfo_reqheight(), self.winfo_height(), ui_scaling.scale(680))
+        wa = ui_scaling.get_work_area_for_window(parent)
+        max_h = wa[3] - wa[1] - ui_scaling.scale(8)
+        h = min(h, max_h)
+        w = min(w, wa[2] - wa[0] - ui_scaling.scale(16))
+        try:
+            self.minsize(w, h)
+        except Exception:
+            pass
+        x = pw + (pw2 - w) // 2
+        y = py + (py2 - h) // 2
+        x, y, w, h = ui_scaling.clamp_to_work_area(x, y, w, h, wa)
+        geom = f"{w}x{h}+{x}+{y}"
+        self.force_geometry(geom)
+        # CTkToplevel has 200ms-delayed internal callbacks that can override
+        # the geometry. Re-apply after they settle.
+        self.after(300, lambda: self.force_geometry(geom))
+
+    # ── Soft styling helpers ─────────────────────────
+    def _section_title(self, parent, text):
+        return ctk.CTkLabel(
+            parent, text=text.upper(),
+            text_color=p.FG_LABEL, font=("Segoe UI", 9, "bold"),
+            anchor="w",
+        )
+
+    def _field_label(self, parent, text):
+        return ctk.CTkLabel(
+            parent, text=text, text_color=p.FG_LABEL,
+            font=("Segoe UI", 9), anchor="w",
+        )
+
+    def _soft_entry(self, parent, var=None, width=None, **kw):
+        kw.setdefault("fg_color", p.BG_ROW)
+        kw.setdefault("border_color", p.BORDER)
+        kw.setdefault("border_width", 1)
+        kw.setdefault("text_color", p.FG)
+        kw.setdefault("corner_radius", p.RADIUS_MD)
+        # Compact 28 px entry instead of the global BTN_HEIGHT (36) and a
+        # 9 pt font instead of 10 pt — ~25 % shorter so the whole dialog
+        # shrinks to a more comfortable footprint.
+        kw.setdefault("height", 28)
+        kw.setdefault("font", ("Segoe UI", 9))
+        ent = ctk.CTkEntry(parent, textvariable=var, **kw)
+        if width is not None:
+            # legacy callers pass width in character units — convert to px
+            ent.configure(width=max(48, int(width) * 7))
+        return ent
+
+    def _primary_btn(self, parent, text, cmd, **kw):
+        kw.setdefault("fg_color", p.ACCENT)
+        kw.setdefault("hover_color", p.ACCENT_H)
+        kw.setdefault("text_color", p.ACCENT_FG)
+        kw.setdefault("corner_radius", p.RADIUS_MD)
+        # Compact 30 px button in this dialog only (vs the 36 px global
+        # BTN_HEIGHT used by the main window action buttons).
+        kw.setdefault("height", 30)
+        kw.setdefault("font", ("Segoe UI", 9, "bold"))
+        return ctk.CTkButton(parent, text=text, command=cmd, **kw)
+
+    def _ghost_btn(self, parent, text, cmd, small=False, **kw):
+        kw.setdefault("fg_color", "transparent")
+        kw.setdefault("hover_color", p.BG_ROW_HOVER)
+        kw.setdefault("text_color", p.FG)
+        kw.setdefault("border_color", p.BORDER)
+        kw.setdefault("border_width", 1)
+        kw.setdefault("corner_radius", p.RADIUS_MD)
+        # Match the compact 30 px / 22 px (small) sizing used elsewhere in
+        # SlaveDialog so all buttons share one consistent rhythm.
+        kw.setdefault("height", 22 if small else 30)
+        kw.setdefault("font", ("Segoe UI", 8 if small else 9))
+        if small:
+            kw.setdefault("width", 28)
+        return ctk.CTkButton(parent, text=text, command=cmd, **kw)
+
+    def _divider(self, parent):
+        return ctk.CTkFrame(parent, fg_color=p.BORDER_LIGHT, height=1)
+
+    def _build(self, data: Dict):
+        # Compact dialog: tighter padding than the main-window
+        # SP/SP_SM grid so the whole window shrinks ~25 %.
+        SP = 12   # primary inter-section padding (was SP=14)
+        SP_SM = 8 # tight padding (was SP_SM=8 — unchanged)
+        card = _widgets.Card(self, padding=0)
+        card.pack(fill="both", expand=True, padx=SP, pady=SP)
+        form = ctk.CTkScrollableFrame(card, fg_color="transparent",
+                                      scrollbar_button_color=p.BG_INPUT,
+                                      height=ui_scaling.scale(560))
+        form.pack(side="top", fill="both", expand=True)
+
+        # ── Section: АККАУНТ ─────────────────────────────
+        self._section_title(form, "Аккаунт").pack(
+            anchor="w", padx=SP, pady=(SP, SP_SM),
+        )
+
+        frm_top = ctk.CTkFrame(form, fg_color="transparent")
+        frm_top.pack(fill="x", padx=SP)
+        frm_top.columnconfigure(1, weight=1)
+
+        self._field_label(frm_top, "Имя").grid(row=0, column=0, sticky="w", pady=4)
+        self.var_name = tk.StringVar(value=data.get("name", ""))
+        self._soft_entry(frm_top, self.var_name).grid(
+            row=0, column=1, sticky="ew", padx=(SP_SM, 0), pady=4,
+        )
+
+        self._field_label(frm_top, "terminal64.exe").grid(row=1, column=0, sticky="w", pady=4)
+        self.var_path = tk.StringVar(value=data.get("path", ""))
+        path_frame = ctk.CTkFrame(frm_top, fg_color="transparent")
+        path_frame.grid(row=1, column=1, sticky="ew", padx=(SP_SM, 0), pady=4)
+        self._soft_entry(path_frame, self.var_path).pack(side="left", fill="x", expand=True)
+        btn_browse_s = self._ghost_btn(path_frame, "…", self._browse, small=True)
+        btn_browse_s.pack(side="left", padx=(SP_SM, 0))
+        _bind_tip(btn_browse_s, "Выбрать путь к terminal64.exe слейва")
+
+        self._divider(form).pack(fill="x", padx=SP, pady=SP)
+
+        # ── Section: СИМВОЛЫ ─────────────────────────────
+        sym_header = ctk.CTkFrame(form, fg_color="transparent")
+        sym_header.pack(fill="x", padx=SP, pady=(0, SP_SM))
+        self._section_title(
+            sym_header, "Символы (мастер → слейв)",
+        ).pack(side="left")
+        btn_load = self._ghost_btn(
+            sym_header, "⇩ Загрузить", self._load_symbols, small=True,
+        )
+        btn_load.configure(width=110)
+        btn_load.pack(side="right")
+        _bind_tip(btn_load, "Загрузить символы из запущенных терминалов")
+
+        self.lbl_sym_status = ctk.CTkLabel(
+            form, text="", text_color=p.FG_DIM, font=("Segoe UI", 9),
+            anchor="w",
+        )
+        self.lbl_sym_status.pack(anchor="w", padx=SP)
+
+        self.sym_frame = ctk.CTkFrame(form, fg_color="transparent")
+        self.sym_frame.pack(fill="x", padx=SP, pady=4)
+
+        symbol_map = data.get("symbol_map", {})
+        for master_sym, slave_sym in symbol_map.items():
+            self._add_symbol_row(master_sym, slave_sym)
+
+        btn_add_sym = self._ghost_btn(form, "+ Символ", self._add_symbol_row, small=True)
+        btn_add_sym.configure(width=110)
+        btn_add_sym.pack(anchor="w", padx=SP, pady=(2, 0))
+        _bind_tip(btn_add_sym, "Добавить строку маппинга символов")
+
+        self._divider(form).pack(fill="x", padx=SP, pady=SP)
+
+        # ── Section: РИСК ──────────────────────────────────
+        self._section_title(form, "Риск").pack(
+            anchor="w", padx=SP, pady=(0, SP_SM),
+        )
+        frm_risk = ctk.CTkFrame(form, fg_color="transparent")
+        frm_risk.pack(fill="x", padx=SP)
+
+        self.var_risk_type = tk.StringVar(value=data.get("risk_type", "percent"))
+        risk_value = data.get("risk_value", 1.0)
+        risk_type = data.get("risk_type", "percent")
+
+        # Compact-numeric width for short money/percent inputs.
+        NUM_W = 68
+
+        self._field_label(frm_risk, "Риск %").grid(row=0, column=0, sticky="w", pady=3)
+        self.var_risk_pct = tk.StringVar(
+            value=str(risk_value) if risk_type == "percent" else "")
+        ent_pct = self._soft_entry(frm_risk, self.var_risk_pct)
+        ent_pct.configure(width=NUM_W)
+        ent_pct.grid(row=0, column=1, sticky="w", padx=(SP_SM, 0), pady=3)
+
+        self._field_label(frm_risk, "Риск $").grid(row=1, column=0, sticky="w", pady=3)
+        self.var_risk_doll = tk.StringVar(
+            value=str(risk_value) if risk_type == "fixed" else "")
+        ent_doll = self._soft_entry(frm_risk, self.var_risk_doll)
+        ent_doll.configure(width=NUM_W)
+        ent_doll.grid(row=1, column=1, sticky="w", padx=(SP_SM, 0), pady=3)
+
+        self.lbl_risk_hint = ctk.CTkLabel(
+            frm_risk, text="", text_color=p.FG_DIM, font=("Segoe UI", 9),
+            anchor="w",
+        )
+        self.lbl_risk_hint.grid(row=2, column=0, columnspan=2, sticky="w", pady=(2, 0))
+
+        self.var_risk_pct.trace_add("write", lambda *_: self._sync_risk("percent"))
+        self.var_risk_doll.trace_add("write", lambda *_: self._sync_risk("fixed"))
+
+        self._field_label(frm_risk, "Лот без SL").grid(row=3, column=0, sticky="w", pady=3)
+        self.var_default_lot = tk.StringVar(value=str(data.get("default_lot", "0.01")))
+        ent_lot = self._soft_entry(frm_risk, self.var_default_lot)
+        ent_lot.configure(width=NUM_W)
+        ent_lot.grid(row=3, column=1, sticky="w", padx=(SP_SM, 0), pady=3)
+
+        self._field_label(frm_risk, "Макс. просадка %").grid(row=4, column=0, sticky="w", pady=3)
+        self.var_max_drawdown = tk.StringVar(value=str(data.get("max_drawdown", 0)))
+        ent_dd = self._soft_entry(frm_risk, self.var_max_drawdown)
+        ent_dd.configure(width=NUM_W)
+        ent_dd.grid(row=4, column=1, sticky="w", padx=(SP_SM, 0), pady=3)
+        ctk.CTkLabel(
+            frm_risk, text="0 = выкл", text_color=p.FG_DIM,
+            font=("Segoe UI", 9),
+        ).grid(row=5, column=1, sticky="w", padx=(SP_SM, 0))
+
+        self._field_label(frm_risk, "Макс. сделок/день").grid(row=6, column=0, sticky="w", pady=3)
+        self.var_max_trades = tk.StringVar(value=str(data.get("max_trades_per_day", 0)))
+        ent_trd = self._soft_entry(frm_risk, self.var_max_trades)
+        ent_trd.configure(width=NUM_W)
+        ent_trd.grid(row=6, column=1, sticky="w", padx=(SP_SM, 0), pady=3)
+        ctk.CTkLabel(
+            frm_risk, text="0 = выкл", text_color=p.FG_DIM,
+            font=("Segoe UI", 9),
+        ).grid(row=7, column=1, sticky="w", padx=(SP_SM, 0))
+
+        self._field_label(frm_risk, "Макс. убыт/день $").grid(row=8, column=0, sticky="w", pady=3)
+        self.var_daily_loss = tk.StringVar(value=str(data.get("daily_loss_limit", 0)))
+        ent_dl = self._soft_entry(frm_risk, self.var_daily_loss)
+        ent_dl.configure(width=NUM_W)
+        ent_dl.grid(row=8, column=1, sticky="w", padx=(SP_SM, 0), pady=3)
+        ctk.CTkLabel(
+            frm_risk, text="0 = выкл", text_color=p.FG_DIM,
+            font=("Segoe UI", 9),
+        ).grid(row=9, column=1, sticky="w", padx=(SP_SM, 0))
+
+        self._divider(form).pack(fill="x", padx=SP, pady=SP)
+
+        # ── Actions row ────────────────────────────────────
+        btn_frame = ctk.CTkFrame(card, fg_color="transparent")
+        btn_frame.pack(side="bottom", fill="x", pady=(0, SP))
+        btn_save = self._primary_btn(btn_frame, "Сохранить", self._save)
+        btn_save.configure(width=140)
+        btn_save.pack(side="left", padx=SP_SM)
+        _bind_tip(btn_save, "Сохранить настройки аккаунта")
+        btn_cancel = self._ghost_btn(btn_frame, "Отмена", self.destroy)
+        btn_cancel.configure(width=120)
+        btn_cancel.pack(side="left", padx=SP_SM)
+        _bind_tip(btn_cancel, "Закрыть без сохранения")
+
+    def _get_ref_balance(self) -> float:
+        if hasattr(self._parent_app, '_rows') and self._parent_app._rows:
+            for row, slave in zip(self._parent_app._rows, self._parent_app._slaves):
+                if slave.get("name") == self.var_name.get().strip():
+                    try:
+                        return float(row.lbl_balance.cget("text").replace("$", "").replace(",", ""))
+                    except Exception:
+                        pass
+        return 0.0
+
+    def _sync_risk(self, source: str):
+        if self._updating_risk:
+            return
+        self._updating_risk = True
+        try:
+            if source == "percent":
+                try:
+                    pct_val = float(self.var_risk_pct.get())
+                    self.var_risk_type.set("percent")
+                    bal = self._get_ref_balance()
+                    if bal > 0:
+                        self.var_risk_doll.set(f"{bal * pct_val / 100.0:.2f}")
+                    self.lbl_risk_hint.configure(
+                        text=f"{pct_val}% от баланса",
+                        text_color=p.ACCENT,
+                    )
+                except (ValueError, tk.TclError):
+                    pass
+            elif source == "fixed":
+                try:
+                    doll_val = float(self.var_risk_doll.get())
+                    self.var_risk_type.set("fixed")
+                    bal = self._get_ref_balance()
+                    if bal > 0:
+                        self.var_risk_pct.set(f"{doll_val / bal * 100.0:.2f}")
+                    self.lbl_risk_hint.configure(
+                        text=f"${doll_val:.2f} фиксированный",
+                        text_color=p.ACCENT,
+                    )
+                except (ValueError, tk.TclError):
+                    pass
+        finally:
+            self._updating_risk = False
+
+    def _browse(self):
+        path = filedialog.askopenfilename(
+            title="terminal64.exe", filetypes=[("MT5", "terminal64.exe"), ("EXE", "*.exe")],
+            initialdir="C:\\")
+        if path:
+            self.var_path.set(path.replace("/", "\\"))
+
+    def _load_symbols(self):
+        if not _MT5_OK:
+            self.lbl_sym_status.configure(text="MT5 не установлен", text_color=p.RED)
+            return
+        master_path = self._get_master_path()
+        slave_path = self.var_path.get().strip()
+        if master_path:
+            self._master_symbols = self._fetch_symbols(master_path, "мастер")
+        if slave_path:
+            self._slave_symbols = self._fetch_symbols(slave_path, "слейв")
+        parts = []
+        if self._master_symbols:
+            parts.append(f"мастер: {len(self._master_symbols)}")
+        if self._slave_symbols:
+            parts.append(f"слейв: {len(self._slave_symbols)}")
+        if parts:
+            self.lbl_sym_status.configure(
+                text="Загружено: " + ", ".join(parts),
+                text_color=p.GREEN_DIM,
+            )
+        else:
+            self.lbl_sym_status.configure(
+                text="Символы не загружены — запустите терминалы",
+                text_color=p.FG_DIM,
+            )
+
+    def _get_master_path(self) -> str:
+        parent = self.master
+        if hasattr(parent, "var_master_path"):
+            return parent.var_master_path.get().strip()
+        return ""
+
+    def _fetch_symbols(self, path: str, label: str) -> List[str]:
+        if not path or not is_terminal_running(path):
+            self.lbl_sym_status.configure(
+                text=f"Терминал {label} не запущен",
+                text_color=p.YELLOW,
+            )
+            return []
+        if not mt5.initialize(path=path):
+            self.lbl_sym_status.configure(
+                text=f"Ошибка подключения к {label}",
+                text_color=p.YELLOW,
+            )
+            return []
+        try:
+            symbols = mt5.symbols_get()
+            return sorted([s.name for s in symbols if s.name]) if symbols else []
+        finally:
+            mt5.shutdown()
+
+    def _auto_suggest(self, var_master: tk.StringVar, var_slave: tk.StringVar):
+        if self._skip_suggest:
+            return
+        m = var_master.get().strip().upper()
+        if not m:
+            return
+        s = var_slave.get().strip()
+        if s:
+            return
+        match = self._auto_match(m)
+        if match:
+            var_slave.set(match)
+
+    def _auto_match(self, master_sym: str) -> str:
+        master_upper = master_sym.upper().rstrip(".")
+        for s in self._slave_symbols:
+            if s.upper().rstrip(".") == master_upper:
+                return s
+        alias = _SYMBOL_ALIASES.get(master_upper)
+        if alias:
+            alias_upper = alias.upper().rstrip(".")
+            for s in self._slave_symbols:
+                if s.upper().rstrip(".") == alias_upper:
+                    return s
+        for s in self._slave_symbols:
+            s_base = s.upper().rstrip(".")
+            if s_base.startswith(master_upper) and len(s_base) - len(master_upper) <= 2:
+                tail = s_base[len(master_upper):]
+                if tail in ("B", "M", "E", "X", "I"):
+                    return s
+        return ""
+
+    def _add_symbol_row(self, master_sym: str = "", slave_sym: str = ""):
+        row_frame = ctk.CTkFrame(self.sym_frame, fg_color="transparent")
+        row_frame.pack(fill="x", pady=2)
+        var_master = tk.StringVar(value=master_sym)
+        var_slave = tk.StringVar(value=slave_sym)
+        ent_m = self._soft_entry(row_frame, var_master)
+        ent_m.pack(side="left", fill="x", expand=True)
+
+        var_master.trace_add("write", lambda *_: self._auto_suggest(var_master, var_slave))
+
+        def pick_m():
+            dlg = SymbolPickerDialog(self, self._master_symbols, "Мастер")
+            self.wait_window(dlg)
+            if dlg.selected:
+                var_master.set(dlg.selected)
+
+        btn_pick_m = self._ghost_btn(row_frame, "…", pick_m, small=True)
+        btn_pick_m.pack(side="left", padx=(4, 0))
+        _bind_tip(btn_pick_m, "Выбрать символ мастера из списка")
+        ctk.CTkLabel(
+            row_frame, text="→", text_color=p.FG_DIM, font=("Segoe UI", 11),
+        ).pack(side="left", padx=6)
+        ent_s = self._soft_entry(row_frame, var_slave)
+        ent_s.pack(side="left", fill="x", expand=True)
+
+        def pick_s():
+            dlg = SymbolPickerDialog(self, self._slave_symbols, "Слейв")
+            self.wait_window(dlg)
+            if dlg.selected:
+                var_slave.set(dlg.selected)
+
+        btn_pick_s = self._ghost_btn(row_frame, "…", pick_s, small=True)
+        btn_pick_s.pack(side="left", padx=(4, 0))
+        _bind_tip(btn_pick_s, "Выбрать символ слейва из списка")
+
+        def remove():
+            row_frame.destroy()
+            self._symbol_rows = [r for r in self._symbol_rows if r["frame"] != row_frame]
+
+        btn_rm = self._ghost_btn(row_frame, "×", remove, small=True)
+        btn_rm.pack(side="left", padx=(6, 0))
+        _bind_tip(btn_rm, "Удалить строку маппинга")
+        self._symbol_rows.append({"frame": row_frame, "master": var_master, "slave": var_slave})
+
+    def _save(self):
+        name = self.var_name.get().strip()
+        path = self.var_path.get().strip()
+        if not name:
+            messagebox.showwarning("Ошибка", "Введите имя", parent=self)
+            return
+        if not path:
+            messagebox.showwarning("Ошибка", "Укажите путь", parent=self)
+            return
+        norm_path = os.path.normcase(os.path.abspath(path))
+        for slave in self._parent_app._slaves:
+            existing = slave.get("path", "")
+            if existing and os.path.normcase(os.path.abspath(existing)) == norm_path:
+                if slave.get("id", "") != self._edit_id:
+                    messagebox.showwarning("Ошибка", "Этот терминал уже добавлен", parent=self)
+                    return
+
+        symbol_map = {}
+        for row in self._symbol_rows:
+            m = row["master"].get().strip().upper()
+            s = row["slave"].get().strip()
+            if m and s:
+                symbol_map[m] = s
+
+        risk_type = self.var_risk_type.get()
+        try:
+            if risk_type == "percent":
+                risk_value = float(self.var_risk_pct.get())
+            else:
+                risk_value = float(self.var_risk_doll.get())
+        except (ValueError, tk.TclError):
+            messagebox.showwarning("Ошибка", "Неверное значение риска", parent=self)
+            return
+        try:
+            default_lot = float(self.var_default_lot.get())
+        except ValueError:
+            messagebox.showwarning("Ошибка", "Неверный лот", parent=self)
+            return
+        try:
+            max_drawdown = float(self.var_max_drawdown.get())
+        except ValueError:
+            max_drawdown = 0.0
+        try:
+            max_trades_per_day = int(self.var_max_trades.get())
+        except ValueError:
+            max_trades_per_day = 0
+        try:
+            daily_loss_limit = float(self.var_daily_loss.get())
+        except ValueError:
+            daily_loss_limit = 0
+
+        self.result = {
+            "name": name, "path": path, "symbol_map": symbol_map,
+            "risk_type": risk_type, "risk_value": risk_value,
+            "default_lot": default_lot, "max_drawdown": max_drawdown,
+            "max_trades_per_day": max_trades_per_day,
+            "daily_loss_limit": daily_loss_limit,
+        }
+        self.destroy()
+
+
+# ── AccountRow ──────────────────────────────────────────────
+
+class AccountRow:
+    """Phase-4 redesigned slave row.
+
+    Visually a single rounded "card" that spans columns 0-11 of the
+    parent grid (``self._table_frame``).  Each cell hosts CTk widgets:
+
+      * col 0  — ``CTkSwitch`` (enable / disable)
+      * col 1  — ``IconCircle`` status dot (green/red/yellow/neutral)
+      * col 2  — name label (bold)
+      * col 3  — login mono label
+      * col 4  — balance bold value
+      * col 5  — equity dim value
+      * col 6  — P&L value (green/red)
+      * col 7  — symbol chips (first three pairs, "+N" overflow)
+      * col 8  — risk label (% or $)
+      * col 9  — trades-per-day count
+      * col 10 — ``RiskBar`` daily-loss bar
+      * col 11 — action buttons (open / close / test / settings / delete)
+
+    Public API (consumed elsewhere in gui.py / copier.py) is preserved:
+
+      * ``var_enabled``               — tk.BooleanVar bound to the switch
+      * ``lbl_balance / equity / pnl / login``  — ctk_compat.Label (have .config / .cget)
+      * ``row_index`` property+setter — re-grids every cell on assignment
+      * ``update_info()``, ``update_status_only()``, ``update_daily_loss()``
+      * ``refresh(data)``, ``destroy()``
+    """
+
+    def __init__(self, parent, row_index, slave_data, on_edit, on_delete,
+                 on_toggle, on_test, on_open, on_close_all):
+        self._parent = parent
+        self._row = row_index
+        self.slave_data = slave_data
+        self._on_edit = on_edit
+        self._on_delete = on_delete
+        self._on_toggle = on_toggle
+        self._on_test = on_test
+        self._on_open = on_open
+        self._on_close_all = on_close_all
+        self._hover = False
+        self._leave_timer = None
+        self._widgets = []
+        self._build()
+
+    @property
+    def row_index(self):
+        return self._row
+
+    @row_index.setter
+    def row_index(self, value):
+        self._row = value
+        try:
+            # Mirror the band height used in _build (see ROW_BAND below).
+            # Previously this setter kept the old 48 px minsize, which
+            # silently re-stretched the band whenever a row was re-homed
+            # (e.g. after a delete reflowed remaining accounts), undoing
+            # the height fix from _build.
+            self._parent.rowconfigure(value, minsize=ui_scaling.scale(34))
+        except Exception:
+            pass
+        if hasattr(self, "_bg_frame") and self._bg_frame:
+            self._bg_frame.grid(row=value)
+        for w in self._widgets:
+            try:
+                w.grid(row=value)
+            except Exception:
+                pass
+
+    # ── Build ──────────────────────────────────────────────
+
+    def _build(self):
+        d = self.slave_data
+        r = self._row
+
+        # Row card chrome — rounded white background with a hair-thin
+        # divider border (BORDER_LIGHT == slate-100).  Sized so the
+        # vertical gap between chip/cell content and the card's top/
+        # bottom borders matches the inter-chip horizontal gap (~4 px):
+        #
+        #   ROW_BAND = scale(34)               ← total row band height
+        #   bg_frame height = ROW_BAND         ← EXPLICIT, see note below
+        #   bg_frame grid pady=3               ← visual card gap to row band
+        #   cell pady=3 (set per cell below)   ← inner cell padding
+        #
+        # CRITICAL: CTkFrame's default size is 200x200 px.  Without an
+        # explicit ``height=`` it requests 200 px and — because the
+        # bg_frame is the only sticky="nsew" child in the row — the
+        # grid row band stretches to 200 px, blowing the slave card up
+        # to roughly the size of a KPI tile.  ``minsize`` is a *lower*
+        # bound only and does nothing to cap this.  An explicit height
+        # plus ``grid_propagate(False)`` pins the band to ROW_BAND
+        # regardless of the empty bg_frame's intrinsic 200 px request.
+        ROW_BAND = ui_scaling.scale(34)
+        self._parent.rowconfigure(r, minsize=ROW_BAND)
+        self._bg_frame = ctk.CTkFrame(
+            self._parent,
+            fg_color=p.BG_ROW,
+            corner_radius=p.RADIUS_LG,
+            border_width=1,
+            border_color=p.BORDER_LIGHT,
+            height=ROW_BAND,
+        )
+        try:
+            self._bg_frame.grid_propagate(False)
+            self._bg_frame.pack_propagate(False)
+        except tk.TclError:
+            pass
+        self._bg_frame.grid(row=r, column=0, columnspan=12,
+                            sticky="nsew", pady=3, padx=0)
+        self._bg_frame.lower()  # stay behind cell widgets
+
+        bg = p.BG_ROW
+
+        # ── col 0 — enable switch ───────────────────────
+        enabled = d.get("enabled", True)
+        self.var_enabled = tk.BooleanVar(value=enabled)
+        # iOS-style toggle (Canvas-knob — see widgets.Toggle).  -20% scale
+        # in the slave-table pass on 2026-06-20: track 26×14 with knob 8×8
+        # (3px padding ring) keeps the iOS proportions intact at the new
+        # row density.
+        self.sw_enabled = _widgets.Toggle(
+            self._parent, variable=self.var_enabled,
+            command=self._toggle,
+            width=ui_scaling.scale(26), height=ui_scaling.scale(14),
+            knob_pad=ui_scaling.scale(3),
+            bg_color=bg,
+        )
+        self.sw_enabled.grid(row=r, column=0, padx=(ui_scaling.scale(12), ui_scaling.scale(6)),
+                             pady=ui_scaling.scale(3), sticky="w")
+        _bind_tip(self.sw_enabled, "Включить / выключить аккаунт")
+        self._widgets.append(self.sw_enabled)
+        # Back-compat: legacy code reads ``lbl_check`` for the on/off icon.
+        # We hide it (no grid) but expose the switch as the canonical UI.
+        self.lbl_check = self.sw_enabled
+
+        # ── col 1 — status dot via IconCircle ───────────
+        # Bumped 8 → 10 px: at the previous 8 px the Tk oval renderer
+        # only had a 7-px usable bbox after the -1 inclusive-bound fix,
+        # which produced a visibly chopped circle on the right/bottom.
+        # 10 px gives the AA enough room and matches the chip-row visual
+        # weight better.
+        self._dot = _widgets.IconCircle(
+            self._parent, size=ui_scaling.scale(10), tint=p.FG_DIM,
+        )
+        self._dot.grid(row=r, column=1, padx=(0, ui_scaling.scale(6)),
+                       pady=ui_scaling.scale(3), sticky="")
+        self._widgets.append(self._dot)
+
+        # ── col 2 — name ────────────────────────────────
+        self.lbl_name = Label(
+            self._parent, text=d.get("name", "\u2014"),
+            bg=bg, fg=p.FG, font=("Segoe UI", 9, "bold"), anchor="w",
+        )
+        self.lbl_name.grid(row=r, column=2, padx=6, pady=3, sticky="ew")
+        self._widgets.append(self.lbl_name)
+
+        # ── col 3 — login (mono) ────────────────────────
+        self.lbl_login = Label(
+            self._parent, text="", bg=bg, fg=p.FG_DIM,
+            font=("Segoe UI", 9), anchor="w",
+        )
+        self.lbl_login.grid(row=r, column=3, padx=6, pady=3, sticky="ew")
+        self._widgets.append(self.lbl_login)
+
+        # ── col 4 — balance ─────────────────────────────
+        self.lbl_balance = Label(
+            self._parent, text="", bg=bg, fg=p.FG,
+            font=("Segoe UI", 9, "bold"), anchor="e",
+        )
+        self.lbl_balance.grid(row=r, column=4, padx=6, pady=3, sticky="ew")
+        self._widgets.append(self.lbl_balance)
+
+        # ── col 5 — equity ──────────────────────────────
+        self.lbl_equity = Label(
+            self._parent, text="", bg=bg, fg=p.FG_LABEL,
+            font=("Segoe UI", 9), anchor="e",
+        )
+        self.lbl_equity.grid(row=r, column=5, padx=6, pady=3, sticky="ew")
+        self._widgets.append(self.lbl_equity)
+
+        # ── col 6 — P&L ─────────────────────────────────
+        self.lbl_pnl = Label(
+            self._parent, text="", bg=bg, fg=p.FG_DIM,
+            font=("Segoe UI", 9, "bold"), anchor="e",
+        )
+        self.lbl_pnl.grid(row=r, column=6, padx=6, pady=3, sticky="ew")
+        self._widgets.append(self.lbl_pnl)
+
+        # ── col 7 — symbol chips (overflow becomes "+N") ─
+        self._sym_frame = ctk.CTkFrame(self._parent, fg_color="transparent")
+        self._sym_frame.grid(row=r, column=7, padx=6, pady=3, sticky="w")
+        self._build_symbol_chips(d.get("symbol_map", {}))
+        self._widgets.append(self._sym_frame)
+
+        # ── col 8 — risk (% or $) ───────────────────────
+        rt = d.get("risk_type", "percent")
+        rv = d.get("risk_value", 1.0)
+        risk_text = f"{rv}%" if rt == "percent" else f"${rv}"
+        self.lbl_risk = Label(
+            self._parent, text=risk_text, bg=bg, fg=p.TINT_ORANGE_FG,
+            font=("Segoe UI", 9, "bold"), anchor="e",
+        )
+        self.lbl_risk.grid(row=r, column=8, padx=6, pady=3, sticky="ew")
+        self._widgets.append(self.lbl_risk)
+
+        # ── col 9 — trades per day ──────────────────────
+        mtd = d.get("max_trades_per_day", 0)
+        self.lbl_trades_day = Label(
+            self._parent, text=str(mtd) if mtd else "\u2014",
+            bg=bg, fg=p.FG_DIM, font=("Segoe UI", 9),
+            anchor="center",
+        )
+        self.lbl_trades_day.grid(row=r, column=9, padx=6, pady=3, sticky="ew")
+        self._widgets.append(self.lbl_trades_day)
+
+        # ── col 10 — daily-loss RiskBar ─────────────────
+        dll = d.get("daily_loss_limit", 0)
+        self._risk_bar = _widgets.RiskBar(
+            self._parent, value=0.0,
+            label=(f"$0/${dll:.0f}" if dll else "\u2014"),
+            width=ui_scaling.scale(100),
+        )
+        # If no daily_loss_limit is configured we hide the bar entirely
+        # and show only a centred dash — a perpetually-empty bar carries
+        # no information.
+        if not dll:
+            self._risk_bar.set_disabled("\u2014")
+        self._risk_bar.grid(row=r, column=10, padx=6, pady=3, sticky="ew")
+        self._widgets.append(self._risk_bar)
+
+        # ── col 11 — action buttons ─────────────────────
+        bf = ctk.CTkFrame(self._parent, fg_color="transparent")
+        bf.grid(row=r, column=11, padx=(6, 12), pady=3, sticky="e")
+        self._build_actions(bf)
+        self._widgets.append(bf)
+
+        # Hover handling: highlight border on enter.
+        for w in (self._bg_frame,) + tuple(self._widgets):
+            try:
+                w.bind("<Enter>", self._on_enter)
+                w.bind("<Leave>", self._on_leave)
+            except Exception:
+                pass
+
+    def _build_symbol_chips(self, sym_map):
+        # Clear any previous chips (called from refresh()).
+        for child in self._sym_frame.winfo_children():
+            child.destroy()
+        if not sym_map:
+            ctk.CTkLabel(
+                self._sym_frame, text="\u2014",
+                text_color=p.FG_DIM, font=("Segoe UI", 10),
+            ).pack(side="left")
+            return
+        # Each chip's natural width is its text width + chip padding, and
+        # the Chip widget doesn't clip to its column.  Long mappings like
+        # ``I225.S→Nikkei225`` therefore used to bleed into the РИСК
+        # column on the right (and visually got chopped off because CTk
+        # painted siblings on top).  Fix: head-truncate the chip text
+        # with an ellipsis so the chip stays inside its column box.  We
+        # also cap the row at 2 chips before falling back to a ``+N``
+        # overflow badge — three full-width chips never fit at the
+        # column's min width anyway.
+        SYM_CHIP_MAX_CHARS = 8
+        SYM_CHIP_MAX_VISIBLE = 2
+        items = list(sym_map.items())
+        visible = items[:SYM_CHIP_MAX_VISIBLE]
+        overflow = len(items) - len(visible)
+        for k, v in visible:
+            text = f"{k}\u2192{v}" if v and v != k else k
+            if len(text) > SYM_CHIP_MAX_CHARS:
+                # Show the start of the mapping (the source symbol is on
+                # the left of the arrow) followed by a single-character
+                # ellipsis so a glance still tells you what the chip is.
+                text = text[: SYM_CHIP_MAX_CHARS - 1] + "\u2026"
+            chip = _widgets.Chip(
+                self._sym_frame, text=text, tint="blue", bold=False,
+            )
+            chip.pack(side="left", padx=(0, 4))
+        if overflow > 0:
+            extra = _widgets.Chip(
+                self._sym_frame, text=f"+{overflow}",
+                tint="neutral", bold=True,
+            )
+            extra.pack(side="left", padx=(0, 4))
+
+    def _build_actions(self, parent):
+        # Open terminal (chart) — neutral ghost.
+        btn_open = _widgets.IconButton(
+            parent, icon=_lucide.icon("chart-no-axes-column", 12, "label"),
+            variant="ghost", size=22, command=self._open_terminal,
+        )
+        btn_open.pack(side="left", padx=(0, 4))
+        _bind_tip(btn_open, "Открыть терминал")
+
+        # Close all positions on this slave — danger ghost.
+        btn_close = _widgets.IconButton(
+            parent, icon=_lucide.icon("circle-x", 12, "danger"),
+            variant="ghost", size=22, command=self._close_all,
+        )
+        btn_close.pack(side="left", padx=(0, 4))
+        _bind_tip(btn_close, "Закрыть все позиции")
+
+        # Test BUY 0.01 — warn ghost.
+        btn_test = _widgets.IconButton(
+            parent, icon=_lucide.icon("triangle-alert", 12, "warn"),
+            variant="ghost", size=22, command=self._test,
+        )
+        btn_test.pack(side="left", padx=(0, 4))
+        _bind_tip(btn_test, "Тест: BUY 0.01 лот")
+
+        # Settings — ghost.
+        btn_edit = _widgets.IconButton(
+            parent, icon=_lucide.icon("settings", 12, "label"),
+            variant="ghost", size=22, command=self._edit,
+        )
+        btn_edit.pack(side="left", padx=(0, 4))
+        _bind_tip(btn_edit, "Настройки")
+
+        # Delete — ghost with x.
+        btn_del = _widgets.IconButton(
+            parent, icon=_lucide.icon("x", 12, "label"),
+            variant="ghost", size=22, command=self._delete,
+        )
+        btn_del.pack(side="left", padx=(0, 0))
+        _bind_tip(btn_del, "Удалить аккаунт")
+
+    # ── Hover ──────────────────────────────────────────────
+
+    def _on_enter(self, event=None):
+        if self._leave_timer:
+            try:
+                self._parent.after_cancel(self._leave_timer)
+            except Exception:
+                pass
+            self._leave_timer = None
+        if not self._hover:
+            self._set_hover(True)
+
+    def _on_leave(self, event=None):
+        try:
+            self._leave_timer = self._parent.after(80, self._do_leave)
+        except Exception:
+            self._set_hover(False)
+
+    def _do_leave(self):
+        self._leave_timer = None
+        self._set_hover(False)
+
+    def _set_hover(self, hover: bool):
+        if self._hover == hover:
+            return
+        self._hover = hover
+        if hasattr(self, "_bg_frame") and self._bg_frame:
+            try:
+                # Only the border shifts on hover.  We intentionally do
+                # NOT change the row's fg_color: the cells are tk.Labels
+                # with a fixed bg=BG_ROW, so a row background colour
+                # shift would make each label visible as a free-floating
+                # white rectangle on the new background.
+                self._bg_frame.configure(
+                    border_color=p.ACCENT_DIM if hover else p.BORDER_LIGHT,
+                )
+            except Exception:
+                pass
+
+    # ── External updaters ──────────────────────────────────
+
+    def update_info(self, balance: float, equity: float, login: int = 0,
+                    status: str = ""):
+        bg = p.BG_ROW
+        self.lbl_balance.config(text=f"${balance:,.2f}" if balance else "", bg=bg)
+        self.lbl_equity.config(text=f"${equity:,.2f}" if equity else "", bg=bg)
+        if login:
+            self.lbl_login.config(text=f"#{login}", bg=bg)
+
+        pnl = equity - balance
+        if balance or equity:
+            pnl_color = p.GREEN if pnl >= 0 else p.RED
+            pnl_sign = "+" if pnl >= 0 else "-"
+            self.lbl_pnl.config(
+                text=f"{pnl_sign}${abs(pnl):,.2f}", fg=pnl_color, bg=bg,
+            )
+
+        if status:
+            self._set_status_dot(status)
+
+    def update_status_only(self, status: str, balance: float = 0,
+                           equity: float = 0):
+        self._set_status_dot(status)
+        bg = p.BG_ROW
+        if balance > 0:
+            self.lbl_balance.config(text=f"${balance:,.2f}", bg=bg)
+        if equity > 0:
+            self.lbl_equity.config(text=f"${equity:,.2f}", bg=bg)
+            pnl = equity - balance
+            pnl_color = p.GREEN if pnl >= 0 else p.RED
+            pnl_sign = "+" if pnl >= 0 else "-"
+            self.lbl_pnl.config(
+                text=f"{pnl_sign}${abs(pnl):,.2f}", fg=pnl_color, bg=bg,
+            )
+
+    def _set_status_dot(self, status: str):
+        # Saturated palette colours read as a real "ON" status indicator
+        # against the white row, unlike the pale TINT_* aliases which
+        # blend into the card background.
+        if "\U0001F7E2" in status:
+            tint = p.GREEN
+        elif "\U0001F534" in status:
+            tint = p.RED
+        elif "\U0001F7E1" in status:
+            tint = p.YELLOW
+        else:
+            tint = p.FG_DIM
+        # Extract a human-readable caption for the hover tooltip:
+        # strip the leading status emoji, drop any "#12345" account-id
+        # suffix the polling layer appends.
+        caption = status
+        for emoji in ("\U0001F7E2", "\U0001F534", "\U0001F7E1"):
+            caption = caption.replace(emoji, "")
+        caption = re.sub(r"\s*#\d+", "", caption).strip()
+        self._dot_tooltip = caption or "—"
+        # Rebuild IconCircle with new tint: CTkFrame.configure(fg_color)
+        # works for the bg, but we need the matching FG too — easiest is
+        # to grid-replace.
+        try:
+            r = self._row
+            old_dot = self._dot
+            old_dot.grid_forget()
+            old_dot.destroy()
+            self._dot = _widgets.IconCircle(
+                self._parent, size=10, tint=tint,
+            )
+            self._dot.grid(row=r, column=1, padx=(0, 6), pady=3, sticky="")
+            # Replace in _widgets list so destroy() cleans up and hover
+            # bindings attach to the live dot on the next bind pass.
+            self._widgets = [self._dot if w is old_dot else w for w in self._widgets]
+            try:
+                # Dot-specific hover handlers fire the row's hover state
+                # AND show the status tooltip via _Tip.show regardless
+                # of the global tooltip-mode toggle (the dot's caption
+                # is always useful and never spammy).
+                self._dot.bind("<Enter>", self._on_dot_enter)
+                self._dot.bind("<Leave>", self._on_dot_leave)
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+    def _on_dot_enter(self, event=None):
+        # Mirror the row-card hover effect first so the border highlight
+        # still appears when the cursor enters via the dot.
+        self._on_enter(event)
+        text = getattr(self, "_dot_tooltip", "")
+        if text and text != "—":
+            try:
+                _Tip.show(self._dot, text)
+            except Exception:
+                pass
+
+    def _on_dot_leave(self, event=None):
+        self._on_leave(event)
+        try:
+            _Tip.hide()
+        except Exception:
+            pass
+
+    def update_daily_loss(self, daily_loss: float, daily_loss_limit: float):
+        if daily_loss_limit <= 0:
+            # Bar hidden, only a centred dash in the column.
+            self._risk_bar.set_disabled("—")
+            return
+        pct = min(max(daily_loss / daily_loss_limit, 0.0), 1.0)
+        self._risk_bar.set(
+            pct,
+            label=f"${daily_loss:.0f}/${daily_loss_limit:.0f}",
+        )
+
+    # ── Callback proxies ──────────────────────────────────
+
+    def _toggle(self):
+        self.slave_data["enabled"] = bool(self.var_enabled.get())
+        if self._on_toggle:
+            self._on_toggle(self.slave_data)
+
+    def _edit(self):
+        if self._on_edit:
+            self._on_edit(self.slave_data, self)
+
+    def _delete(self):
+        if self._on_delete:
+            self._on_delete(self.slave_data, self)
+
+    def _test(self):
+        if self._on_test:
+            self._on_test(self.slave_data)
+
+    def _open_terminal(self):
+        if self._on_open:
+            self._on_open(self.slave_data)
+
+    def _close_all(self):
+        if self._on_close_all:
+            self._on_close_all(self.slave_data)
+
+    # ── Lifecycle ─────────────────────────────────────────
+
+    def destroy(self):
+        if self._leave_timer:
+            try:
+                self._parent.after_cancel(self._leave_timer)
+            except Exception:
+                pass
+            self._leave_timer = None
+        for w in self._widgets:
+            try:
+                w.destroy()
+            except Exception:
+                pass
+        self._widgets.clear()
+        if hasattr(self, "_bg_frame") and self._bg_frame:
+            try:
+                self._bg_frame.destroy()
+            except Exception:
+                pass
+
+    def refresh(self, data):
+        self.slave_data = data
+        self.destroy()
+        self._build()
+
+
+# ── TradesTable ─────────────────────────────────────────────
+
+class TradesTable(tk.Frame):
+    COLS = ["time", "slave", "symbol", "dir", "lot", "master", "slave_tk", "status"]
+    HEADERS = ["Время", "Слейв", "Символ", "\u2191\u2193", "Лот", "Мастер #", "Слейв #", "Статус"]
+    WIDTHS = [62, 50, 64, 28, 40, 70, 70, 140]
+
+    def __init__(self, parent):
+        super().__init__(parent, bg=p.BG_ROW)
+        self._max_rows = 200
+        self._hover_iid = ""
+        self._build()
+
+    def _build(self):
+        apply_ttk_styles(scale_fn=ui_scaling.scale)
+
+        self.tree = ttk.Treeview(self, columns=self.COLS, show="headings",
+                                  style="T.Treeview", height=6)
+        for col, hdr, w in zip(self.COLS, self.HEADERS, self.WIDTHS):
+            self.tree.heading(col, text=hdr, anchor="w")
+            sw = ui_scaling.scale(w)
+            self.tree.column(col, width=sw, minwidth=sw, anchor="w", stretch=True)
+
+        sb = ttk.Scrollbar(self, orient="vertical", command=self.tree.yview)
+        self.tree.configure(yscrollcommand=sb.set)
+        sb.pack(side="right", fill="y")
+        self.tree.pack(side="left", fill="both", expand=True)
+        # Modern table feel: normal dark text, roomy rows and subtle
+        # row tints instead of the old all-green/all-red mono DataGrid.
+        self.tree.tag_configure("ok", background=p.GREEN_GLOW, foreground=p.FG)
+        self.tree.tag_configure("err", background=p.RED_GLOW, foreground=p.FG)
+        self.tree.tag_configure("warn", background=p.TINT_ORANGE, foreground=p.FG)
+        self.tree.tag_configure("even", background=p.BG_ROW, foreground=p.FG)
+        self.tree.tag_configure("odd", background="#FAFBFC", foreground=p.FG)
+        self.tree.tag_configure("hover", background=p.BG_ROW_HOVER, foreground=p.FG)
+        self.tree.bind("<Motion>", self._on_motion, add="+")
+        self.tree.bind("<Leave>", self._clear_hover, add="+")
+
+    def _on_motion(self, event):
+        iid = self.tree.identify_row(event.y)
+        if iid == self._hover_iid:
+            return
+        self._clear_hover()
+        if iid:
+            tags = tuple(t for t in self.tree.item(iid, "tags") if t != "hover")
+            self.tree.item(iid, tags=tags + ("hover",))
+            self._hover_iid = iid
+
+    def _clear_hover(self, _event=None):
+        if not self._hover_iid:
+            return
+        try:
+            tags = tuple(t for t in self.tree.item(self._hover_iid, "tags") if t != "hover")
+            self.tree.item(self._hover_iid, tags=tags)
+        except Exception:
+            pass
+        self._hover_iid = ""
+
+    def add_trade(self, time_str: str, slave: str, symbol: str,
+                  direction: str, lot: float, master_ticket: str,
+                  slave_ticket: str, status: str, tag: str = "ok"):
+        children = self.tree.get_children()
+        row_idx = len(children)
+        row_tag = "even" if row_idx % 2 == 0 else "odd"
+        self.tree.insert("", 0, values=(
+            time_str, slave, symbol, direction,
+            f"{lot:.2f}", master_ticket, slave_ticket, status
+        ), tags=(row_tag, tag))
+        children = self.tree.get_children()
+        while len(children) > self._max_rows:
+            self.tree.delete(children[-1])
+            children = self.tree.get_children()
+
+
+# ── OpenPositionsTable ────────────────────────────────────────
+
+class OpenPositionsTable(tk.Frame):
+    COLS = ["time", "account", "symbol", "type", "lot"]
+    HEADERS = ["Время", "Аккаунт", "Символ", "Тип", "Лот"]
+    WIDTHS = [60, 90, 70, 40, 50]
+
+    def __init__(self, parent):
+        super().__init__(parent, bg=p.BG_ROW)
+        self._hover_iid = ""
+        self._build()
+
+    def _build(self):
+        apply_ttk_styles(scale_fn=ui_scaling.scale)
+
+        self.tree = ttk.Treeview(self, columns=self.COLS, show="headings",
+                                  style="T.Treeview", height=6)
+        for col, hdr, w in zip(self.COLS, self.HEADERS, self.WIDTHS):
+            self.tree.heading(col, text=hdr, anchor="w")
+            sw = ui_scaling.scale(w)
+            self.tree.column(col, width=sw, minwidth=sw, anchor="w", stretch=True)
+
+        sb = ttk.Scrollbar(self, orient="vertical", command=self.tree.yview)
+        self.tree.configure(yscrollcommand=sb.set)
+        sb.pack(side="right", fill="y")
+        self.tree.pack(side="left", fill="both", expand=True)
+        self.tree.tag_configure("even", background=p.BG_ROW, foreground=p.FG)
+        self.tree.tag_configure("odd", background="#FAFBFC", foreground=p.FG)
+        self.tree.tag_configure("hover", background=p.BG_ROW_HOVER, foreground=p.FG)
+        self.tree.bind("<Motion>", self._on_motion, add="+")
+        self.tree.bind("<Leave>", self._clear_hover, add="+")
+
+    def _on_motion(self, event):
+        iid = self.tree.identify_row(event.y)
+        if iid == self._hover_iid:
+            return
+        self._clear_hover()
+        if iid:
+            tags = tuple(t for t in self.tree.item(iid, "tags") if t != "hover")
+            self.tree.item(iid, tags=tags + ("hover",))
+            self._hover_iid = iid
+
+    def _clear_hover(self, _event=None):
+        if not self._hover_iid:
+            return
+        try:
+            tags = tuple(t for t in self.tree.item(self._hover_iid, "tags") if t != "hover")
+            self.tree.item(self._hover_iid, tags=tags)
+        except Exception:
+            pass
+        self._hover_iid = ""
+
+    def refresh(self, rows):
+        """rows — список кортежей (time, account, symbol, type, lot)"""
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+        for idx, row in enumerate(rows):
+            row_tag = "even" if idx % 2 == 0 else "odd"
+            self.tree.insert("", "end", values=row, tags=(row_tag,))
+
+
+# ── ActivationWindow ──────────────────────────────────────────
+
+class ActivationWindow(Toplevel):
+    """Light-Soft styled license activation window.
+
+    Visual chrome rewritten 2026-06 to match the main window's card-based
+    look. Behaviour (Telegram code request, code verify, status messages,
+    forced quit on close-without-activation) is unchanged.
+    """
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.title("FTH Trade Copier — Активация")
+        self.configure(fg_color=p.BG_DEEP)
+        self.resizable(False, False)
+        if os.path.exists(ICON_DEFAULT):
+            try:
+                self.after(250, lambda: self.iconbitmap(ICON_DEFAULT))
+            except Exception:
+                pass
+        self._activated = False
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
+        self.grab_set()
+        self._build()
+        self._center_on_screen()
+
+    def _on_close(self):
+        if self._activated:
+            self.destroy()
+            return
+        app = self.master
+        self.destroy()
+        try:
+            app._real_quit()
+        except Exception:
+            pass
+        os._exit(0)
+
+    def _center_on_screen(self):
+        self.update_idletasks()
+        w = max(self.winfo_reqwidth(), self.winfo_width())
+        h = max(self.winfo_reqheight(), self.winfo_height())
+        wa = ui_scaling.get_work_area_for_window(self.master or self)
+        wl, wt, wr, wb = wa
+        x = wl + ((wr - wl) - w) // 2
+        y = wt + ((wb - wt) - h) // 2
+        x, y, w, h = ui_scaling.clamp_to_work_area(x, y, w, h, wa)
+        # Lock minimum window size to the laid-out requested size so the
+        # user can't shrink it below what fits the form, and the status
+        # label always has enough horizontal space for the longest line.
+        try:
+            self.minsize(max(w, ui_scaling.scale(360)), h)
+        except Exception:
+            pass
+        self.geometry(f"{w}x{h}+{x}+{y}")
+
+    def _set_status(self, text, fg=None):
+        self.lbl_status.configure(text=text, text_color=fg or p.FG_DIM)
+
+    def _paste(self, event=None):
+        try:
+            clip = self.clipboard_get()
+            if clip:
+                widget = self.focus_get()
+                # CTkEntry exposes the underlying tk.Entry via _entry; both
+                # have insert() with the same signature, so we accept either.
+                try:
+                    widget.insert(tk.INSERT, clip)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        return "break"
+
+    def _on_ctrl_key(self, event=None):
+        if event is not None and event.keycode == 86:
+            return self._paste(event)
+
+    def _soft_entry(self, parent, var=None, width=240):
+        ent = ctk.CTkEntry(
+            parent, textvariable=var, width=width,
+            fg_color=p.BG_ROW, border_color=p.BORDER, border_width=1,
+            text_color=p.FG, placeholder_text_color=p.FG_DIM,
+            corner_radius=p.RADIUS_MD, height=BTN_HEIGHT,
+            font=("Segoe UI", 10),
+        )
+        ent.bind("<Control-v>", self._paste)
+        ent.bind("<Control-V>", self._paste)
+        ent.bind("<Control-KeyPress>", self._on_ctrl_key)
+        return ent
+
+    def _build(self):
+        # Single Card host on the page bg.  Earlier version wrapped the card
+        # in an outer transparent frame with another 24 px padx/pady, which
+        # combined with the card's own 24 px inner padding ate 96 px of
+        # horizontal real estate at 320 px window width — the status label
+        # ended up with ~220 px usable, not enough for "Код отправлен
+        # в Telegram. Проверьте личные сообщения." which
+        # wrapped/clipped instead of fitting.  Drop the outer wrap and let
+        # the card sit directly on BG_DEEP with its own padding.
+        card = _widgets.Card(self, padding=0)
+        card.pack(fill="both", expand=True, padx=SPACE_16, pady=SPACE_16)
+
+        body = ctk.CTkFrame(card, fg_color="transparent")
+        body.pack(fill="both", expand=True, padx=SPACE_16, pady=SPACE_16)
+
+        # Logo
+        logo_path = os.path.join(IMG_DIR, "convertico-fth_48x48.png")
+        if os.path.exists(logo_path):
+            try:
+                img = tk.PhotoImage(file=logo_path)
+                lbl_logo = ctk.CTkLabel(
+                    body, image=img, text="", fg_color="transparent",
+                )
+                lbl_logo.image = img
+                lbl_logo.pack(pady=(0, SPACE_8))
+            except Exception:
+                pass
+
+        ctk.CTkLabel(
+            body, text="Активация",
+            text_color=p.FG, font=("Segoe UI", 16, "bold"),
+        ).pack(pady=(0, SPACE_16))
+
+        # Section: Telegram ID
+        ctk.CTkLabel(
+            body, text="Telegram ID", text_color=p.FG_LABEL,
+            font=("Segoe UI", 9), anchor="w",
+        ).pack(anchor="w", pady=(0, 4))
+        self.var_tg_id = tk.StringVar()
+        self._soft_entry(body, self.var_tg_id).pack(fill="x", pady=(0, SPACE_8))
+
+        btn_code = ctk.CTkButton(
+            body, text="Получить код",
+            command=self._request_code,
+            fg_color=p.ACCENT, hover_color=p.ACCENT_H,
+            text_color=p.ACCENT_FG, corner_radius=p.RADIUS_MD,
+            height=BTN_HEIGHT, font=("Segoe UI", 10, "bold"),
+        )
+        btn_code.pack(fill="x", pady=(0, SPACE_16))
+
+        # Section: Code
+        ctk.CTkLabel(
+            body, text="Код из Telegram", text_color=p.FG_LABEL,
+            font=("Segoe UI", 9), anchor="w",
+        ).pack(anchor="w", pady=(0, 4))
+        self.var_code = tk.StringVar()
+        self._soft_entry(body, self.var_code).pack(fill="x", pady=(0, SPACE_8))
+
+        btn_verify = ctk.CTkButton(
+            body, text="Подтвердить",
+            command=self._verify,
+            fg_color=p.GREEN, hover_color=p.GREEN_DIM,
+            text_color=p.ACCENT_FG, corner_radius=p.RADIUS_MD,
+            height=BTN_HEIGHT, font=("Segoe UI", 10, "bold"),
+        )
+        btn_verify.pack(fill="x", pady=(0, SPACE_16))
+
+        # Status area.  Fixed-height frame so the window never resizes
+        # when multi-line status text appears; <Configure> binding updates
+        # the label's wraplength to the current frame width so messages
+        # wrap inside the visible area (the previous one-shot reading
+        # happened before the first geometry settle and left wraplength
+        # at 0, clipping long messages on the right).
+        self._status_card = ctk.CTkFrame(body, fg_color="transparent")
+        self._status_card.pack(fill="x")
+        self.lbl_status = ctk.CTkLabel(
+            self._status_card, text="", text_color=p.FG_DIM,
+            font=("Segoe UI", 9), anchor="w", justify="left",
+            wraplength=ui_scaling.scale(200),  # safe fallback before the first <Configure>
+        )
+        self.lbl_status.pack(anchor="w", fill="x")
+        # Reserve 3 lines of height so the window never resizes when
+        # status text appears.
+        import tkinter.font as tkfont
+        _sm_h = tkfont.Font(family="Segoe UI", size=9).metrics("linespace")
+        self._status_card.configure(height=_sm_h * 3 + 8)
+        self._status_card.pack_propagate(False)
+
+        def _sync_wraplength(event):
+            if event.width > 20:
+                self.lbl_status.configure(wraplength=event.width - 4)
+        self._status_card.bind("<Configure>", _sync_wraplength)
+
+    def _request_code(self):
+        tg = self.var_tg_id.get().strip()
+        if not tg:
+            self._set_status("Введите Telegram ID", fg=p.RED)
+            return
+        try:
+            tg_id = int(tg)
+        except ValueError:
+            self._set_status("Telegram ID — только цифры", fg=p.RED)
+            return
+        if not _LIC_OK:
+            self._set_status("Модуль лицензии не найден", fg=p.RED)
+            return
+        self._set_status("Отправка кода…", fg=p.FG_DIM)
+        self.update()
+        ok, msg = lic_mod.request_code(tg_id)
+        if ok:
+            self._set_status(
+                "Код отправлен в Telegram. Проверьте личные сообщения.",
+                fg=p.GREEN_DIM,
+            )
+        else:
+            self._set_status(f"Ошибка: {msg}", fg=p.RED)
+
+    def _verify(self):
+        tg = self.var_tg_id.get().strip()
+        code = self.var_code.get().strip()
+        if not tg or not code:
+            self._set_status("Заполните оба поля", fg=p.RED)
+            return
+        try:
+            tg_id = int(tg)
+        except ValueError:
+            self._set_status("Telegram ID — только цифры", fg=p.RED)
+            return
+        if not _LIC_OK:
+            self._set_status("Модуль лицензии не найден", fg=p.RED)
+            return
+        self._set_status("Проверка…", fg=p.FG_DIM)
+        self.update()
+        ok, result = lic_mod.verify_code(tg_id, code)
+        if ok:
+            self._set_status("Активация успешна!", fg=p.GREEN_DIM)
+            self._activated = True
+            self.after(500, self.destroy)
+        elif result and result.startswith("device_limit"):
+            max_d = result.split(":")[-1]
+            self._set_status(
+                f"Лимит устройств ({max_d}) превышён.\nИспользуйте /reset в боте для сброса.",
+                fg=p.RED,
+            )
+        else:
+            self._set_status(f"Ошибка: {result}", fg=p.RED)
+
+
+# ── SettingsDialog ───────────────────────────────────────────
+
+class SettingsDialog(Toplevel):
+    """Light-Soft styled settings dialog.
+
+    Visual chrome rewritten 2026-06 to match the main window's card-based
+    look. Behaviour (profile switch, name edit, theme change with live
+    repaint, config-folder shortcut, update check) is unchanged. The
+    theme picker now skips themes flagged ``hidden`` in palette.py so
+    deprecated entries (light_pro) don\'t appear here, while saved
+    configs that still reference them keep resolving via the registry.
+    """
+
+    def __init__(self, parent: 'App'):
+        super().__init__(parent)
+        self.title("Настройки")
+        self.configure(fg_color=p.BG_DEEP)
+        self.resizable(False, False)
+        self.transient(parent)
+        self.grab_set()
+        if os.path.exists(ICON_DEFAULT):
+            try:
+                self.after(250, lambda: self.iconbitmap(ICON_DEFAULT))
+            except Exception:
+                pass
+        self._app = parent
+        self._active = parent._active_profile
+
+        # Outer breathing room around the central card.
+        outer = ctk.CTkFrame(self, fg_color="transparent")
+        outer.pack(fill="both", expand=True, padx=SPACE_16, pady=SPACE_16)
+
+        card = _widgets.Card(outer, padding=0)
+        card.pack(fill="both", expand=True)
+
+        body = ctk.CTkFrame(card, fg_color="transparent")
+        body.pack(fill="both", expand=True, padx=SPACE_24, pady=SPACE_24)
+
+        # ── Section: ПРОФИЛИ ────────────────────────────
+        ctk.CTkLabel(
+            body, text="Профили".upper(),
+            text_color=p.FG_LABEL, font=("Segoe UI", 9, "bold"),
+            anchor="w",
+        ).pack(anchor="w", pady=(0, SPACE_8))
+
+        tabs_f = ctk.CTkFrame(body, fg_color="transparent")
+        tabs_f.pack(fill="x")
+        self._profile_btns = []
+        self._profile_names = []
+        for i in range(5):
+            name = parent._profiles[i].get("name", f"Профиль {i + 1}")
+            self._profile_names.append(tk.StringVar(value=name))
+            is_active = (i == self._active)
+            btn = ctk.CTkButton(
+                tabs_f, text=name, command=lambda idx=i: self._select(idx),
+                fg_color=p.ACCENT if is_active else "transparent",
+                hover_color=p.ACCENT_H if is_active else p.BG_ROW_HOVER,
+                text_color=p.ACCENT_FG if is_active else p.FG,
+                border_color=p.BORDER, border_width=0 if is_active else 1,
+                corner_radius=p.RADIUS_MD, height=28,
+                font=("Segoe UI", 9, "bold" if is_active else "normal"),
+                width=60,
+            )
+            btn.pack(side="left", padx=(0, 4))
+            self._profile_btns.append(btn)
+
+        # Name input row
+        row_name = ctk.CTkFrame(body, fg_color="transparent")
+        row_name.pack(fill="x", pady=(SPACE_16, 0))
+        ctk.CTkLabel(
+            row_name, text="Имя профиля",
+            text_color=p.FG_LABEL, font=("Segoe UI", 9), anchor="w",
+        ).pack(side="left")
+        self._ent_name = ctk.CTkEntry(
+            row_name, fg_color=p.BG_ROW, border_color=p.BORDER, border_width=1,
+            text_color=p.FG, corner_radius=p.RADIUS_MD, height=BTN_HEIGHT,
+            font=("Segoe UI", 10), width=200,
+        )
+        self._ent_name.pack(side="left", padx=(SPACE_8, 0), fill="x", expand=True)
+        self._ent_name.insert(0, self._profile_names[self._active].get())
+        self._ent_name.bind("<KeyRelease>", self._on_name_change)
+
+        # Divider
+        ctk.CTkFrame(body, fg_color=p.BORDER_LIGHT, height=1).pack(
+            fill="x", pady=SPACE_16,
+        )
+
+        # ── Section: ТЕМА ─────────────────────────────────
+        ctk.CTkLabel(
+            body, text="Тема".upper(),
+            text_color=p.FG_LABEL, font=("Segoe UI", 9, "bold"),
+            anchor="w",
+        ).pack(anchor="w", pady=(0, SPACE_8))
+
+        row_theme = ctk.CTkFrame(body, fg_color="transparent")
+        row_theme.pack(fill="x")
+        ctk.CTkLabel(
+            row_theme, text="Оформление",
+            text_color=p.FG_LABEL, font=("Segoe UI", 9), anchor="w",
+        ).pack(side="left")
+
+        # Hidden themes (e.g. light_pro) are filtered out by
+        # available_themes()\'s default include_hidden=False.  If the
+        # saved theme happens to be hidden, we still resolve its label
+        # via THEME_LABELS so the dialog opens in a sane state and the
+        # user can pick a visible alternative to migrate to.
+        self._theme_names = available_themes()
+        self._initial_theme = get_theme_name()
+        if self._initial_theme not in self._theme_names:
+            # Hidden current theme — keep selecting it so the user sees
+            # what is active, but mark it visually.
+            self._theme_names = [self._initial_theme] + self._theme_names
+        labels = [THEME_LABELS.get(n, n) for n in self._theme_names]
+        cur_label = THEME_LABELS.get(self._initial_theme, self._initial_theme)
+        self._var_theme = tk.StringVar(value=cur_label)
+
+        om = ctk.CTkOptionMenu(
+            row_theme, variable=self._var_theme, values=labels,
+            fg_color=p.BG_ROW, button_color=p.ACCENT,
+            button_hover_color=p.ACCENT_H,
+            dropdown_fg_color=p.BG_ROW, dropdown_hover_color=p.BG_ROW_HOVER,
+            dropdown_text_color=p.FG,
+            text_color=p.FG, corner_radius=p.RADIUS_MD,
+            height=BTN_HEIGHT, font=("Segoe UI", 10),
+        )
+        om.pack(side="left", padx=(SPACE_8, 0), fill="x", expand=True)
+
+        self._lbl_theme_hint = ctk.CTkLabel(
+            body,
+            text="Сохраните чтобы применить тему.",
+            text_color=p.FG_DIM, font=("Segoe UI", 9), anchor="w",
+        )
+        self._lbl_theme_hint.pack(anchor="w", pady=(SPACE_8, 0))
+
+        # Divider
+        ctk.CTkFrame(body, fg_color=p.BORDER_LIGHT, height=1).pack(
+            fill="x", pady=SPACE_16,
+        )
+
+        # ── Actions row ────────────────────────────────────
+        btn_row = ctk.CTkFrame(body, fg_color="transparent")
+        btn_row.pack(side="bottom", fill="x")
+
+        def switch_profile():
+            new_name = self._ent_name.get().strip()
+            if new_name:
+                self._app._profiles[self._active]["name"] = new_name
+            chosen_label = self._var_theme.get()
+            chosen_name = self._initial_theme
+            for _n in self._theme_names:
+                if THEME_LABELS.get(_n, _n) == chosen_label:
+                    chosen_name = _n
+                    break
+            theme_changed = chosen_name != self._initial_theme
+
+            if theme_changed:
+                from palette import get_palette as _gp
+                old_pal = _gp()
+                try:
+                    set_theme(chosen_name)
+                except Exception:
+                    theme_changed = False
+                if theme_changed:
+                    try:
+                        self._app._apply_runtime_theme(old_pal)
+                    except Exception:
+                        pass
+
+            self._app._switch_profile(self._active)
+
+            if theme_changed:
+                try:
+                    self._app._save_config()
+                except Exception:
+                    pass
+            self.destroy()
+
+        btn_switch = ctk.CTkButton(
+            btn_row, text="Сохранить", command=switch_profile,
+            fg_color=p.ACCENT, hover_color=p.ACCENT_H,
+            text_color=p.ACCENT_FG, corner_radius=p.RADIUS_MD,
+            height=BTN_HEIGHT, font=("Segoe UI", 10, "bold"), width=130,
+        )
+        btn_switch.pack(side="left")
+        _bind_tip(btn_switch, "Сохранить и переключиться на профиль")
+
+        def open_config_folder():
+            try:
+                os.makedirs(APP_DATA_DIR, exist_ok=True)
+                os.startfile(APP_DATA_DIR)
+            except Exception as e:
+                messagebox.showerror(
+                    "Ошибка",
+                    f"Не удалось открыть папку:\n{APP_DATA_DIR}\n\n{e}",
+                    parent=self,
+                )
+
+        btn_open_cfg = ctk.CTkButton(
+            btn_row, text="\U0001F4C2 Папка config",
+            command=open_config_folder,
+            fg_color="transparent", hover_color=p.BG_ROW_HOVER,
+            text_color=p.FG, border_color=p.BORDER, border_width=1,
+            corner_radius=p.RADIUS_MD, height=BTN_HEIGHT,
+            font=("Segoe UI", 10), width=140,
+        )
+        btn_open_cfg.pack(side="left", padx=(SPACE_8, 0))
+        _bind_tip(btn_open_cfg, f"Открыть папку с config.json в проводнике\n({APP_DATA_DIR})")
+
+        def check_updates():
+            self.destroy()
+            parent._check_update(force=True)
+
+        btn_close = ctk.CTkButton(
+            btn_row, text="Закрыть", command=self.destroy,
+            fg_color="transparent", hover_color=p.BG_ROW_HOVER,
+            text_color=p.FG, border_color=p.BORDER, border_width=1,
+            corner_radius=p.RADIUS_MD, height=BTN_HEIGHT,
+            font=("Segoe UI", 10), width=100,
+        )
+        btn_close.pack(side="left", padx=(SPACE_8, 0))
+
+        btn_update = ctk.CTkButton(
+            btn_row, text="\U0001F504 Обновления",
+            command=check_updates,
+            fg_color="transparent", hover_color=p.BG_ROW_HOVER,
+            text_color=p.FG, border_color=p.BORDER, border_width=1,
+            corner_radius=p.RADIUS_MD, height=BTN_HEIGHT,
+            font=("Segoe UI", 10), width=140,
+        )
+        btn_update.pack(side="left", padx=(SPACE_8, 0))
+        _bind_tip(btn_update, "Проверить наличие новой версии")
+
+        self.update_idletasks()
+        w = max(self.winfo_reqwidth(), ui_scaling.scale(520))
+        h = self.winfo_reqheight() + ui_scaling.scale(4)
+        wa = ui_scaling.get_work_area_for_window(parent)
+        h = min(h, wa[3] - wa[1] - ui_scaling.scale(8))
+        w = min(w, wa[2] - wa[0] - ui_scaling.scale(16))
+        try:
+            self.minsize(w, h)
+        except Exception:
+            pass
+        x = parent.winfo_rootx() + (parent.winfo_width() - w) // 2
+        y = parent.winfo_rooty() + (parent.winfo_height() - h) // 2
+        x, y, w, h = ui_scaling.clamp_to_work_area(x, y, w, h, wa)
+        geom = f"{w}x{h}+{x}+{y}"
+        self.force_geometry(geom)
+        self.after(300, lambda: self.force_geometry(geom))
+
+    def _select(self, idx):
+        old_name = self._ent_name.get().strip()
+        if old_name:
+            self._app._profiles[self._active]["name"] = old_name
+            self._profile_btns[self._active].configure(text=old_name)
+        self._active = idx
+        self._ent_name.delete(0, "end")
+        self._ent_name.insert(0, self._app._profiles[idx].get("name", f"Профиль {idx + 1}"))
+        for i, btn in enumerate(self._profile_btns):
+            is_active = (i == idx)
+            btn.configure(
+                fg_color=p.ACCENT if is_active else "transparent",
+                hover_color=p.ACCENT_H if is_active else p.BG_ROW_HOVER,
+                text_color=p.ACCENT_FG if is_active else p.FG,
+                border_width=0 if is_active else 1,
+                font=("Segoe UI", 9, "bold" if is_active else "normal"),
+            )
+
+    def _on_name_change(self, event=None):
+        name = self._ent_name.get().strip()
+        if name:
+            self._profile_btns[self._active].configure(text=name)
+
+
+# ── App ─────────────────────────────────────────────────────
+
+class App(ctk.CTk):
+    def __init__(self):
+        # Lock CTk widget/window scaling to 1.0 BEFORE the root window
+        # exists. If we do this after super().__init__(), CTk's
+        # _set_scaling callback pins wm minsize/maxsize to its internal
+        # default 600x500 and schedules after(1000ms,
+        # _set_scaled_min_max) to restore — that 1-second clamp window
+        # is what users were seeing as "okno of wrong size that resizes
+        # after a second". See theme.init_scaling docstring for details.
+        _init_ctk_scaling()
+        super().__init__()
+        # Hide the window during __init__ via withdraw() + alpha=0 so
+        # nothing ever flashes at the wrong size. Both are needed:
+        #   - withdraw() removes the window from the screen completely;
+        #   - alpha=0 covers any code path that re-maps it (CTk's
+        #     internal titlebar dance, for example).
+        # We re-show in _first_show after _build_ui / _load_config /
+        # _apply_window_state have settled on the final geometry.
+        try:
+            self.withdraw()
+        except Exception:
+            pass
+        try:
+            self.attributes("-alpha", 0.0)
+        except Exception:
+            pass
+        # Install CTk appearance/theme *after* super().__init__() — calling
+        # ctk.set_appearance_mode("dark") before a Tk root exists raises a
+        # TclError. This was rollback pitfall #2 during the previous CTk
+        # attempt; keep this ordering.
+        apply_theme()
+        # Configure Tk to the current display DPI so Hi-DPI users get crisp
+        # rendering instead of OS bitmap-scaling. DPI awareness itself is
+        # enabled in __main__ before this Tk root is created.
+        ui_scaling.init_root_scaling(self)
+        _apply_dpi_layout()
+        self.title(f"FTH Trade Copier v{upd_mod.VERSION}" if _UPD_OK else "FTH Trade Copier")
+        self.configure(fg_color=p.BG_DEEP)
+        self.resizable(True, True)
+        _wa = ui_scaling.get_cursor_work_area(self)
+        _mw = min(ui_scaling.scale(960), _wa[2] - _wa[0] - ui_scaling.scale(16))
+        _mh = min(ui_scaling.scale(640), _wa[3] - _wa[1] - ui_scaling.scale(16))
+        self.minsize(max(1, _mw), max(1, _mh))
+
+        # Resolve the window geometry to use for the *first* mapping of the
+        # window. If we have a saved geometry on disk (from a previous
+        # run) we want to use it immediately — otherwise the user sees
+        # the adaptive default size flash up before _apply_window_state
+        # resizes the window to its remembered size.
+        saved_window = self._peek_saved_window_state()
+        initial_geom: Optional[Tuple[int, int, int, int]] = None  # (x, y, w, h)
+        if saved_window and saved_window.get("geometry"):
+            import re as _re
+            geom = saved_window["geometry"]
+            m = _re.match(r"^(\d+)x(\d+)([+\-]\d+)([+\-]\d+)$", geom)
+            if m:
+                try:
+                    sw_ = int(m.group(1)); sh_ = int(m.group(2))
+                    saved_dpi = saved_window.get("dpi")
+                    cur_dpi = ui_scaling.current_dpi()
+                    if isinstance(saved_dpi, (int, float)) and saved_dpi > 0 and saved_dpi != cur_dpi:
+                        _ratio = cur_dpi / saved_dpi
+                        sw_ = int(sw_ * _ratio); sh_ = int(sh_ * _ratio)
+                    sx_ = int(m.group(3)); sy_ = int(m.group(4))
+                    wa = ui_scaling.get_cursor_work_area(self)
+                    sx_, sy_, sw_, sh_ = ui_scaling.clamp_to_work_area(
+                        sx_, sy_, sw_, sh_, wa)
+                    mw_ = min(ui_scaling.scale(960), wa[2] - wa[0] - ui_scaling.scale(16))
+                    mh_ = min(ui_scaling.scale(640), wa[3] - wa[1] - ui_scaling.scale(16))
+                    sw_ = max(sw_, mw_); sh_ = max(sh_, mh_)
+                    initial_geom = (sx_, sy_, sw_, sh_)
+                except Exception:
+                    saved_window = None  # fall through to adaptive
+            else:
+                saved_window = None
+        if not saved_window or not saved_window.get("geometry"):
+            # Adaptive initial geometry: 78% of the work area on the monitor
+            # under the cursor, clamped to a sensible range and DPI-scaled.
+            # minsize is lowered so 1366x768 laptops (~728 px usable height)
+            # actually fit.
+            work_area = ui_scaling.get_cursor_work_area(self)
+            w, h, x, y = ui_scaling.compute_initial_geometry(
+                work_area, frac=0.78, min_w=960, min_h=640, max_w=1400, max_h=900
+            )
+            initial_geom = (x, y, w, h)
+
+        # Remember the resolved initial geometry for _first_show.
+        self._initial_geom: Optional[Tuple[int, int, int, int]] = initial_geom
+        # Apply the saved geometry now so Tk knows the right size on
+        # first map. Window is withdrawn → nothing visible yet.
+        sx_, sy_, sw_, sh_ = initial_geom
+        try:
+            self.geometry(f"{sw_}x{sh_}+{sx_}+{sy_}")
+        except Exception:
+            pass
+
+        # Zoomed state has to be applied AFTER initial geometry so Tk
+        # remembers the un-zoomed size for the user's next restore.
+        if saved_window and saved_window.get("zoomed"):
+            try:
+                self.state("zoomed")
+            except Exception:
+                pass
+        if os.path.exists(ICON_DEFAULT):
+            # ctk.CTk schedules its own icon setup on a 200 ms after-callback,
+            # which overrides any iconbitmap we call here. Defer ours so it
+            # wins. (See CTk issue #1709 — the same workaround appears in
+            # multiple downstream apps.)
+            try:
+                self.after(250, lambda: self.iconbitmap(ICON_DEFAULT))
+                self.after(250, lambda: self.wm_iconbitmap(ICON_DEFAULT))
+            except Exception:
+                pass
+
+        self._slaves: List[Dict] = []
+        self._rows: List[AccountRow] = []
+        self._trader = None
+        self._check_timer = None
+        self._dpi_timer = None
+        self._session_stats = {"copied": 0, "failed": 0}
+        self._min_lot_mode = False
+        self._tray_icon = None
+        self._active_profile = 0
+        self._profiles: List[Dict] = []
+        self._window_state: Dict = {}
+
+        self._build_ui()
+        self._load_config()
+        # _load_config populated self._window_state from config.json (if any).
+        # Apply it after _build_ui so the PanedWindow exists for sash restore.
+        self._apply_window_state()
+        self._bind_paste()
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
+        # Flush pending layout so the first paint happens at the final size.
+        self.update_idletasks()
+        # CTk.mainloop() runs an internal _windows_set_titlebar_color dance
+        # that calls super().withdraw() and then tries to restore the
+        # previous state via self._state_before_windows_set_titlebar_color.
+        # Because that attribute is only populated when _window_exists is
+        # True, the restore falls through to self.state(None) (no-op) on
+        # first start and leaves the window withdrawn. Prime it so CTk's
+        # restore branch deiconifies us automatically.
+        self._state_before_windows_set_titlebar_color = "normal"
+        # Reveal the window on the first idle of the event loop, after
+        # CTk's titlebar dance has finished. See _first_show for the
+        # full Win32 ShowWindow + alpha=1 sequence.
+        self.after(0, self._first_show)
+        # Defer all blocking start-up tasks (MT5 polling, license check,
+        # update check, tray init) until *after* mainloop has started.
+        # Running these synchronously inside __init__ would block the Tk
+        # event loop before the window was even mapped — that was rollback
+        # pitfall #1 during the previous CTk attempt (sync MT5/license in
+        # __init__ blocks mainloop and prevents the window from appearing).
+        self.after(100, self._start_tray)
+        self.after(300, self._schedule_license_check)
+        self.after(500, self._schedule_check)
+        self.after(800, self._check_update)
+        self.after(2000, self._check_dpi_change)
+
+    def _first_show(self) -> None:
+        """Idle-queue callback that deiconifies the root window and
+        fades it back to full opacity once layout has settled.
+
+        Order of operations matters:
+          1. Re-prime the CTk titlebar-restore attribute so any later
+             appearance-mode change doesn't accidentally withdraw us.
+          2. ``deiconify()`` — unmap → map at the saved geometry that
+             ``__init__`` already set on Tk.
+          3. ``attributes("-alpha", 1.0)`` — make the contents visible.
+             Doing this after deiconify guarantees Windows doesn't
+             show the title bar before the contents come up.
+        """
+        try:
+            self._state_before_windows_set_titlebar_color = "normal"
+        except Exception:
+            pass
+        try:
+            self.deiconify()
+        except Exception:
+            pass
+        try:
+            self.attributes("-alpha", 1.0)
+        except Exception:
+            pass
+
+    def _check_dpi_change(self):
+        """Poll the window's monitor DPI every 2 s. If it changed (e.g. the
+        user dragged the window to a 200 % monitor), re-apply tk scaling
+        and layout constants so fonts and new widgets match the new DPI.
+
+        Existing widgets keep their pixel sizes (Tk doesn't auto-relayout on
+        tk scaling changes), but fonts re-render at the correct size and any
+        subsequently created widgets (new slave rows, dialogs) pick up the
+        new scale automatically.
+        """
+        try:
+            new_dpi = ui_scaling.get_window_dpi(self)
+            if new_dpi != ui_scaling.current_dpi():
+                ui_scaling.update_scale_for_dpi(new_dpi, self)
+                _apply_dpi_layout()
+        except Exception:
+            pass
+        self._dpi_timer = self.after(2000, self._check_dpi_change)
+
+    def _paste_global(self, event=None):
+        try:
+            clip = self.clipboard_get()
+            if clip:
+                widget = self.focus_get()
+                if isinstance(widget, tk.Entry):
+                    widget.insert(tk.INSERT, clip)
+                    return "break"
+        except Exception:
+            pass
+
+    def _bind_paste(self):
+        self.bind_all("<Control-v>", self._paste_global)
+        self.bind_all("<Control-V>", self._paste_global)
+
+    def _set_logo_cyan(self, cyan: bool):
+        if not hasattr(self, '_logo_label'):
+            return
+        name = "convertico-fth-cyan_48x48" if cyan else "convertico-fth_48x48"
+        path = os.path.join(IMG_DIR, f"{name}.png")
+        if os.path.exists(path):
+            try:
+                img = tk.PhotoImage(file=path)
+                self._logo_label.configure(image=img)
+                self._logo_img = img
+            except Exception:
+                pass
+
+    def _start_tray(self):
+        if not _PYSTRAY_OK:
+            return
+        png_path = os.path.join(IMG_DIR, "convertico-fth_256x256.png")
+        if not os.path.exists(png_path):
+            return
+        try:
+            pil_img = PILImage.open(png_path)
+            menu = pystray.Menu(
+                pystray.MenuItem("Показать", self._tray_show, default=True),
+                pystray.MenuItem("Стоп + Выход", self._tray_exit),
+            )
+            self._tray_icon = pystray.Icon("FTHTradeCopier", pil_img, "FTH Trade Copier", menu)
+            self._tray_thread = threading.Thread(target=self._tray_icon.run, daemon=True)
+            self._tray_thread.start()
+        except Exception:
+            self._tray_icon = None
+
+    def _tray_show(self, icon=None, item=None):
+        self.after(0, self._show_window)
+
+    def _show_window(self):
+        self.deiconify()
+        self.lift()
+        self.focus_force()
+
+    def _tray_exit(self, icon=None, item=None):
+        if self._trader and self._trader.is_running():
+            self.after(0, self._stop)
+        if self._tray_icon:
+            self._tray_icon.stop()
+            self._tray_icon = None
+        self.after(0, self._real_quit)
+
+    def _update_tray_icon(self, cyan: bool):
+        if not self._tray_icon or not _PYSTRAY_OK:
+            return
+        name = "convertico-fth-cyan_256x256" if cyan else "convertico-fth_256x256"
+        png_path = os.path.join(IMG_DIR, f"{name}.png")
+        if os.path.exists(png_path):
+            try:
+                pil_img = PILImage.open(png_path)
+                self._tray_icon.icon = pil_img
+                tip = "FTH Trade Copier — работает" if cyan else "FTH Trade Copier"
+                self._tray_icon.title = tip
+            except Exception:
+                pass
+
+    def _make_btn(self, parent, text, cmd, accent=False, danger=False):
+        if accent:
+            bg, fg, abg = p.ACCENT, p.ACCENT_FG, p.ACCENT_H
+        elif danger:
+            bg, fg, abg = p.RED_DIM, p.ACCENT_FG, p.RED
+        else:
+            bg, fg, abg = p.BG_INPUT, p.FG_LABEL, p.BG_ROW_HOVER
+        return Button(parent, text=text, command=cmd, bg=bg, fg=fg,
+                      font=f.BOLD if accent else f.DEFAULT,
+                      activebackground=abg, padx=10, pady=3)
+
+    def _build_ui(self):
+        # ── Header + Master row (Phase-2 soft redesign) ──────
+        # The header and master strip are now card-aware: header has no
+        # solid bar (it sits on the page background), action buttons use
+        # Lucide icons via lucide.icon(), and the master row is a white
+        # Card consistent with the rest of the dashboard.
+        #
+        # Each helper sets the same instance attributes as the previous
+        # inline code, so the rest of the app (_apply_runtime_theme,
+        # _toggle_info, _start, _stop, master polling, theme rebuild)
+        # keeps working without changes.
+        self._build_header_soft()
+        self._build_master_soft()
+
+        # ── Dashboard KPI ───────────────────────────────────
+        self._build_kpi_soft()
+
+        # ── Bottom status bar ───────────────────────────────
+        # Built BEFORE the slave/log paned block: its ``side="bottom"``
+        # pack reserves its slice of vertical space against the window's
+        # bottom edge BEFORE the paned widget claims everything left with
+        # ``expand=True``.  Reversed order (the previous code path) let
+        # the paned eat all space below the KPI row, so the status bar
+        # got 0 height and the version label was clipped completely on
+        # smaller windows.
+        self._build_statusbar_soft()
+
+        # ── Slave Accounts section ──────────────────────────
+        self._build_slaves_soft()
+
+        # ── Trades + Log tabs ───────────────────────────────
+        self._build_tabs_soft()
+
+    # ── Phase-2 redesign builders ───────────────────────────
+
+    def _build_header_soft(self) -> None:
+        """Build the Light-Soft header row.
+
+        Layout (left → right):
+
+            [logo] FTH Trade Copier [MT5]   …
+                КОПИТРЕЙДЕР [▶ Старт][■ Стоп] · \
+ТЕРМИНАЛЫ [🚀 Запустить][⏻ Закрыть] · [⚙][ⓘ]
+
+        The header has no separate ``BG_HEADER`` strip — it sits flush
+        on the page background (``BG_DEEP``) and is separated from the
+        master row only by spacing.
+        """
+        outer = ctk.CTkFrame(self, fg_color=p.BG_DEEP, corner_radius=0)
+        outer.pack(fill="x", padx=SPACE_24, pady=(SPACE_16, SPACE_16))
+
+        # ── Left cluster: logo + title + MT5 chip ─────────
+        left = ctk.CTkFrame(outer, fg_color="transparent")
+        left.pack(side="left")
+
+        logo_path = os.path.join(IMG_DIR, "convertico-fth_48x48.png")
+        if os.path.exists(logo_path):
+            try:
+                # tk.PhotoImage stays — _set_logo_cyan already targets
+                # this widget by attribute (self._logo_label) when the
+                # trader transitions between idle and running states.
+                self._logo_img = tk.PhotoImage(file=logo_path)
+                self._logo_label = Label(left, image=self._logo_img,
+                                         bg=p.BG_DEEP, text="")
+                # Flush against the page-edge SPACE_24 inset so the
+                # logo's left edge sits at the same X as every card's
+                # left edge below it.
+                self._logo_label.pack(side="left", padx=(0, SPACE_16))
+            except Exception:
+                pass
+
+        ctk.CTkLabel(
+            left, text="Trade Copier",
+            text_color=p.FG, font=("Segoe UI", 14, "bold"),
+        ).pack(side="left", padx=(0, SPACE_8), pady=(2, 0))
+        # MT5 chip sits to the right of the title.  pady=(6, 0) lines
+        # its vertical centre up with the cap-height of the 16pt title.
+        _widgets.Chip(left, text="MT5", tint="blue", bold=True).pack(
+            side="left", anchor="center", pady=(6, 0),
+        )
+
+        # "КОПИТРЕЙДЕР" caption sits to the left of the action buttons
+        # on the right side — pack it FIRST on the right cluster so it
+        # ends up immediately before the Старт/Стоп pair.
+
+        # ── Right cluster: action buttons, gear, info ────
+        right = ctk.CTkFrame(outer, fg_color="transparent")
+        right.pack(side="right")
+
+        # КОПИТРЕЙДЕР caption — muted label that anchors the action group
+        # to the right edge.  Matches the reference mockup ordering.
+        # Muted uppercase caption — 9pt bold, sits in its own padding
+        # zone (SPACE_24) so it doesn't crowd the Старт button.
+        ctk.CTkLabel(
+            right, text="КОПИТРЕЙДЕР",
+            text_color=p.FG_LABEL, font=("Segoe UI", 9, "bold"),
+        ).pack(side="left", padx=(0, SPACE_24))
+
+        # Copy-trader controls — Start (primary) / Stop (ghost).
+        self.btn_start = ctk.CTkButton(
+            right, text="Старт", image=_lucide.icon("play", 14, "on_accent"),
+            compound="left", command=self._start,
+            fg_color=p.ACCENT, hover_color=p.ACCENT_H, text_color=p.ACCENT_FG,
+            corner_radius=p.RADIUS_MD, border_width=0,
+            width=BTN_MIN_W, height=BTN_HEIGHT, font=("Segoe UI", 10, "bold"),
+        )
+        self.btn_start.pack(side="left", padx=(0, SPACE_8))
+        _bind_tip(self.btn_start, "Запустить копирование сделок")
+
+        self.btn_stop = ctk.CTkButton(
+            right, text="Стоп", image=_lucide.icon("square", 12, "label"),
+            compound="left", command=self._stop,
+            fg_color="transparent", hover_color=p.BG_ROW_HOVER,
+            text_color=p.FG, corner_radius=p.RADIUS_MD,
+            border_width=1, border_color=p.BORDER,
+            width=BTN_MIN_W, height=BTN_HEIGHT, font=("Segoe UI", 10, "bold"),
+            state="disabled",
+        )
+        # SPACE_24 between the copy-trader group (Старт/Стоп) and the
+        # terminal group (Запустить/Закрыть) reads as a real separation
+        # instead of one long button row.
+        self.btn_stop.pack(side="left", padx=(0, SPACE_24))
+        _bind_tip(self.btn_stop, "Остановить копирование")
+
+        # ТЕРМИНАЛЫ caption mirrors the КОПИТРЕЙДЕР caption above so the
+        # two button groups read as parallel controls instead of one
+        # long header-button row.  Same muted 9pt bold uppercase token,
+        # same SPACE_24 right pad before the first action.
+        ctk.CTkLabel(
+            right, text="ТЕРМИНАЛЫ",
+            text_color=p.FG_LABEL, font=("Segoe UI", 9, "bold"),
+        ).pack(side="left", padx=(0, SPACE_24))
+
+        # Terminal controls — Launch / Shutdown.  Width pinned to
+        # BTN_MIN_W so the two terminal buttons form a visually-equal
+        # pair to Старт/Стоп (which use the same width).  Button text is
+        # the bare verb ("Запустить" / "Закрыть") because the leading
+        # ТЕРМИНАЛЫ caption already scopes the group.
+        btn_launch = ctk.CTkButton(
+            right, text="Запустить",
+            image=_lucide.icon("rocket", 14, "label"), compound="left",
+            command=self._launch_all,
+            fg_color="transparent", hover_color=p.BG_ROW_HOVER,
+            text_color=p.FG, corner_radius=p.RADIUS_MD,
+            border_width=1, border_color=p.BORDER,
+            width=BTN_MIN_W, height=BTN_HEIGHT, font=("Segoe UI", 10, "bold"),
+        )
+        btn_launch.pack(side="left", padx=(0, SPACE_8))
+        _bind_tip(btn_launch, "Запустить все терминалы (свёрнутые)")
+
+        btn_shutdown = ctk.CTkButton(
+            right, text="Закрыть",
+            image=_lucide.icon("power", 14, "danger"), compound="left",
+            command=self._shutdown_all,
+            fg_color="transparent", hover_color=p.RED_GLOW,
+            text_color=p.RED, corner_radius=p.RADIUS_MD,
+            border_width=1, border_color=p.BORDER,
+            width=BTN_MIN_W, height=BTN_HEIGHT, font=("Segoe UI", 10, "bold"),
+        )
+        # SPACE_24 between terminal group and icon-only utilities (gear /
+        # info) so the two halves of the right cluster breathe apart.
+        btn_shutdown.pack(side="left", padx=(0, SPACE_24))
+        _bind_tip(btn_shutdown, "Завершить процессы всех терминалов")
+
+        # Icon-only utility buttons.
+        btn_settings = _widgets.IconButton(
+            right, icon=_lucide.icon("settings", 16, "label"),
+            variant="ghost", size=BTN_HEIGHT, command=self._open_settings,
+        )
+        btn_settings.pack(side="left", padx=(0, SPACE_8))
+        _bind_tip(btn_settings, "Настройки приложения")
+
+        self.btn_info = _widgets.IconButton(
+            right, icon=_lucide.icon("info", 16, "label"),
+            variant="ghost", size=BTN_HEIGHT, command=self._toggle_info,
+        )
+        # Stash the default icon/color so _toggle_info can revert to it.
+        self.btn_info._info_default_icon = _lucide.icon("info", 16, "label")
+        self.btn_info._info_active_icon = _lucide.icon("info", 16, "on_accent")
+        self.btn_info.pack(side="left")
+        _bind_tip(self.btn_info, "Режим подсказок")
+
+    def _build_master_soft(self) -> None:
+        """Build the Light-Soft master strip as a single white Card.
+
+        Layout (matches the reference mockup)::
+
+            [МАСТЕР chip] [path entry ─── fills ───] [📁][📊][❌][⚠] [● Running]
+
+        Master balance/equity/P&L/login are kept as *invisible* ctk_compat
+        Labels.  ``_update_master_info_silent`` and ``_update_status`` use
+        ``.config(text=...)`` on them as a backing store; ``_refresh_dashboard``
+        reads ``cget("text")`` to populate the KPI cards.  CTkLabel ignores
+        ``.config(text=...)`` — that's why the KPI cards were empty before.
+        """
+        # Card padding 16 → row inset 16px / 6px (vertical pad).  Master
+        # strip is a one-line affair: path entry + icon-buttons + status
+        # pill — a thin 48 px band reads as a chrome strip, not a slab.
+        card = _widgets.Card(self, padding=16)
+        card.pack(fill="x", padx=SPACE_24, pady=(0, SPACE_16))
+
+        row = ctk.CTkFrame(card, fg_color="transparent")
+        row.pack(fill="x", padx=SPACE_16, pady=6)
+
+        # МАСТЕР chip on the left.
+        _widgets.Chip(row, text="МАСТЕР", tint="blue", bold=True).pack(
+            side="left", padx=(0, SPACE_16)
+        )
+
+        # ── Right-side action cluster (status pill last so it pins right) ──
+        # Status pill (rightmost) — Running / Stopped indicator.
+        self._master_status_pill = _widgets.StatusPill(
+            row, text="Готов", state="neutral",
+        )
+        self._master_status_pill.pack(side="right", padx=(SPACE_8, 0))
+
+        # Test BUY — warn icon.
+        btn_test_master = _widgets.IconButton(
+            row, icon=_lucide.icon("triangle-alert", 16, "warn"),
+            variant="ghost", size=BTN_HEIGHT, command=self._test_master,
+        )
+        btn_test_master.pack(side="right", padx=(SPACE_8, SPACE_8))
+        _bind_tip(btn_test_master, "Тест: BUY 0.01 лот на мастере")
+
+        # Close all positions — danger icon.
+        btn_close_master = _widgets.IconButton(
+            row, icon=_lucide.icon("circle-x", 16, "danger"),
+            variant="ghost", size=BTN_HEIGHT, command=self._close_all_master,
+        )
+        btn_close_master.pack(side="right", padx=SPACE_8)
+        _bind_tip(btn_close_master, "Закрыть все позиции мастера")
+
+        # Open master terminal — chart icon.
+        btn_open_m = _widgets.IconButton(
+            row, icon=_lucide.icon("chart-no-axes-column", 16, "accent"),
+            variant="ghost", size=BTN_HEIGHT, command=self._open_master_terminal,
+        )
+        btn_open_m.pack(side="right", padx=SPACE_8)
+        _bind_tip(btn_open_m, "Открыть терминал мастера")
+
+        # Browse — folder icon.
+        btn_browse_m = _widgets.IconButton(
+            row, icon=_lucide.icon("folder", 16, "label"),
+            variant="ghost", size=BTN_HEIGHT, command=self._browse_master,
+        )
+        btn_browse_m.pack(side="right", padx=(SPACE_8, SPACE_8))
+        _bind_tip(btn_browse_m, "Выбрать путь к terminal64.exe мастера")
+
+        # Path entry (read-only, populated by _browse_master).  Packed
+        # last with ``fill="x", expand=True`` so it consumes the middle.
+        self.var_master_path = tk.StringVar()
+        path_entry = ctk.CTkEntry(
+            row, textvariable=self.var_master_path,
+            height=BTN_HEIGHT, corner_radius=p.RADIUS_MD,
+            fg_color=p.BG_DEEP, text_color=p.FG,
+            border_color=p.BORDER, border_width=1,
+            font=("Segoe UI", 10), state="readonly",
+        )
+        path_entry.pack(side="left", fill="x", expand=True, padx=(0, SPACE_16))
+
+        # ── Hidden backing-store labels (KPI cards read .cget from these) ──
+        # Use ctk_compat.Label so ``.config(text=..., fg=...)`` works.
+        # NOT packed/gridded → they have no on-screen footprint.
+        self.lbl_master_login = Label(
+            self, text="", bg=p.BG_DEEP, fg=p.FG_LABEL,
+        )
+        self.lbl_master_bal = Label(self, text="", bg=p.BG_DEEP, fg=p.FG)
+        self.lbl_master_eq = Label(self, text="", bg=p.BG_DEEP, fg=p.FG_LABEL)
+        self.lbl_master_pnl = Label(self, text="", bg=p.BG_DEEP, fg=p.FG_DIM)
+
+    def _build_kpi_soft(self) -> None:
+        """Build the Light-Soft KPI dashboard row.
+
+        Four ``KPICard`` widgets in a 1×4 grid, each column equally
+        weighted via ``uniform="kpi"`` so cards stay the same width as
+        the window resizes.
+
+        Card → tint / icon mapping mirrors the mockup:
+
+            ┌─ wallet/blue   ─┬─ chart-pie/purple ─┬─ trending-up/green ─┬─ link/orange ─┐
+            │ MASTER BALANCE  │ TOTAL EQUITY       │ NET P&L             │ CONNECTED     │
+            └─────────────────┴────────────────────┴─────────────────────┴───────────────┘
+
+        Values are populated by ``_refresh_dashboard`` which runs on a
+        1-second tick.  ``_kpi_cards`` (dict of ``KPICard``) replaces
+        the legacy ``_kpi_labels`` dict.
+        """
+        dash = ctk.CTkFrame(self, fg_color=p.BG_DEEP)
+        dash.pack(fill="x", padx=SPACE_24, pady=(0, SPACE_16))
+
+        for col in range(4):
+            # uniform="kpi" forces equal column widths even when one
+            # card's content (e.g. long balance) tries to expand more.
+            dash.columnconfigure(col, weight=1, uniform="kpi")
+
+        specs = [
+            # (key, label, lucide-icon-name, tint-alias, icon-fg-hex)
+            ("kpi_bal",  "Master Balance", "wallet",       "blue",   p.TINT_BLUE_FG),
+            ("kpi_eq",   "Total Equity",   "chart-pie",    "purple", p.TINT_PURPLE_FG),
+            ("kpi_pnl",  "Net P&L",        "trending-up",  "green",  p.TINT_GREEN_FG),
+            ("kpi_conn", "Connected",      "link",         "orange", p.TINT_ORANGE_FG),
+        ]
+        self._kpi_cards: Dict[str, _widgets.KPICard] = {}
+        for col, (key, label, icon_name, tint, icon_fg) in enumerate(specs):
+            card = _widgets.KPICard(
+                dash,
+                label=label,
+                value="\u2014",
+                icon=_lucide.icon(icon_name, 18, icon_fg),
+                tint=tint,
+            )
+            pad_left = 0 if col == 0 else SPACE_16
+            card.grid(row=0, column=col, sticky="nsew", padx=(pad_left, 0))
+            self._kpi_cards[key] = card
+
+        self._refresh_dashboard()
+
+    def _build_slaves_soft(self) -> None:
+        """Build Slave Accounts as one logical card-list block.
+
+        The old interim version had a separate header card and a separate
+        table card, which made the section feel like stacked widgets.  This
+        pass puts header/actions + column labels + account rows into one
+        white card inside the PanedWindow top pane.  AccountRow keeps its
+        public API, but the visuals read as spaced rounded rows rather than
+        a dense data grid.
+        """
+        # ── Paned split between slave rows and trade log/notebook ──
+        # PanedWindow is a tk widget — host children as tk.Frame wrappers.
+        self._paned = tk.PanedWindow(
+            self, orient="vertical", bg=p.BG_DEEP,
+            sashwidth=SPACE_16, sashrelief="flat", opaqueresize=True,
+            borderwidth=0,
+        )
+        # 24px bottom matches the section rhythm (header → master →
+        # KPI → slaves are all separated by 24px).
+        self._paned.pack(fill="both", expand=True, padx=SPACE_24, pady=(0, SPACE_16))
+
+        # Top pane: header + rows in the SAME card.
+        top_pane = tk.Frame(self._paned, bg=p.BG_DEEP)
+        self._paned.add(top_pane, minsize=ui_scaling.scale(120),
+                        height=ui_scaling.scale(250))
+
+        rows_card = _widgets.Card(top_pane, padding=0)
+        rows_card.pack(fill="both", expand=True)
+
+        # ── Section header row with action buttons ──────
+        header = _widgets.SectionHeader(
+            rows_card, title="Slave Accounts", counter="0/10",
+        )
+        header.pack(fill="x", padx=SPACE_16, pady=(SPACE_8, SPACE_8))
+        self._slaves_header = header
+        self.lbl_slave_count = header._counter
+
+        btn_add = ctk.CTkButton(
+            rows_card, text="+ Аккаунт",
+            image=_lucide.icon("circle-play", 14, "on_accent"),
+            compound="left", command=self._add_slave,
+            fg_color=p.ACCENT, hover_color=p.ACCENT_H,
+            text_color=p.ACCENT_FG, corner_radius=p.RADIUS_MD,
+            height=BTN_HEIGHT, font=("Segoe UI", 10, "bold"),
+        )
+        _bind_tip(btn_add, "Добавить новый слейв-аккаунт")
+        header.add_action(btn_add, padx=(0, SPACE_8))
+
+        btn_close_all = ctk.CTkButton(
+            rows_card, text="Закрыть сделки",
+            image=_lucide.icon("circle-x", 14, "danger"),
+            compound="left", command=self._close_all_open,
+            fg_color="transparent", hover_color=p.TINT_RED,
+            text_color=p.RED, corner_radius=p.RADIUS_MD,
+            border_width=1, border_color=p.TINT_RED,
+            height=BTN_HEIGHT, font=("Segoe UI", 10, "bold"),
+        )
+        _bind_tip(btn_close_all, "Закрыть все позиции на мастере и слейвах")
+        header.add_action(btn_close_all, padx=(0, 0))
+
+        # Column labels + card rows.  No grid lines: whitespace + row cards
+        # do the grouping.
+        # Account rows live in a CTkScrollableFrame so the section can
+        # host up to 10 slaves (and beyond) without breaking the layout —
+        # extra rows scroll inside the card while the section header /
+        # action buttons stay pinned at the top.
+        self._table_frame = ctk.CTkScrollableFrame(
+            rows_card,
+            fg_color="transparent",
+            scrollbar_button_color=p.BORDER,
+            scrollbar_button_hover_color=p.FG_DIM,
+            label_text="",
+        )
+        self._table_frame.pack(fill="both", expand=True, padx=SPACE_16, pady=(0, SPACE_8))
+        self._table_frame.rowconfigure(0, minsize=ui_scaling.scale(24))
+        for idx, _, min_w, weight, _ in COL_SPEC:
+            self._table_frame.columnconfigure(
+                idx, minsize=ui_scaling.scale(min_w), weight=weight,
+            )
+
+        # Column labels are intentionally LIGHT — text-secondary with no
+        # bold weight — so the eye reads the row cards as the primary
+        # grouping, not the column band.  Modern dashboards (Linear,
+        # Stripe) use this trick to reduce visual noise.
+        for idx, text, _, _, anchor in COL_SPEC:
+            if not text:
+                continue
+            lbl_h = ctk.CTkLabel(
+                self._table_frame, text=text.upper(),
+                text_color=p.FG_LABEL,
+                font=("Segoe UI", 9, "normal"),
+                anchor=anchor,
+            )
+            lbl_h.grid(row=0, column=idx, padx=6, pady=(0, 10), sticky="ew")
+
+        self._next_row = 1
+
+    def _build_tabs_soft(self) -> None:
+        """Build the bottom Trades / Log notebook in a Card-shell.
+
+        The ``ttk.Notebook`` is wrapped in a ``Card`` and added as the
+        bottom child of the PanedWindow created in ``_build_slaves_soft``.
+        ttk Notebook styling is already configured by ``apply_ttk_styles``
+        in palette.py, so we only need the Card chrome and the trade /
+        log children themselves.
+        """
+        # tk.PanedWindow needs a tk-managed child — wrap in tk.Frame.
+        nb_wrap = tk.Frame(self._paned, bg=p.BG_DEEP)
+        self._paned.add(nb_wrap, minsize=ui_scaling.scale(80),
+                        height=ui_scaling.scale(220))
+
+        # Card-shell around the notebook for the rounded soft look.
+        nb_card = _widgets.Card(nb_wrap, padding=0)
+        nb_card.pack(fill="both", expand=True)
+
+        self.notebook = ttk.Notebook(nb_card, style="TNotebook")
+        self.notebook.pack(fill="both", expand=True, padx=SPACE_8, pady=SPACE_8)
+
+        # ── Trades tab ─────────────────────────────────
+        trades_tab = tk.Frame(self.notebook, bg=p.BG_ROW)
+        self.notebook.add(trades_tab, text="  Сделки  ")
+        self.trades_table = TradesTable(trades_tab)
+        self.trades_table.pack(fill="both", expand=True, padx=0, pady=0)
+
+        for t in _load_trades():
+            tag = "ok" if t.get("success") else "err"
+            self.trades_table.add_trade(
+                time_str=t.get("time", ""), slave=t.get("slave", ""),
+                symbol=t.get("symbol", ""), direction=t.get("direction", ""),
+                lot=t.get("lot", 0.0), master_ticket=t.get("master_ticket", ""),
+                slave_ticket=t.get("slave_ticket", ""), status=t.get("status", ""),
+                tag=tag)
+
+        # ── Open Positions tab ─────────────────────────
+        open_tab = tk.Frame(self.notebook, bg=p.BG_ROW)
+        self.notebook.add(open_tab, text="  Текущие сделки  ")
+        self.open_positions_table = OpenPositionsTable(open_tab)
+        self.open_positions_table.pack(fill="both", expand=True, padx=0, pady=0)
+
+        # ── Log tab ────────────────────────────────────
+        log_tab = tk.Frame(self.notebook, bg=p.BG_ROW)
+        self.notebook.add(log_tab, text="  Лог  ")
+        log_inner = tk.Frame(log_tab, bg=p.BG_ROW)
+        log_inner.pack(fill="both", expand=True, padx=0, pady=0)
+
+        self.log_text = tk.Text(
+            log_inner, bg=p.BG_ROW, fg=p.FG, font=f.MONO_SM,
+            relief="flat", state="disabled", wrap="word",
+            highlightthickness=0, padx=SPACE_16, pady=SPACE_8,
+        )
+        log_sb = ttk.Scrollbar(
+            log_inner, orient="vertical", command=self.log_text.yview,
+        )
+        self.log_text.configure(yscrollcommand=log_sb.set)
+        log_sb.pack(side="right", fill="y")
+        self.log_text.pack(side="left", fill="both", expand=True)
+
+        self.log_text.tag_config("ok", foreground=p.GREEN)
+        self.log_text.tag_config("err", foreground=p.RED)
+        self.log_text.tag_config("warn", foreground=p.YELLOW)
+        self.log_text.tag_config("info", foreground=p.FG_DIM)
+
+    def _build_statusbar_soft(self) -> None:
+        """Minimal bottom bar — just session stats + version tag.
+
+        User explicitly asked to remove the "Система готова к работе"
+        pill at the bottom; the master block's own StatusPill already
+        carries the live system state.  We keep the ``_status_pill``
+        attribute as an off-screen stub for code paths that still call
+        ``set(text, state=...)``.  ``lbl_stats`` is the running
+        ✅/❌ counter that ``_on_trade`` updates.
+        """
+        # Bar grows naturally to fit its labels (no fixed ``height=``).
+        # The previous SPACE_32 (28 px) cap clipped the version label
+        # at the tightened 2026-06-20 scale because label font ascent +
+        # SPACE_8 top/bottom pady exceeded the bar box.  Packed with
+        # ``side="bottom"`` BEFORE the slaves/log paned (see
+        # ``_build_ui``) so the paned's ``expand=True`` can't steal the
+        # bar's slice of vertical space and squash it to 0 height.
+        bar = ctk.CTkFrame(self, fg_color=p.BG_DEEP)
+        bar.pack(side="bottom", fill="x", padx=SPACE_24, pady=(0, SPACE_8))
+
+        # Off-screen stub so legacy `.set(...)` calls don't NPE.
+        self._status_pill = _widgets.StatusPill(
+            self, text="", state="success",
+        )  # NOT packed — invisible.
+
+        # IMPORTANT: pack the version tag FIRST (side="right") so the
+        # right edge reserves its space before lbl_stats claims the rest.
+        # Otherwise a long stats string at narrow window widths can
+        # push the version label off the right edge of the bar
+        # (tk's pack allocates space in declaration order — last in
+        # gets only whatever's left over).
+        if _UPD_OK:
+            Label(
+                bar, text=f"v{upd_mod.VERSION}",
+                bg=p.BG_DEEP, fg=p.FG_DIM, font=f.SM,
+            ).pack(side="right", padx=(0, SPACE_8), pady=4)
+
+        # Running session stats (▶/⏹ counters).  Subtle on left.
+        self.lbl_stats = Label(
+            bar, text="", bg=p.BG_DEEP, fg=p.FG_DIM, font=f.SM,
+        )
+        self.lbl_stats.pack(side="left", padx=(SPACE_8, 0), pady=4)
+
+    # ── Info toggle ─────────────────────────────────────────
+
+    def _toggle_info(self):
+        _Tip.enabled = not _Tip.enabled
+        if _Tip.enabled:
+            # Active state — solid accent with white icon so the toggle
+            # state is obvious at a glance.
+            self.btn_info.configure(
+                fg_color=p.ACCENT, hover_color=p.ACCENT_H,
+                text_color=p.ACCENT_FG,
+                image=getattr(self.btn_info, "_info_active_icon", None)
+                      or _lucide.icon("info", 16, "on_accent"),
+            )
+        else:
+            self.btn_info.configure(
+                fg_color="transparent", hover_color=p.BG_ROW_HOVER,
+                text_color=p.FG_LABEL,
+                image=getattr(self.btn_info, "_info_default_icon", None)
+                      or _lucide.icon("info", 16, "label"),
+            )
+            _Tip.hide()
+
+    # ── Мастер ──────────────────────────────────────────────
+
+    def _browse_master(self):
+        path = filedialog.askopenfilename(
+            title="terminal64.exe мастера",
+            filetypes=[("MT5", "terminal64.exe"), ("EXE", "*.exe")],
+            initialdir="C:\\")
+        if path:
+            self.var_master_path.set(path.replace("/", "\\"))
+            self._save_config()
+
+    def _open_master_terminal(self):
+        path = self.var_master_path.get().strip()
+        if not path:
+            self._log("\u26A0\uFE0F Путь мастера не задан", "warn")
+            return
+        self._open_terminal_path(path)
+
+    def _close_all_master(self):
+        if not _COPIER_OK:
+            self._log("\u274C copier.py не найден", "err")
+            return
+        path = self.var_master_path.get().strip()
+        if not path:
+            return
+        self._log("\u2716 Закрытие всех позиций [МАСТЕР]...", "warn")
+        cfg = self._build_config()
+        trader = CopyTrader(
+            config=cfg, state_file=STATE_FILE,
+            log_callback=self._on_log,
+            status_callback=self._on_status,
+            config_file=CONFIG_FILE,
+        )
+        trader.close_all_positions(path, "МАСТЕР")
+
+    def _test_master(self):
+        if not _MT5_OK:
+            self._log("\u274C MT5 не установлен", "err")
+            return
+        master_path = self.var_master_path.get().strip()
+        if not master_path:
+            self._log("\u26A0\uFE0F Путь мастера не задан", "warn")
+            return
+        if not is_terminal_running(master_path):
+            self._log("\u26A0\uFE0F Мастер-терминал не запущен", "warn")
+            return
+        if not mt5.initialize(path=master_path):
+            self._log("\u274C Ошибка подключения к мастеру", "err")
+            return
+        try:
+            acc = mt5.account_info()
+            if acc is None:
+                self._log("\u274C Нет данных аккаунта мастера", "err")
+                return
+            test_sym = None
+            for s in self._slaves:
+                if s.get("enabled", True) and s.get("symbol_map"):
+                    for master_sym in s["symbol_map"]:
+                        test_sym = master_sym
+                        break
+                if test_sym:
+                    break
+            if not test_sym:
+                self._log("\u26A0\uFE0F Нет символов в маппинге слейвов — нечего тестировать", "warn")
+                return
+            info = mt5.symbol_info(test_sym)
+            if info is None:
+                alt = test_sym.upper().rstrip(".")
+                for s in (mt5.symbols_get() or []):
+                    if s.name.upper().rstrip(".") == alt:
+                        test_sym = s.name
+                        info = mt5.symbol_info(test_sym)
+                        break
+            if info is None:
+                self._log(f"\u274C Символ {test_sym} не найден на мастере", "err")
+                return
+            if info.trade_mode != mt5.SYMBOL_TRADE_MODE_FULL:
+                self._log(f"\u274C {test_sym} не торгуется на мастере", "err")
+                return
+            mt5.symbol_select(test_sym, True)
+            tick = mt5.symbol_info_tick(test_sym)
+            if not tick:
+                self._log(f"\u274C Нет тика для {test_sym}", "err")
+                return
+            from copier import get_filling_mode, normalize_price, try_send_order
+            filling = get_filling_mode(info)
+            lot = info.volume_min
+            price = normalize_price(tick.ask, info.digits)
+            request = {
+                "action": mt5.TRADE_ACTION_DEAL,
+                "symbol": test_sym,
+                "volume": lot,
+                "type": mt5.ORDER_TYPE_BUY,
+                "price": price,
+                "comment": "CT_TEST",
+                "type_time": mt5.ORDER_TIME_GTC,
+                "type_filling": filling,
+            }
+            result = try_send_order(request)
+            if result and result.retcode == mt5.TRADE_RETCODE_DONE:
+                self._log(f"\u2705 Тест BUY {test_sym} lot={lot} на мастере \u2192 #{result.order}", "ok")
+                self._log("\u2139\uFE0F Закройте позицию вручную \u2014 копир скопирует закрытие", "info")
+            else:
+                rc = result.retcode if result else -1
+                cmt = result.comment if result else ""
+                self._log(f"\u274C Ошибка теста: retcode={rc} {cmt}", "err")
+        finally:
+            mt5.shutdown()
+
+    def _close_all_open(self):
+        self._close_all_master()
+        for s in self._slaves:
+            if s.get("enabled", True) and s.get("path"):
+                self._close_all_slave(s)
+
+    def _close_all_slave(self, data: Dict):
+        if not _COPIER_OK:
+            self._log("\u274C copier.py не найден", "err")
+            return
+        sname = data.get("name", "?")
+        self._log(f"\u2716 Закрытие всех позиций [{sname}]...", "warn")
+        cfg = self._build_config()
+        trader = CopyTrader(
+            config=cfg, state_file=STATE_FILE,
+            log_callback=self._on_log,
+            status_callback=self._on_status,
+            config_file=CONFIG_FILE,
+        )
+        trader.close_all_positions(data.get("path", ""), sname)
+
+    # ── Слейвы ──────────────────────────────────────────────
+
+    MAX_SLAVES = 10
+
+    def _update_slave_count(self):
+        # SectionHeader exposes set_counter; the legacy lbl_slave_count
+        # attribute still points at the CTkLabel for any external readers.
+        text = f"{len(self._slaves)}/{self.MAX_SLAVES}"
+        if hasattr(self, "_slaves_header"):
+            self._slaves_header.set_counter(text)
+        else:  # pragma: no cover - pre-Phase-4 fallback
+            self.lbl_slave_count.config(text=text)
+
+    def _add_slave(self):
+        if len(self._slaves) >= self.MAX_SLAVES:
+            messagebox.showwarning("Лимит", f"Максимум {self.MAX_SLAVES} слейв-аккаунтов на профиль", parent=self)
+            return
+        dlg = SlaveDialog(self)
+        self.wait_window(dlg)
+        if dlg.result:
+            data = dlg.result
+            data["id"] = str(uuid.uuid4())[:8]
+            data["enabled"] = True
+            if "max_trades_per_day" not in data:
+                data["max_trades_per_day"] = 0
+            if "daily_loss_limit" not in data:
+                data["daily_loss_limit"] = 0
+            self._slaves.append(data)
+            self._add_slave_row(data)
+            self._update_slave_count()
+            self._save_config()
+
+    def _add_slave_row(self, data: Dict):
+        row = AccountRow(self._table_frame, self._next_row, data,
+                         on_edit=self._edit_slave,
+                         on_delete=self._delete_slave,
+                         on_toggle=self._toggle_slave,
+                         on_test=self._test_slave,
+                         on_open=self._open_slave_terminal,
+                         on_close_all=self._close_all_slave)
+        self._rows.append(row)
+        self._next_row += 1
+
+    def _edit_slave(self, data: Dict, row: AccountRow):
+        dlg = SlaveDialog(self, data)
+        self.wait_window(dlg)
+        if dlg.result:
+            sid = data.get("id", "")
+            enabled = data.get("enabled", True)
+            data.clear()
+            data.update(dlg.result)
+            data["id"] = sid
+            data["enabled"] = enabled
+            row.refresh(data)
+            self._save_config()
+
+    def _delete_slave(self, data: Dict, row: AccountRow):
+        if messagebox.askyesno("Удалить", f"Удалить \u00AB{data.get('name', '?')}\u00BB?", parent=self):
+            self._slaves.remove(data)
+            self._rebuild_rows()
+            self._update_slave_count()
+            self._save_config()
+
+    def _rebuild_rows(self):
+        for r in self._rows:
+            r.destroy()
+        self._rows.clear()
+        self._next_row = 1
+        for s in self._slaves:
+            self._add_slave_row(s)
+        self._update_slave_count()
+
+    def _toggle_slave(self, data: Dict):
+        self._save_config()
+
+    def _test_slave(self, data: Dict):
+        if not _COPIER_OK:
+            self._log("\u274C copier.py не найден", "err")
+            return
+        symbol_map = data.get("symbol_map", {})
+        if not symbol_map:
+            self._log("\u26A0\uFE0F Нет символов в маппинге", "warn")
+            return
+        self._log(f"\U0001F9EA Тест копирования [{data.get('name', '?')}]", "warn")
+        cfg = self._build_config()
+        trader = CopyTrader(
+            config=cfg, state_file=STATE_FILE,
+            log_callback=self._on_log,
+            status_callback=self._on_status,
+            config_file=CONFIG_FILE,
+        )
+        trader.test_trade(data, cfg)
+
+    def _open_slave_terminal(self, data: Dict):
+        path = data.get("path", "")
+        if not path:
+            self._log("\u26A0\uFE0F Путь к терминалу не задан", "warn")
+            return
+        self._open_terminal_path(path)
+
+    def _open_terminal_path(self, path: str):
+        if not is_terminal_running(path):
+            try:
+                os.startfile(path)
+                self._log(f"\U0001F680 Запуск: {os.path.basename(os.path.dirname(path))}")
+            except Exception as e:
+                self._log(f"\u274C Ошибка запуска: {e}", "err")
+        else:
+            if activate_terminal(path):
+                self._log(f"\U0001F4C2 Терминал активирован")
+            else:
+                self._log("\u26A0\uFE0F Не удалось найти окно терминала", "warn")
+
+    # ── Запуск/остановка терминалов ─────────────────────────
+
+    def _collect_terminal_paths(self):
+        """Master + every enabled slave's terminal path, de-duplicated,
+        preserving order (master first)."""
+        paths = []
+        master_path = self.var_master_path.get().strip()
+        if master_path:
+            paths.append(master_path)
+        for s in self._slaves:
+            if not s.get("enabled", True):
+                continue
+            pth = s.get("path", "")
+            if pth and pth not in paths:
+                paths.append(pth)
+        return paths
+
+    def _spawn_terminals_minimized(self, paths, verbose=True):
+        """Fire-and-forget Popen of every closed terminal with
+        SW_MINIMIZE. Each Popen returns immediately, so all terminals
+        boot in parallel — the OS schedules them, we don't wait.
+
+        Returns (launched_count, already_running_count). When verbose
+        is False, only the summary line is logged (used by ``_start``
+        which already logs «Копитрейдер запущен» right after).
+        """
+        launched = 0
+        already = 0
+        for pth in paths:
+            if is_terminal_running(pth):
+                already += 1
+                if verbose:
+                    self._log(f"\u2705 Уже запущен: {os.path.basename(os.path.dirname(pth))}")
+                continue
+            try:
+                si = subprocess.STARTUPINFO()
+                si.dwFlags = subprocess.STARTF_USESHOWWINDOW
+                si.wShowWindow = 6  # SW_MINIMIZE
+                subprocess.Popen([pth], startupinfo=si)
+                launched += 1
+                if verbose:
+                    self._log(f"\U0001F680 Запуск: {os.path.basename(os.path.dirname(pth))}")
+            except Exception as e:
+                self._log(f"\u274C Ошибка запуска {pth}: {e}", "err")
+        return launched, already
+
+    def _launch_all(self):
+        paths = self._collect_terminal_paths()
+        launched, _ = self._spawn_terminals_minimized(paths, verbose=True)
+        if launched > 0:
+            self._log(f"\u2705 Запущено {launched} терминалов (свёрнуто)", "ok")
+        else:
+            self._log("Все терминалы уже запущены")
+
+    def _shutdown_all(self):
+        if not _PSUTIL_OK:
+            self._log("\u274C psutil не установлен", "err")
+            return
+        paths = []
+        master_path = self.var_master_path.get().strip()
+        if master_path:
+            paths.append(master_path)
+        for s in self._slaves:
+            if not s.get("enabled", True):
+                continue
+            pth = s.get("path", "")
+            if pth and pth not in paths:
+                paths.append(pth)
+        killed = 0
+        for pth in paths:
+            norm = os.path.normcase(os.path.abspath(pth))
+            for proc in psutil.process_iter(['exe', 'pid']):
+                try:
+                    exe = proc.info.get('exe')
+                    if exe and os.path.normcase(exe) == norm:
+                        proc.terminate()
+                        killed += 1
+                        self._log(f"\u25A0 Завершён: {os.path.basename(os.path.dirname(pth))}")
+                except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                    pass
+        if killed > 0:
+            self._log(f"\u25A0 Завершено {killed} процессов", "warn")
+        else:
+            self._log("Нет запущенных терминалов")
+
+    # ── Проверка связи / Старт / Стоп ───────────────────────
+
+    def _schedule_check(self):
+        if self._check_timer:
+            self.after_cancel(self._check_timer)
+        if self._trader and self._trader.is_running():
+            self._refresh_dashboard()
+            self._refresh_open_positions_async()
+        else:
+            self._update_master_info_silent()
+            for row, slave in zip(self._rows, self._slaves):
+                self._update_row_info_silent(row, slave)
+            self._refresh_dashboard()
+            self._refresh_open_positions_async()
+        self._check_timer = self.after(3000, self._schedule_check)
+
+    def _check_update(self, force=False):
+        if not _UPD_OK:
+            if force:
+                messagebox.showinfo("Обновления", "Модуль обновлений недоступен")
+            return
+        upd_mod.check_update(callback=self._on_update_available, no_update=lambda: self._on_no_update() if force else None)
+
+    def _on_no_update(self):
+        messagebox.showinfo("Обновления", f"У вас последняя версия (v{upd_mod.VERSION})")
+
+    def _on_update_available(self, version, changelog):
+        text = f"Доступна новая версия: v{version}"
+        if changelog:
+            text += f"\n{changelog}"
+        text += "\n\nСкачайте в Telegram: @fth_copier_bot → /download"
+        messagebox.showinfo("Обновление", text)
+
+    def _schedule_license_check(self):
+        if not _LIC_OK:
+            return
+        lic = lic_mod.load_license()
+        if not lic or not lic.get("token"):
+            self._show_activation()
+            return
+        valid, reason, _ = lic_mod.check_token(lic["token"])
+        if not valid and reason != "connection_error":
+            self._show_activation()
+            return
+        self._lic_timer = self.after(600000, self._schedule_license_check)
+
+    def _show_activation(self):
+        if not _LIC_OK:
+            return
+        dlg = ActivationWindow(self)
+        self.wait_window(dlg)
+        if _LIC_OK:
+            lic = lic_mod.load_license()
+            if not lic or not lic.get("token"):
+                self.destroy()
+                return
+        self._lic_timer = self.after(600000, self._schedule_license_check)
+
+    def _set_master_pill(self, text: str, state: str) -> None:
+        """Reflect master terminal state in the right-side status pill.
+
+        Defensive — older code paths and the smoke test may construct App
+        without the pill (e.g. partial init crashes); just no-op then.
+        """
+        pill = getattr(self, "_master_status_pill", None)
+        if pill is None:
+            return
+        try:
+            pill.set(text, state=state)
+        except Exception:
+            pass
+
+    def _update_master_info_silent(self):
+        if not _MT5_OK:
+            return
+        master_path = self.var_master_path.get().strip()
+        if not master_path:
+            self.lbl_master_bal.config(text="\u2014", fg=p.FG_DIM)
+            self.lbl_master_login.config(text="нет пути", fg=p.RED)
+            self._set_master_pill("Нет пути", "danger")
+            return
+        if not is_terminal_running(master_path):
+            self.lbl_master_login.config(text="не запущен", fg=p.RED)
+            self._set_master_pill("Не запущен", "danger")
+            return
+        if mt5.initialize(path=master_path):
+            try:
+                acc = mt5.account_info()
+                if acc:
+                    ti = mt5.terminal_info()
+                    pnl = acc.equity - acc.balance
+                    pnl_color = p.GREEN if pnl >= 0 else p.RED
+                    pnl_sign = "+" if pnl >= 0 else ""
+                    at_off = ti and not ti.trade_allowed
+                    self.lbl_master_login.config(
+                        text=f"#{acc.login}" + (" \u26A0AT" if at_off else ""),
+                        fg=p.RED if at_off else p.FG_DIM)
+                    self.lbl_master_bal.config(text=f"${acc.balance:,.2f}")
+                    self.lbl_master_eq.config(text=f"${acc.equity:,.2f}")
+                    self.lbl_master_pnl.config(text=f"{pnl_sign}${pnl:,.2f}", fg=pnl_color)
+                    if at_off:
+                        self._set_master_pill("AutoTrading OFF", "warn")
+                    else:
+                        self._set_master_pill("Running", "success")
+                else:
+                    self.lbl_master_login.config(text="нет аккаунта", fg=p.RED)
+                    self._set_master_pill("Нет аккаунта", "danger")
+            finally:
+                mt5.shutdown()
+        else:
+            self.lbl_master_login.config(text="ошибка", fg=p.RED)
+            self._set_master_pill("Ошибка", "danger")
+
+    def _update_row_info_silent(self, row: AccountRow, slave: Dict):
+        if not _MT5_OK:
+            return
+        slave_path = slave.get("path", "")
+        if not slave_path:
+            row.update_info(0, 0, status="\U0001F534 нет пути")
+            return
+        if not is_terminal_running(slave_path):
+            row.update_info(0, 0, status="\U0001F534 не запущен")
+            return
+        # Slider check: if the user disabled this slave's toggle we
+        # still want to refresh balance/equity so the row stays current,
+        # but the dot reads "неактивен" (yellow) until the slider is
+        # turned back on.  This is independent of whatever the terminal
+        # itself is doing.
+        slider_off = not row.var_enabled.get()
+        if mt5.initialize(path=slave_path):
+            try:
+                acc = mt5.account_info()
+                if acc:
+                    ti = mt5.terminal_info()
+                    at_off = ti and not ti.trade_allowed
+                    if slider_off:
+                        status = f"\U0001F7E1 неактивен #{acc.login}"
+                    elif at_off:
+                        status = f"\U0001F7E1 алготрейдинг отключен #{acc.login}"
+                    else:
+                        # TODO: market-closed / no-symbols detection
+                        # belongs here once copier exposes that signal;
+                        # for now treat enabled + AT-on as "активен".
+                        status = f"\U0001F7E2 активен #{acc.login}"
+                    row.update_info(acc.balance, acc.equity, acc.login, status)
+                else:
+                    row.update_info(0, 0, status="\U0001F534 нет аккаунта")
+            finally:
+                mt5.shutdown()
+        else:
+            row.update_info(0, 0, status="\U0001F534 ошибка")
+
+    def _refresh_dashboard(self):
+        # Master balance from the master strip (string we just rendered).
+        try:
+            bal_text = self.lbl_master_bal.cget("text")
+            bal = float(bal_text.replace("$", "").replace(",", "")) if bal_text and bal_text != "\u2014" else 0
+        except Exception:
+            bal = 0
+        self._kpi_cards["kpi_bal"].set_value(
+            f"${bal:,.2f}" if bal > 0 else "\u2014",
+        )
+
+        # Total equity = master + every enabled slave's last-known equity.
+        total_eq = bal
+        for row in self._rows:
+            try:
+                eq_text = row.lbl_equity.cget("text")
+                eq = float(eq_text.replace("$", "").replace(",", "")) if eq_text and eq_text != "\u2014" else 0
+                if eq > 0:
+                    total_eq += eq
+            except Exception:
+                pass
+        self._kpi_cards["kpi_eq"].set_value(
+            f"${total_eq:,.2f}" if total_eq > 0 else "\u2014",
+        )
+
+        # Net P&L summed across all slaves.  The sub-text caption
+        # (прибыль / убыток) was dropped in the 2026-06-20 redesign pass
+        # — the leading +/- in the value already carries the sign cue
+        # and removing the caption keeps all four KPI tiles uniform.
+        net_pnl = 0.0
+        for row in self._rows:
+            try:
+                pnl_text = row.lbl_pnl.cget("text")
+                pnl_text = pnl_text.replace("$", "").replace(",", "").replace("+", "")
+                pnl = float(pnl_text) if pnl_text and pnl_text != "\u2014" else 0
+                net_pnl += pnl
+            except Exception:
+                pass
+        if net_pnl > 0:
+            pnl_str = f"+${net_pnl:,.2f}"
+        elif net_pnl < 0:
+            pnl_str = f"-${abs(net_pnl):,.2f}"
+        else:
+            pnl_str = "\u2014"
+        self._kpi_cards["kpi_pnl"].set_value(pnl_str)
+
+        # Connected = enabled slaves / total slaves.  Sub-caption
+        # ("N% активно") removed for the same reason as kpi_pnl above.
+        connected = sum(1 for row in self._rows if row.var_enabled.get())
+        total = len(self._rows)
+        self._kpi_cards["kpi_conn"].set_value(
+            f"{connected}/{total}" if total else "\u2014",
+        )
+
+    def _refresh_open_positions_async(self):
+        if getattr(self, '_pos_thread', None) and self._pos_thread.is_alive():
+            return
+        self._pos_thread = threading.Thread(
+            target=self._refresh_open_positions, daemon=True)
+        self._pos_thread.start()
+
+    def _refresh_open_positions(self):
+        """Fetch open positions from master and enabled slaves (runs in worker thread)."""
+        if not _MT5_OK:
+            self.after(0, lambda: self._apply_open_positions([]))
+            return
+        rows: List[Tuple[str, str, str, str, str]] = []
+        master_path = self.var_master_path.get().strip()
+        if master_path and is_terminal_running(master_path):
+            if mt5.initialize(path=master_path):
+                try:
+                    for pos in (mt5.positions_get() or []):
+                        # mt5 position.time is a unix epoch int (seconds),
+                        # not a datetime — calling .strftime on it raises
+                        # AttributeError and silently empties the table.
+                        ts = (datetime.fromtimestamp(pos.time).strftime("%H:%M:%S")
+                              if pos.time else "—")
+                        direction = "BUY" if pos.type == mt5.ORDER_TYPE_BUY else "SELL"
+                        rows.append((ts, "Мастер", pos.symbol, direction, f"{pos.volume:.2f}"))
+                finally:
+                    mt5.shutdown()
+        for slave in getattr(self, '_slaves', []):
+            if not slave.get("enabled", True):
+                continue
+            s_path = slave.get("path", "")
+            if not s_path or not is_terminal_running(s_path):
+                continue
+            if mt5.initialize(path=s_path):
+                try:
+                    s_name = slave.get("name", slave.get("id", "?"))
+                    for pos in (mt5.positions_get() or []):
+                        ts = (datetime.fromtimestamp(pos.time).strftime("%H:%M:%S")
+                              if pos.time else "—")
+                        direction = "BUY" if pos.type == mt5.ORDER_TYPE_BUY else "SELL"
+                        rows.append((ts, s_name, pos.symbol, direction, f"{pos.volume:.2f}"))
+                finally:
+                    mt5.shutdown()
+        self.after(0, lambda: self._apply_open_positions(rows))
+
+    def _apply_open_positions(self, rows: List[Tuple[str, ...]]):
+        """Thread-safe UI update for the open-positions table."""
+        if hasattr(self, 'open_positions_table'):
+            self.open_positions_table.refresh(rows)
+
+    def _start(self):
+        master_path = self.var_master_path.get().strip()
+        if not master_path:
+            messagebox.showwarning("Ошибка", "Укажите путь мастера", parent=self)
+            return
+        enabled = [s for s in self._slaves if s.get("enabled", True)]
+        if not enabled:
+            messagebox.showwarning("Ошибка", "Добавьте включённый аккаунт", parent=self)
+            return
+        self._save_config()
+        if not _COPIER_OK:
+            messagebox.showerror("Ошибка", "Не найден copier.py", parent=self)
+            return
+        # Pre-launch every closed master/slave terminal in parallel and
+        # minimized BEFORE handing control to CopyTrader. Otherwise
+        # CopyTrader._cycle ends up calling mt5.initialize(path=...) on
+        # each missing terminal in sequence — and MT5's own auto-spawn
+        # opens them one-by-one in a normal (un-minimized) window. The
+        # "Запустить" button already does this for the same set of
+        # terminals; reusing the helper keeps both code paths in sync.
+        paths_to_launch = self._collect_terminal_paths()
+        launched, _already = self._spawn_terminals_minimized(
+            paths_to_launch, verbose=False
+        )
+        if launched > 0:
+            self._log(f"\U0001F680 Стартуем {launched} терминалов (свёрнуто)", "ok")
+        self._trader = CopyTrader(
+            config=self._build_config(),
+            state_file=STATE_FILE,
+            log_callback=self._on_log,
+            status_callback=self._on_status,
+            trade_callback=self._on_trade,
+            config_file=CONFIG_FILE,
+        )
+        self._trader.start()
+        self.btn_start.configure(state="disabled")
+        self.btn_stop.configure(state="normal")
+        if os.path.exists(ICON_CYAN):
+            self.iconbitmap(ICON_CYAN)
+            self.wm_iconbitmap(ICON_CYAN)
+        self._set_logo_cyan(True)
+        self._update_tray_icon(True)
+        self._session_stats = {"copied": 0, "failed": 0}
+        self._log("\u2705 Копитрейдер запущен", "ok")
+        # Reflect running state in the bottom status pill.
+        if hasattr(self, "_status_pill"):
+            try:
+                self._status_pill.set("Копитрейдер запущен", state="success")
+            except Exception:
+                pass
+
+    def _stop(self):
+        if self._trader:
+            self._trader.stop()
+            self._trader = None
+        self.btn_start.configure(state="normal")
+        self.btn_stop.configure(state="disabled")
+        if os.path.exists(ICON_DEFAULT):
+            self.iconbitmap(ICON_DEFAULT)
+            self.wm_iconbitmap(ICON_DEFAULT)
+        self._set_logo_cyan(False)
+        self._update_tray_icon(False)
+        self._log("\u25A0 Копитрейдер остановлен", "warn")
+        if hasattr(self, "_status_pill"):
+            try:
+                self._status_pill.set("Копитрейдер остановлен", state="warn")
+            except Exception:
+                pass
+        self._schedule_check()
+
+    # ── Колбэки ─────────────────────────────────────────────
+
+    def _on_log(self, msg: str):
+        self.after(0, self._log, msg)
+
+    def _on_status(self, terminal_id: str, status: str,
+                   balance: float = 0, equity: float = 0,
+                   daily_loss: float = 0, daily_loss_limit: float = 0):
+        self.after(0, self._update_status, terminal_id, status, balance, equity,
+                   daily_loss, daily_loss_limit)
+
+    def _on_trade(self, trade_info: Dict):
+        self.after(0, self._add_trade_row, trade_info)
+
+    def _add_trade_row(self, info: Dict):
+        tag = "ok" if info.get("success") else "err"
+        if tag == "ok":
+            self._session_stats["copied"] += 1
+        else:
+            self._session_stats["failed"] += 1
+        self.trades_table.add_trade(
+            time_str=info.get("time", ""), slave=info.get("slave", ""),
+            symbol=info.get("symbol", ""), direction=info.get("direction", ""),
+            lot=info.get("lot", 0.0), master_ticket=info.get("master_ticket", ""),
+            slave_ticket=info.get("slave_ticket", ""), status=info.get("status", ""),
+            tag=tag)
+        self.lbl_stats.config(
+            text=f"\u2705 {self._session_stats['copied']}  \u274C {self._session_stats['failed']}")
+        _save_trade(info)
+        self.notebook.select(0)
+
+    def _update_status(self, terminal_id: str, status: str,
+                       balance: float = 0, equity: float = 0,
+                       daily_loss: float = 0, daily_loss_limit: float = 0):
+        if terminal_id == "master":
+            login = 0
+            if "#" in status:
+                try:
+                    login = int(status.split("#")[1].split()[0].split("$")[0])
+                except (ValueError, IndexError):
+                    pass
+            if login:
+                self.lbl_master_login.config(text=f"#{login}", fg=p.FG_DIM)
+            if balance > 0:
+                self.lbl_master_bal.config(text=f"${balance:,.2f}")
+            if equity > 0:
+                self.lbl_master_eq.config(text=f"${equity:,.2f}")
+                pnl = equity - balance
+                pnl_color = p.GREEN if pnl >= 0 else p.RED
+                pnl_sign = "+" if pnl >= 0 else ""
+                self.lbl_master_pnl.config(text=f"{pnl_sign}${pnl:,.2f}", fg=pnl_color)
+            return
+        for row, slave in zip(self._rows, self._slaves):
+            if slave.get("name") == terminal_id or slave.get("id") == terminal_id:
+                if balance > 0 and equity > 0:
+                    row.update_status_only(status, balance, equity)
+                else:
+                    row.update_status_only(status)
+                if daily_loss_limit > 0:
+                    row.update_daily_loss(daily_loss, daily_loss_limit)
+                break
+
+    # ── Лог ─────────────────────────────────────────────────
+
+    def _log(self, msg: str, tag: str = "info"):
+        if "\u2705" in msg:
+            tag = "ok"
+        elif "\u274C" in msg:
+            tag = "err"
+        elif "\u26A0\uFE0F" in msg or "\u25A0" in msg:
+            tag = "warn"
+        self.log_text.config(state="normal")
+        ts = datetime.now().strftime("%H:%M:%S")
+        self.log_text.insert("end", f"[{ts}] {msg}\n", tag)
+        self.log_text.see("end")
+        lines = int(self.log_text.index("end-1c").split(".")[0])
+        if lines > 500:
+            self.log_text.delete("1.0", f"{lines - 500}.0")
+        self.log_text.config(state="disabled")
+        self._write_log_file(f"[{ts}] {msg}")
+
+    def _write_log_file(self, msg: str):
+        try:
+            os.makedirs(LOGS_DIR, exist_ok=True)
+            date_str = datetime.now().strftime("%Y-%m-%d")
+            log_file = os.path.join(LOGS_DIR, f"{date_str}.log")
+            with open(log_file, "a", encoding="utf-8") as fh:
+                fh.write(msg + "\n")
+        except Exception:
+            pass
+
+    # ── Конфиг ──────────────────────────────────────────────
+
+    def _build_profile(self) -> Dict:
+        return {
+            "master": {"path": self.var_master_path.get().strip()},
+            "slaves": [
+                {
+                    "id": s.get("id", ""), "name": s.get("name", ""),
+                    "enabled": s.get("enabled", True), "path": s.get("path", ""),
+                    "symbol_map": s.get("symbol_map", {}),
+                    "risk_type": s.get("risk_type", "percent"),
+                    "risk_value": s.get("risk_value", 1.0),
+                    "default_lot": s.get("default_lot", 0.01),
+                    "max_drawdown": s.get("max_drawdown", 0),
+                    "max_trades_per_day": s.get("max_trades_per_day", 0),
+                    "daily_loss_limit": s.get("daily_loss_limit", 0),
+                }
+                for s in self._slaves
+            ],
+        }
+
+    def _build_config(self) -> Dict:
+        self._profiles[self._active_profile].update(self._build_profile())
+        if "name" not in self._profiles[self._active_profile]:
+            self._profiles[self._active_profile]["name"] = f"Профиль {self._active_profile + 1}"
+        profile = self._profiles[self._active_profile]
+        return {
+            "master": profile.get("master", {"path": ""}),
+            "slaves": profile.get("slaves", []),
+            "poll_interval_seconds": 1,
+            "min_lot_mode": self._min_lot_mode,
+        }
+
+    def _build_full_config(self) -> Dict:
+        self._profiles[self._active_profile].update(self._build_profile())
+        if "name" not in self._profiles[self._active_profile]:
+            self._profiles[self._active_profile]["name"] = f"Профиль {self._active_profile + 1}"
+        self._capture_window_state()
+        return {
+            "active_profile": self._active_profile,
+            "profiles": self._profiles,
+            "poll_interval_seconds": 1,
+            "min_lot_mode": self._min_lot_mode,
+            "theme": get_theme_name(),
+            "window": self._window_state,
+        }
+
+    # ── Window state persistence ────────────────────────────────
+    @staticmethod
+    def _peek_saved_window_state() -> Optional[Dict]:
+        """Read just the ``window`` key from config.json without parsing
+        the rest. Used during __init__ to set the right geometry on the
+        FIRST mapping of the window, avoiding the visual flash of the
+        adaptive-default size resizing to the saved size after build.
+        Returns ``None`` if no config exists or the key is missing."""
+        try:
+            if not os.path.exists(CONFIG_FILE):
+                return None
+            with open(CONFIG_FILE, "r", encoding="utf-8") as fh:
+                cfg = json.load(fh)
+            win = cfg.get("window")
+            return win if isinstance(win, dict) else None
+        except Exception:
+            return None
+
+    def _capture_window_state(self) -> None:
+        """Snapshot current main-window geometry/zoom/sash into self._window_state."""
+        try:
+            geom = self.geometry()
+            try:
+                st = self.state()
+            except Exception:
+                st = "normal"
+            sash_y = None
+            try:
+                paned = getattr(self, "_paned", None)
+                if paned is not None:
+                    coord = paned.sash_coord(0)
+                    if coord:
+                        sash_y = int(coord[1])
+            except Exception:
+                sash_y = None
+            # If currently zoomed, geometry() reports the maximised size — keep the
+            # last known "normal" geometry so we restore to a sensible window when
+            # the user un-maximises later.
+            if st == "zoomed":
+                prev = (self._window_state or {}).get("geometry")
+                if prev:
+                    geom = prev
+            self._window_state = {
+                "geometry": geom,
+                "zoomed": st == "zoomed",
+                "sash_y": sash_y,
+                "dpi": ui_scaling.current_dpi(),
+            }
+        except Exception:
+            # Don't let UI state capture ever break config save.
+            pass
+
+    def _apply_window_state(self) -> None:
+        """Apply self._window_state (geometry/zoom/sash) restored from config."""
+        st = getattr(self, "_window_state", None) or {}
+        import re
+        geom = st.get("geometry")
+        if isinstance(geom, str):
+            m = re.match(r"^(\d+)x(\d+)([+\-]\d+)([+\-]\d+)$", geom)
+            if m:
+                try:
+                    w = int(m.group(1)); h = int(m.group(2))
+                    # DPI rescaling: if the saved geometry was captured at a
+                    # different DPI, rescale proportionally so the window
+                    # appears at the same physical size.
+                    saved_dpi = st.get("dpi")
+                    cur_dpi = ui_scaling.current_dpi()
+                    if isinstance(saved_dpi, (int, float)) and saved_dpi > 0 and saved_dpi != cur_dpi:
+                        ratio = cur_dpi / saved_dpi
+                        w = int(w * ratio); h = int(h * ratio)
+                    x = int(m.group(3)); y = int(m.group(4))
+                    wa = ui_scaling.get_cursor_work_area(self)
+                    x, y, w, h = ui_scaling.clamp_to_work_area(x, y, w, h, wa)
+                    mw = min(ui_scaling.scale(960), wa[2] - wa[0] - ui_scaling.scale(16))
+                    mh = min(ui_scaling.scale(640), wa[3] - wa[1] - ui_scaling.scale(16))
+                    w = max(w, mw); h = max(h, mh)
+                    self.geometry(f"{w}x{h}+{x}+{y}")
+                except Exception:
+                    pass
+        if st.get("zoomed"):
+            try:
+                self.state("zoomed")
+            except Exception:
+                pass
+        sash_y = st.get("sash_y")
+        if isinstance(sash_y, int) and sash_y > 0:
+            paned = getattr(self, "_paned", None)
+            if paned is not None:
+                # Defer to after layout finishes, otherwise sash_place is ignored.
+                self.after(80, lambda y=sash_y: self._safe_set_sash(y))
+
+    def _safe_set_sash(self, y: int) -> None:
+        try:
+            self._paned.sash_place(0, 0, int(y))
+        except Exception:
+            pass
+
+    def _save_config(self):
+        try:
+            os.makedirs(APP_DATA_DIR, exist_ok=True)
+            with open(CONFIG_FILE, "w", encoding="utf-8") as fh:
+                json.dump(self._build_full_config(), fh, ensure_ascii=False, indent=2)
+        except Exception as e:
+            self._log(f"\u26A0\uFE0F Ошибка конфига: {e}", "warn")
+
+    # ── Hot theme switch ────────────────────────────────────────
+    def _apply_runtime_theme(self, old_palette) -> int:
+        """Hot-swap theme by REBUILDING the UI in-place.
+
+        The earlier widget-tree-remap path had blind spots — some CTk
+        widgets (notably the header bar and CTk Buttons in the toolbars)
+        don't reliably repaint when their ``fg_color`` is changed via
+        ``configure()`` from outside CTk's own initialization path.
+
+        Rebuild is bullet-proof: every widget is re-constructed using
+        the ``p`` / ``f`` proxies, which read from the *active* theme,
+        so the new palette and fonts are applied uniformly.
+
+        Volatile state (master-path entry, log text, paned sash
+        positions, active notebook tab, trader-running state) is
+        captured before destroying widgets and restored after rebuild.
+        Persistent state (profiles, slaves, trades, window geometry)
+        lives in ``config.json`` / ``trades.json`` and is reloaded by
+        the standard ``_load_config()`` / trades-restore paths called
+        from ``_build_ui``.
+        """
+        from palette import get_palette as _gp
+
+        # 1. Snapshot volatile widget-bound state.
+        saved_master_path = ""
+        try:
+            saved_master_path = self.var_master_path.get()
+        except Exception:
+            pass
+
+        saved_log = ""
+        if hasattr(self, "log_text"):
+            try:
+                saved_log = self.log_text.get("1.0", "end-1c")
+            except Exception:
+                pass
+
+        saved_sash: list = []
+        if hasattr(self, "_paned"):
+            try:
+                # PanedWindow exposes sash coordinates per gap.
+                for i in range(max(0, len(self._paned.panes()) - 1)):
+                    try:
+                        saved_sash.append(self._paned.sash_coord(i)[1])
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+        saved_active_tab = 0
+        if hasattr(self, "notebook"):
+            try:
+                saved_active_tab = self.notebook.index(self.notebook.select())
+            except Exception:
+                pass
+
+        # 2. Persist current config so the rebuild re-creates the same
+        #    profile/slaves layout out of disk.
+        try:
+            self._save_config()
+        except Exception:
+            pass
+
+        # 3. Re-apply CTk appearance for the NEW theme (light/dark mode).
+        try:
+            apply_theme()
+        except Exception:
+            pass
+
+        # 3b. Drop Lucide-icon cache so colour-aliased icons (``"accent"``,
+        # ``"label"`` …) re-tint against the new palette on next paint.
+        try:
+            _lucide.clear_cache()
+        except Exception:
+            pass
+
+        # 4. Tear down every child widget of the root.
+        self._rows = []
+        self._next_row = 1
+        for child in list(self.winfo_children()):
+            try:
+                child.destroy()
+            except Exception:
+                pass
+
+        # 5. Bring the CTk root background up to date (the root canvas
+        #    isn't re-created, so explicitly set its fg_color).
+        try:
+            new_pal = _gp()
+            self.configure(fg_color=new_pal.BG_DEEP)
+        except Exception:
+            pass
+
+        # 6. Re-apply ttk styles (Treeview / Notebook) for the new theme
+        #    BEFORE _build_ui so TradesTable picks up the right palette.
+        try:
+            apply_ttk_styles(scale_fn=ui_scaling.scale)
+        except Exception:
+            pass
+
+        # 7. Rebuild the whole UI from scratch.
+        try:
+            self._build_ui()
+        except Exception:
+            pass
+
+        # 8. Restore state.
+        try:
+            self.var_master_path.set(saved_master_path)
+        except Exception:
+            pass
+        try:
+            self._load_config()
+        except Exception:
+            pass
+
+        # 9. Restore log buffer.
+        if saved_log and hasattr(self, "log_text"):
+            try:
+                self.log_text.configure(state="normal")
+                self.log_text.insert("1.0", saved_log)
+                self.log_text.configure(state="disabled")
+                self.log_text.see("end")
+            except Exception:
+                pass
+
+        # 10. Restore paned sash positions (after geometry settles).
+        if hasattr(self, "_paned") and saved_sash:
+            try:
+                self.update_idletasks()
+                for i, y in enumerate(saved_sash):
+                    try:
+                        self._paned.sash_place(i, 0, y)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+        # 11. Restore active notebook tab.
+        if hasattr(self, "notebook"):
+            try:
+                self.notebook.select(saved_active_tab)
+            except Exception:
+                pass
+
+        # 12. Re-derive trader running state on Start/Stop buttons.
+        if getattr(self, "_trader", None) is not None and getattr(self._trader, "is_running", lambda: False)():
+            try:
+                self.btn_start.configure(state="disabled")
+                self.btn_stop.configure(state="normal")
+            except Exception:
+                pass
+
+        return 1
+
+    @staticmethod
+    def _iter_widgets(root):
+        """Generator: every descendant widget of *root* (root excluded).
+        Kept as a small util for callers that want a flat walk."""
+        stack = list(getattr(root, "winfo_children", lambda: [])())
+        while stack:
+            w = stack.pop()
+            yield w
+            try:
+                stack.extend(w.winfo_children())
+            except Exception:
+                pass
+
+    def _load_config(self):
+        self._profiles = []
+        for i in range(5):
+            self._profiles.append({"name": f"Профиль {i + 1}", "master": {"path": ""}, "slaves": []})
+        self._active_profile = 0
+
+        if not os.path.exists(CONFIG_FILE):
+            self._update_slave_count()
+            return
+        try:
+            with open(CONFIG_FILE, "r", encoding="utf-8") as fh:
+                cfg = json.load(fh)
+        except Exception:
+            self._update_slave_count()
+            return
+
+        if "profiles" in cfg:
+            for i, prof in enumerate(cfg["profiles"]):
+                if i < 5:
+                    self._profiles[i] = prof
+            self._active_profile = cfg.get("active_profile", 0)
+        else:
+            self._profiles[0] = {
+                "name": "Профиль 1",
+                "master": cfg.get("master", {"path": ""}),
+                "slaves": cfg.get("slaves", []),
+            }
+
+        self._min_lot_mode = cfg.get("min_lot_mode", False)
+        win = cfg.get("window")
+        if isinstance(win, dict):
+            self._window_state = win
+        self._load_active_profile()
+        self._update_slave_count()
+
+    def _load_active_profile(self):
+        prof = self._profiles[self._active_profile]
+        self.var_master_path.set(prof.get("master", {}).get("path", ""))
+        self._slaves.clear()
+        for r in self._rows:
+            r.destroy()
+        self._rows.clear()
+        self._next_row = 1
+        for s in prof.get("slaves", []):
+            if "id" not in s:
+                s["id"] = str(uuid.uuid4())[:8]
+            if "max_drawdown" not in s:
+                s["max_drawdown"] = 0
+            if "max_trades_per_day" not in s:
+                s["max_trades_per_day"] = 0
+            if "daily_loss_limit" not in s:
+                s["daily_loss_limit"] = 0
+            self._slaves.append(s)
+            self._add_slave_row(s)
+
+    def _switch_profile(self, idx: int):
+        if self._trader and self._trader.is_running():
+            self._stop()
+            self._log("\u25A0 Копитрейдер остановлен (смена профиля)", "warn")
+        self._profiles[self._active_profile].update(self._build_profile())
+        self._save_config()
+        self._active_profile = idx
+        self._load_active_profile()
+        self._update_slave_count()
+        self._save_config()
+        self._log(f"\U0001F4CB Профиль: {self._profiles[idx].get('name', f'Профиль {idx + 1}')}", "info")
+
+    def _open_settings(self):
+        SettingsDialog(self)
+
+    def _on_close(self):
+        if self._trader and self._trader.is_running():
+            self.withdraw()
+            self._log("📋 Сворачивание в tray — копитрейдер продолжает работу", "info")
+            return
+        self._real_quit()
+
+    def _real_quit(self):
+        if self._trader and self._trader.is_running():
+            self._stop()
+        if self._tray_icon:
+            self._tray_icon.stop()
+            self._tray_icon = None
+        self._save_config()
+        self.destroy()
+
+
+_MUTEX_NAME = "FTHTradeCopier_SingleInstance"
+
+
+def _activate_existing():
+    user32 = ctypes.windll.user32
+    hwnd = user32.FindWindowW(None, "FTH Trade Copier")
+    if hwnd:
+        user32.ShowWindow(hwnd, 9)
+        user32.SetForegroundWindow(hwnd)
+        return True
+    return False
+
+
+if __name__ == "__main__":
+    # Must run BEFORE any Tk window is created so Windows doesn't bitmap-scale us.
+    ui_scaling.enable_dpi_awareness()
+    mutex = ctypes.windll.kernel32.CreateMutexW(None, False, _MUTEX_NAME)
+    already_exists = ctypes.windll.kernel32.GetLastError() == 183
+    if already_exists:
+        _activate_existing()
+        sys.exit(0)
+    app = App()
+    app.mainloop()
