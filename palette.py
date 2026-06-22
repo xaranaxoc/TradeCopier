@@ -745,22 +745,34 @@ def apply_ttk_styles(
         borderwidth=0,
         relief="flat",
     )
-    # Heading: light slate band, 9pt bold label colour, 12/10 padding.
+    # Heading: flush with the card body (BG_ROW) so the table reads as
+    # part of the rounded card instead of a discrete grey-banded widget.
+    # 9pt regular tracks the secondary FG_LABEL colour used by the slave
+    # card's column labels (see _build_slaves_soft) so both sections share
+    # the same heading idiom.  12/12 padding gives the heading row the
+    # same vertical breathing room as the body rows (rowheight 32).
     style.configure(
         "T.Treeview.Heading",
-        background=pal.BG_ROW_HOVER,
+        background=pal.BG_ROW,
         foreground=pal.FG_LABEL,
-        font=("Segoe UI", 9, "bold"),
+        font=("Segoe UI", 9, "normal"),
         borderwidth=0,
         relief="flat",
-        padding=(12, 10),
+        padding=(12, 12),
     )
     style.map(
         "T.Treeview",
         background=[("selected", pal.ACCENT)],
         foreground=[("selected", pal.ACCENT_FG)],
     )
-    style.map("T.Treeview.Heading", background=[("active", pal.BG_ROW_HOVER)])
+    # Heading must NOT highlight on hover/active — it's a label, not a
+    # control. Override the clam theme's default hover tint by pinning
+    # the active background to the same BG_ROW colour.
+    style.map(
+        "T.Treeview.Heading",
+        background=[("active", pal.BG_ROW)],
+        foreground=[("active", pal.FG_LABEL)],
+    )
 
     # Notebook (bottom tabs: Сделки / Лог)
     style.configure("TNotebook", background=pal.BG_ROW, borderwidth=0, relief="flat")
