@@ -383,6 +383,7 @@ class CopyTrader:
         if self._thread and self._thread.is_alive():
             return
         self._stop_event.clear()
+        self._start_tickets = set()
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
 
@@ -710,6 +711,8 @@ class CopyTrader:
 
             master_positions = mt5.positions_get() or []
             master_orders = mt5.orders_get() or []
+            if not hasattr(self, '_start_tickets'):
+                self._start_tickets = {str(p.ticket) for p in master_positions}
         finally:
             mt5.shutdown()
 
@@ -915,6 +918,8 @@ class CopyTrader:
 
         # Новые позиции (есть у мастера, нет в state для этого слейва)
         for ticket_str, pos in master_pos_map.items():
+            if ticket_str in getattr(self, '_start_tickets', set()):
+                continue
             already_copied = ticket_str in state_pos and sid in state_pos[ticket_str]
             if already_copied:
                 continue
