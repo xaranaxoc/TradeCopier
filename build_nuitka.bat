@@ -85,6 +85,11 @@ if %errorlevel% neq 0 (
 )
 
 echo.
+echo [3b/4] Копирование MetaTrader5 __init__.py...
+if not exist "dist\gui.dist\MetaTrader5" mkdir "dist\gui.dist\MetaTrader5"
+copy /Y "%MT5_DIR%\__init__.py" "dist\gui.dist\MetaTrader5\__init__.py" >nul
+
+echo.
 echo [4/4] Переименование папки...
 if exist "dist\FTHTradeCopier" rmdir /s /q "dist\FTHTradeCopier"
 rename "dist\gui.dist" "FTHTradeCopier"
