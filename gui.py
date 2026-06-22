@@ -1554,7 +1554,11 @@ class TradesTable(tk.Frame):
         self.tree.tag_configure("err", background=p.RED_GLOW, foreground=p.FG)
         self.tree.tag_configure("warn", background=p.TINT_ORANGE, foreground=p.FG)
         self.tree.tag_configure("even", background=p.BG_ROW, foreground=p.FG)
-        self.tree.tag_configure("odd", background="#FAFBFC", foreground=p.FG)
+        # No alternating stripe — matches the flat slave-card row idiom and
+        # stays theme-aware (the previous hardcoded #FAFBFC bled white into the
+        # dark theme). Even/odd both use BG_ROW so callers can keep tagging
+        # rows "even"/"odd" without a special case.
+        self.tree.tag_configure("odd", background=p.BG_ROW, foreground=p.FG)
         self.tree.tag_configure("hover", background=p.BG_ROW_HOVER, foreground=p.FG)
         self.tree.bind("<Motion>", self._on_motion, add="+")
         self.tree.bind("<Leave>", self._clear_hover, add="+")
@@ -1622,7 +1626,11 @@ class OpenPositionsTable(tk.Frame):
         sb.pack(side="right", fill="y")
         self.tree.pack(side="left", fill="both", expand=True)
         self.tree.tag_configure("even", background=p.BG_ROW, foreground=p.FG)
-        self.tree.tag_configure("odd", background="#FAFBFC", foreground=p.FG)
+        # No alternating stripe — matches the flat slave-card row idiom and
+        # stays theme-aware (the previous hardcoded #FAFBFC bled white into the
+        # dark theme). Even/odd both use BG_ROW so callers can keep tagging
+        # rows "even"/"odd" without a special case.
+        self.tree.tag_configure("odd", background=p.BG_ROW, foreground=p.FG)
         self.tree.tag_configure("hover", background=p.BG_ROW_HOVER, foreground=p.FG)
         self.tree.bind("<Motion>", self._on_motion, add="+")
         self.tree.bind("<Leave>", self._clear_hover, add="+")
