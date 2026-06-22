@@ -268,38 +268,17 @@ class _Tip:
         tw = tk.Toplevel(widget)
         tw.wm_overrideredirect(True)
         tw.wm_attributes("-topmost", True)
-        # Render the body as a rounded CTkFrame card so the tooltip
-        # matches the rest of the app's rounded-corner aesthetic.  The
-        # Toplevel itself is set to a magenta bg that Windows treats as
-        # transparent (``-transparentcolor`` attribute) so the area
-        # outside the card's rounded corners shows through to the
-        # desktop instead of clipping to a rectangle.  On non-Windows
-        # platforms ``-transparentcolor`` raises TclError, and we fall
-        # back to a solid-rectangle tooltip with the same colours.
-        TRANSPARENT_KEY = "#FF00FE"  # avoid common palette colours
-        rounded = False
-        try:
-            tw.wm_attributes("-transparentcolor", TRANSPARENT_KEY)
-            tw.configure(bg=TRANSPARENT_KEY)
-            rounded = True
-        except tk.TclError:
-            tw.configure(bg=p.ACCENT)
+        tw.configure(bg=p.ACCENT)
 
-        if rounded:
-            card = ctk.CTkFrame(
-                tw, fg_color=p.ACCENT,
-                corner_radius=p.RADIUS_MD, border_width=0,
-            )
-            card.pack(padx=0, pady=0)
-            ctk.CTkLabel(
-                card, text=text, text_color=p.ACCENT_FG,
-                font=("Segoe UI", 9), fg_color="transparent",
-            ).pack(padx=10, pady=4)
-        else:
-            tk.Label(
-                tw, text=text, bg=p.ACCENT, fg=p.ACCENT_FG,
-                font=("Segoe UI", 9), padx=8, pady=4,
-            ).pack()
+        card = ctk.CTkFrame(
+            tw, fg_color=p.ACCENT,
+            corner_radius=p.RADIUS_MD, border_width=0,
+        )
+        card.pack(padx=0, pady=0)
+        ctk.CTkLabel(
+            card, text=text, text_color=p.ACCENT_FG,
+            font=("Segoe UI", 9), fg_color="transparent",
+        ).pack(padx=10, pady=4)
 
         tw.update_idletasks()
         tw_w = tw.winfo_width()
