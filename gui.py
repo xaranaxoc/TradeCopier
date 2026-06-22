@@ -60,8 +60,20 @@ import lucide as _lucide
 try:
     import MetaTrader5 as mt5
     _MT5_OK = True
-except ImportError:
+except Exception as _mt5_err:
     _MT5_OK = False
+    _mt5_error_msg = f"{type(_mt5_err).__name__}: {_mt5_err}"
+    try:
+        import traceback as _tb
+        _mt5_error_msg += "\n\n" + _tb.format_exc()
+    except Exception:
+        pass
+    try:
+        os.makedirs(APP_DATA_DIR, exist_ok=True)
+        with open(os.path.join(APP_DATA_DIR, "mt5_import_error.log"), "w", encoding="utf-8") as _f:
+            _f.write(_mt5_error_msg)
+    except Exception:
+        pass
 
 try:
     import pystray

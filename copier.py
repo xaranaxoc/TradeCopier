@@ -11,10 +11,14 @@ from ctypes import wintypes
 from datetime import datetime, date
 from typing import Callable, Dict, Any, Optional
 
-try:
-    import MetaTrader5 as mt5
-except ImportError:
-    mt5 = None
+import sys as _sys
+if 'MetaTrader5' in _sys.modules:
+    mt5 = _sys.modules['MetaTrader5']
+else:
+    try:
+        import MetaTrader5 as mt5
+    except Exception:
+        mt5 = None
 
 try:
     import psutil
