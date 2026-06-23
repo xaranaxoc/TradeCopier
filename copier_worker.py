@@ -1055,7 +1055,14 @@ def slave_worker(slave_cfg: Dict[str, Any], in_q, out_q, control_q,
           • symbol_resolve_cache (resolve_symbol)
           • sym_info_cache       (get_sym_info)
           • rate_cache           (get_currency_rate profit→deposit)
+          • Market Watch + первый тик (symbol_select + symbol_info_tick)
         чтобы hot path копирования больше не делал тяжёлых вызовов.
+
+        Отдельно про symbol_select: индексы вроде Nikkei225/JP225Cash
+        у многих брокеров НЕ входят в Market Watch по умолчанию.
+        Первый symbol_select добавляет символ в Market Watch и ждёт
+        первый тик с сервера — это давало ~2 сек задержки на первой
+        сделке. После прогрева тики уже идут, hot path берёт их мгновенно.
         """
         symbol_map = cfg.get("symbol_map", {}) or {}
         if not symbol_map:
@@ -1066,10 +1073,20 @@ def slave_worker(slave_cfg: Dict[str, Any], in_q, out_q, control_q,
             # бессмыслен; resolve/sym_info всё равно прогреем
             pass
         warmed_rates = set()
+        warmed_symbols = []
         for raw_slave_sym in symbol_map.values():
             slave_sym = resolve_symbol(raw_slave_sym)
             if slave_sym is None:
                 continue
+            # Добавляем в Market Watch и инициируем поток тиков заранее.
+            # Это устраняет «холодный старт» для индексов (Nikkei225 и т.п.),
+            # которые иначе ждут первый тик от сервера в момент сделки.
+            try:
+                mt5.symbol_select(slave_sym, True)
+                mt5.symbol_info_tick(slave_sym)
+            except Exception:
+                pass
+            warmed_symbols.append(slave_sym)
             sym_info = get_sym_info(slave_sym)
             if sym_info is None:
                 continue
@@ -1081,6 +1098,8 @@ def slave_worker(slave_cfg: Dict[str, Any], in_q, out_q, control_q,
                 continue
             warmed_rates.add(key)
             get_currency_rate(profit_curr, deposit_curr)
+        if warmed_symbols:
+            log(f"⚡ [{sname}] прогреты символы: {', '.join(warmed_symbols)}")
         if warmed_rates:
             log(f"⚡ [{sname}] прогрет кэш курсов: {', '.join(sorted(warmed_rates))}")
 
