@@ -4,3 +4,7 @@ dist/
 *.pyc
 __pycache__/
 *.exe
+
+# local diagnostic logs and archived reference copies
+nikkei225 log.txt
+FTHTradeCopier-b849e58d07f2f205713457cd4b9f40e2452cc206/
