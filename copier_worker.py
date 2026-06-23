@@ -329,7 +329,10 @@ def slave_worker(slave_cfg: Dict[str, Any], in_q, out_q, control_q,
     # ── per-worker кэши и состояние ──
     cfg = dict(slave_cfg)
     rate_cache: Dict[str, tuple] = {}
-    rate_ttl = 30.0
+    # Кэш курсов держим долго: на расчёт лота 0.1% дрейф курса за 10 минут
+    # не влияет, зато первый трейд по экзотической паре не платит цену
+    # mt5.symbols_get() (~1-2 сек на терминалах с тысячами символов).
+    rate_ttl = 600.0
     filling_cache: Dict[str, int] = {}
     symbol_resolve_cache: Dict[str, Optional[str]] = {}
     sym_info_cache: Dict[str, Any] = {}
@@ -1041,9 +1044,50 @@ def slave_worker(slave_cfg: Dict[str, Any], in_q, out_q, control_q,
             "status": status,
         })
 
+    def warmup_symbol_map():
+        """Прогрев кэшей по символам из symbol_map.
+
+        Первая копируемая сделка по экзотической паре (например JP225Cash
+        с profit_curr=JPY на USD-аккаунте) платит ~1-2 сек на
+        mt5.symbols_get() внутри get_currency_rate — это видно как
+        задержка копирования. Тут мы заранее, на старте воркера и при
+        hot-reload symbol_map, прогреваем:
+          • symbol_resolve_cache (resolve_symbol)
+          • sym_info_cache       (get_sym_info)
+          • rate_cache           (get_currency_rate profit→deposit)
+        чтобы hot path копирования больше не делал тяжёлых вызовов.
+        """
+        symbol_map = cfg.get("symbol_map", {}) or {}
+        if not symbol_map:
+            return
+        deposit_curr = get_deposit_curr()
+        if not deposit_curr:
+            # аккаунт ещё не отвечает — без валюты депозита прогрев FX
+            # бессмыслен; resolve/sym_info всё равно прогреем
+            pass
+        warmed_rates = set()
+        for raw_slave_sym in symbol_map.values():
+            slave_sym = resolve_symbol(raw_slave_sym)
+            if slave_sym is None:
+                continue
+            sym_info = get_sym_info(slave_sym)
+            if sym_info is None:
+                continue
+            profit_curr = getattr(sym_info, "currency_profit", "") or ""
+            if not (profit_curr and deposit_curr and profit_curr != deposit_curr):
+                continue
+            key = f"{profit_curr}_{deposit_curr}"
+            if key in warmed_rates:
+                continue
+            warmed_rates.add(key)
+            get_currency_rate(profit_curr, deposit_curr)
+        if warmed_rates:
+            log(f"⚡ [{sname}] прогрет кэш курсов: {', '.join(sorted(warmed_rates))}")
+
     # ── основной цикл ──
     try:
         push_state()
+        warmup_symbol_map()
         while True:
             # control
             try:
@@ -1084,6 +1128,10 @@ def slave_worker(slave_cfg: Dict[str, Any], in_q, out_q, control_q,
                     elif t == "config_update":
                         cfg.clear()
                         cfg.update(msg["slave"])
+                        # symbol_map мог измениться — прогреваем кэши
+                        # под новые экзотические пары, чтобы первая сделка
+                        # по новому символу не платила задержку.
+                        warmup_symbol_map()
                     elif t == "stop":
                         log(f"🛑 [{sname}] stop")
                         return
