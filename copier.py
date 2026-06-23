@@ -333,10 +333,24 @@ def get_pending_types():
 
 
 # ─────────────────────────────────────────────────────────────
-#  Основной класс копитрейдера
+#  Основной класс копитрейдера (multiprocess фасад)
 # ─────────────────────────────────────────────────────────────
+import multiprocessing as _mp
+import queue as _queue
+
 
 class CopyTrader:
+    """
+    Фасад над multiprocess-воркерами.
+
+    Архитектура:
+    - master_worker (процесс): держит подключение к мастеру, шлёт diff-события.
+    - slave_worker (процесс per slave): держит подключение, исполняет команды.
+    - orchestrator (поток в main process): принимает события мастера и слейвов,
+      ведёт state.json, рассылает команды слейвам, реализует защиты.
+    - reader (поток в main process): читает log/status/trade события, зовёт колбэки GUI.
+    """
+
     def __init__(
         self,
         config: Dict,
@@ -353,21 +367,53 @@ class CopyTrader:
         self.status_cb = status_callback
         self.trade_cb = trade_callback
 
-        self._stop_event = threading.Event()
-        self._thread: Optional[threading.Thread] = None
         self._lock = threading.Lock()
+        self._state_dirty: bool = False
+
+        # Pause flags по слейвам (для защит)
         self._drawdown_paused: Dict[str, bool] = {}
         self._trades_paused: Dict[str, bool] = {}
         self._daily_loss_paused: Dict[str, bool] = {}
-        self._config_mtime: float = 0.0
-        self._state_dirty: bool = False
+
+        # Кэши legacy (не используются в новом цикле, но оставлены для совместимости
+        # с тестами/одноразовыми операциями)
         self._rate_cache: Dict[str, tuple] = {}
         self._filling_cache: Dict[str, int] = {}
         self._symbol_cache: Dict[str, Optional[str]] = {}
 
         self.state = load_state(state_file)
 
-    # ── Статический метод: поиск ключа в dict без учёта регистра ──
+        # ── multiprocess infra ──
+        self._mp_ctx = None  # type: Optional[Any]
+        self._master_proc: Optional[Any] = None
+        self._slave_procs: Dict[str, Any] = {}  # sid -> Process
+        self._slave_cfg_by_sid: Dict[str, Dict] = {}
+        self._master_event_q = None
+        self._master_control_q = None
+        self._slave_in_qs: Dict[str, Any] = {}      # sid -> Queue (main → slave)
+        self._slave_out_q = None                     # общая очередь slave → main
+        self._slave_control_qs: Dict[str, Any] = {}
+        self._orchestrator_thread: Optional[threading.Thread] = None
+        self._reader_thread: Optional[threading.Thread] = None
+        self._stop_event = threading.Event()
+        self._config_mtime: float = 0.0
+
+        # Снапшот тикетов мастера на старте — НЕ копировать уже открытые позиции
+        self._start_position_tickets: set = set()
+        self._start_order_tickets: set = set()
+        self._snapshot_received = False
+
+        # last known master state
+        self._master_balance: float = 0.0
+        self._master_equity: float = 0.0
+
+        # last known volumes (для partial close detection)
+        self._master_volumes: Dict[str, float] = {}
+
+        # last known slave states
+        self._slave_states: Dict[str, Dict] = {}
+
+    # ── Статический helper ────────────────────────────────────
 
     @staticmethod
     def _sym_lookup(d: Dict[str, Any], key: str) -> Optional[Any]:
@@ -377,25 +423,596 @@ class CopyTrader:
                 return v
         return None
 
+    # ── Логирование / статусы ────────────────────────────────
+
+    def _log(self, msg: str):
+        ts = datetime.now().strftime("%H:%M:%S")
+        try:
+            self.log_cb(f"[{ts}] {msg}")
+        except Exception:
+            pass
+
+    def _status(self, terminal_id: str, status: str,
+                 balance: float = 0, equity: float = 0,
+                 daily_loss: float = 0, daily_loss_limit: float = 0):
+        try:
+            self.status_cb(terminal_id, status, balance, equity, daily_loss, daily_loss_limit)
+        except Exception:
+            pass
+
+    def _trade_event(self, info: Dict):
+        if self.trade_cb:
+            try:
+                self.trade_cb(info)
+            except Exception:
+                pass
+
+    # ── Reload config (stop/start pattern) ───────────────────
+
+    def _reload_config(self):
+        if not self.config_file:
+            return
+        try:
+            mtime = os.path.getmtime(self.config_file)
+            if mtime == self._config_mtime:
+                return
+            self._config_mtime = mtime
+            with open(self.config_file, "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+            if "profiles" in cfg:
+                idx = cfg.get("active_profile", 0)
+                profiles = cfg.get("profiles", [])
+                if idx < len(profiles):
+                    p = profiles[idx]
+                    cfg["master"] = p.get("master", {})
+                    cfg["slaves"] = p.get("slaves", [])
+            with self._lock:
+                old_master = self.config.get("master", {}).get("path", "")
+                self.config = cfg
+                if not self.config.get("master"):
+                    self.config["master"] = {}
+                if not self.config.get("master", {}).get("path"):
+                    self.config["master"]["path"] = old_master
+            # Шлём обновлённый конфиг слейвам (горячий апдейт symbol_map/risk и т.п.)
+            slaves = self.config.get("slaves", [])
+            for s in slaves:
+                sid = s.get("id", s.get("name", ""))
+                if sid in self._slave_in_qs:
+                    try:
+                        self._slave_in_qs[sid].put_nowait({"type": "config_update", "slave": s})
+                        self._slave_cfg_by_sid[sid] = s
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+    # ── Daily counters ───────────────────────────────────────
+
+    def _increment_daily_trade(self, sid: str):
+        today_str = date.today().isoformat()
+        daily: Dict = self.state.setdefault("daily_trades", {})
+        if daily.get("_date") != today_str:
+            daily.clear()
+            daily["_date"] = today_str
+        daily[sid] = daily.get(sid, 0) + 1
+        self._state_dirty = True
+
     # ── Публичный интерфейс ──────────────────────────────────
 
     def start(self):
-        if self._thread and self._thread.is_alive():
+        if self._orchestrator_thread and self._orchestrator_thread.is_alive():
             return
+        if mt5 is None:
+            self._log("❌ MetaTrader5 не установлен")
+            return
+
         self._stop_event.clear()
-        self._start_tickets = set()
-        self._thread = threading.Thread(target=self._run, daemon=True)
-        self._thread.start()
+        self._snapshot_received = False
+        self._start_position_tickets = set()
+        self._start_order_tickets = set()
+        self._master_volumes = {}
+        self._slave_states = {}
+
+        # Используем 'spawn' контекст (по умолчанию на Windows)
+        self._mp_ctx = _mp.get_context("spawn")
+
+        master_path = self.config.get("master", {}).get("path", "")
+        if not master_path:
+            self._log("❌ MASTER: путь не задан")
+            return
+
+        poll_interval = float(self.config.get("poll_interval_seconds", 0.03))
+
+        # ── Очереди ──
+        self._master_event_q = self._mp_ctx.Queue()
+        self._master_control_q = self._mp_ctx.Queue()
+        self._slave_out_q = self._mp_ctx.Queue()
+        self._slave_in_qs = {}
+        self._slave_control_qs = {}
+        self._slave_procs = {}
+        self._slave_cfg_by_sid = {}
+
+        # ── Master process ──
+        from copier_worker import master_worker, slave_worker
+        self._master_proc = self._mp_ctx.Process(
+            target=master_worker,
+            args=(master_path, self._master_event_q, self._master_control_q, poll_interval),
+            daemon=True,
+        )
+        self._master_proc.start()
+
+        # ── Slave processes ──
+        slaves = self.config.get("slaves", [])
+        for s in slaves:
+            if not s.get("enabled", True):
+                continue
+            sid = s.get("id", s.get("name", "?"))
+            in_q = self._mp_ctx.Queue()
+            ctl_q = self._mp_ctx.Queue()
+            proc = self._mp_ctx.Process(
+                target=slave_worker,
+                args=(s, in_q, self._slave_out_q, ctl_q),
+                daemon=True,
+            )
+            self._slave_in_qs[sid] = in_q
+            self._slave_control_qs[sid] = ctl_q
+            self._slave_procs[sid] = proc
+            self._slave_cfg_by_sid[sid] = s
+            proc.start()
+
+        # ── Orchestrator + reader threads ──
+        self._orchestrator_thread = threading.Thread(
+            target=self._orchestrator_loop, daemon=True
+        )
+        self._reader_thread = threading.Thread(
+            target=self._slave_reader_loop, daemon=True
+        )
+        self._orchestrator_thread.start()
+        self._reader_thread.start()
+
+        self._log(f"🚀 Запущено: мастер + {len(self._slave_procs)} слейв(а/ов)")
 
     def stop(self):
         self._stop_event.set()
-        if self._thread:
-            self._thread.join(timeout=10)
+
+        # Шлём команды stop
+        try:
+            if self._master_control_q is not None:
+                self._master_control_q.put_nowait({"type": "stop"})
+        except Exception:
+            pass
+        for sid, ctl in self._slave_control_qs.items():
+            try:
+                ctl.put_nowait({"type": "stop"})
+            except Exception:
+                pass
+
+        # Ждём процессы
+        if self._master_proc is not None:
+            self._master_proc.join(timeout=3.0)
+            if self._master_proc.is_alive():
+                try:
+                    self._master_proc.terminate()
+                except Exception:
+                    pass
+        for sid, proc in self._slave_procs.items():
+            proc.join(timeout=3.0)
+            if proc.is_alive():
+                try:
+                    proc.terminate()
+                except Exception:
+                    pass
+
+        # Threads сами завершатся по _stop_event
+        if self._orchestrator_thread is not None:
+            self._orchestrator_thread.join(timeout=2.0)
+        if self._reader_thread is not None:
+            self._reader_thread.join(timeout=2.0)
+
+        # Сохраняем state
         with self._lock:
             save_state(self.state_file, self.state)
 
+        # Очистка ссылок
+        self._master_proc = None
+        self._slave_procs = {}
+        self._slave_in_qs = {}
+        self._slave_control_qs = {}
+        self._master_event_q = None
+        self._master_control_q = None
+        self._slave_out_q = None
+        self._orchestrator_thread = None
+        self._reader_thread = None
+        self._log("🛑 Копитрейдер остановлен")
+
     def is_running(self) -> bool:
-        return self._thread is not None and self._thread.is_alive()
+        return (
+            self._orchestrator_thread is not None
+            and self._orchestrator_thread.is_alive()
+        )
+
+    # ── Reader thread: события от слейвов ────────────────────
+
+    def _slave_reader_loop(self):
+        while not self._stop_event.is_set():
+            try:
+                msg = self._slave_out_q.get(timeout=0.1)
+            except Exception:
+                continue
+            if msg is None:
+                continue
+            t = msg.get("type")
+            try:
+                if t == "log":
+                    self._log(msg["msg"])
+                elif t == "slave_state":
+                    self._handle_slave_state(msg)
+                elif t == "trade_event":
+                    self._trade_event(msg["info"])
+                elif t == "position_opened":
+                    self._handle_position_opened(msg)
+                elif t == "position_closed_ack":
+                    self._handle_position_closed_ack(msg)
+                elif t == "order_placed":
+                    self._handle_order_placed(msg)
+                elif t == "order_cancelled_ack":
+                    pass  # ничего особенного
+            except Exception as e:
+                self._log(f"❌ reader: исключение {e}")
+
+    def _handle_slave_state(self, msg: Dict):
+        sid = msg["sid"]
+        sname = self._slave_cfg_by_sid.get(sid, {}).get("name", sid)
+        self._slave_states[sid] = msg
+        balance = msg.get("balance", 0.0)
+        equity = msg.get("equity", 0.0)
+        status = msg.get("status", "")
+        # Защиты
+        slave_cfg = self._slave_cfg_by_sid.get(sid, {})
+
+        # Drawdown
+        max_dd = slave_cfg.get("max_drawdown", 0)
+        dd_paused = False
+        if max_dd > 0 and balance > 0:
+            dd_pct = (balance - equity) / balance * 100
+            if dd_pct >= max_dd:
+                dd_paused = True
+                if not self._drawdown_paused.get(sid):
+                    self._log(f"🛑 [{sname}] Просадка {dd_pct:.1f}% >= {max_dd}% — копирование приостановлено")
+                    self._drawdown_paused[sid] = True
+                status = f"🔴 #{msg.get('login', '?')} просадка {dd_pct:.1f}%"
+            else:
+                if self._drawdown_paused.get(sid):
+                    self._log(f"✅ [{sname}] Просадка {dd_pct:.1f}% < {max_dd}% — копирование возобновлено")
+                    self._drawdown_paused[sid] = False
+
+        # Daily trades limit
+        max_trades = slave_cfg.get("max_trades_per_day", 0)
+        trades_paused = False
+        if max_trades > 0:
+            today_str = date.today().isoformat()
+            daily: Dict = self.state.setdefault("daily_trades", {})
+            if daily.get("_date") != today_str:
+                daily.clear()
+                daily["_date"] = today_str
+            today_count = daily.get(sid, 0)
+            if today_count >= max_trades:
+                trades_paused = True
+                if not self._trades_paused.get(sid):
+                    self._log(f"🛑 [{sname}] Лимит сделок {today_count}/{max_trades} — копирование приостановлено")
+                    self._trades_paused[sid] = True
+            else:
+                if self._trades_paused.get(sid):
+                    self._log(f"✅ [{sname}] Лимит сделок {today_count}/{max_trades} — копирование возобновлено")
+                    self._trades_paused[sid] = False
+
+        # Daily loss
+        daily_loss_limit = slave_cfg.get("daily_loss_limit", 0)
+        daily_loss = 0.0
+        loss_paused = False
+        if daily_loss_limit > 0 and balance > 0:
+            today_str = date.today().isoformat()
+            dl_state: Dict = self.state.setdefault("daily_loss_balance", {})
+            if dl_state.get("_date") != today_str:
+                if dl_state.get("_date"):
+                    self._log(f"🔄 [{sname}] Новый день — сброс дневного убытка")
+                    if self._daily_loss_paused.get(sid):
+                        self._log(f"✅ [{sname}] Лимит убытка снят — копирование возобновлено")
+                dl_state.clear()
+                dl_state["_date"] = today_str
+                self._daily_loss_paused.pop(sid, None)
+            if sid not in dl_state:
+                dl_state[sid] = balance
+                self._state_dirty = True
+            start_bal = dl_state.get(sid, balance)
+            daily_loss = max(0.0, start_bal - equity)
+            if daily_loss >= daily_loss_limit:
+                loss_paused = True
+                if not self._daily_loss_paused.get(sid):
+                    self._log(f"🛑 [{sname}] Дневной убыток ${daily_loss:.2f} >= ${daily_loss_limit:.2f} — закрываем все позиции")
+                    # Команда слейв-воркеру: закрыть всё
+                    in_q = self._slave_in_qs.get(sid)
+                    if in_q is not None:
+                        try:
+                            in_q.put_nowait({"type": "close_all"})
+                        except Exception:
+                            pass
+                    self._daily_loss_paused[sid] = True
+                status = f"🔴 #{msg.get('login', '?')} убыток ${daily_loss:.2f}"
+
+        # Сохраним флаги для orchestrator
+        self._slave_states[sid]["_dd_paused"] = dd_paused
+        self._slave_states[sid]["_trades_paused"] = trades_paused
+        self._slave_states[sid]["_loss_paused"] = loss_paused
+
+        self._status(sname, status, balance, equity, daily_loss, daily_loss_limit)
+
+    def _is_paused(self, sid: str) -> bool:
+        st = self._slave_states.get(sid, {})
+        return bool(st.get("_dd_paused") or st.get("_trades_paused") or st.get("_loss_paused"))
+
+    def _handle_position_opened(self, msg: Dict):
+        if not msg.get("ok"):
+            return
+        sid = msg["sid"]
+        master_ticket = msg["master_ticket"]
+        slave_ticket = msg["slave_ticket"]
+        with self._lock:
+            state_pos = self.state.setdefault("positions", {})
+            if master_ticket not in state_pos:
+                state_pos[master_ticket] = {}
+            state_pos[master_ticket][sid] = slave_ticket
+            self._state_dirty = True
+            self._increment_daily_trade(sid)
+
+    def _handle_position_closed_ack(self, msg: Dict):
+        sid = msg["sid"]
+        master_ticket = msg["master_ticket"]
+        with self._lock:
+            state_pos = self.state.setdefault("positions", {})
+            if master_ticket in state_pos:
+                state_pos[master_ticket].pop(sid, None)
+                if not state_pos[master_ticket]:
+                    state_pos.pop(master_ticket, None)
+                self._state_dirty = True
+
+    def _handle_order_placed(self, msg: Dict):
+        if not msg.get("ok"):
+            return
+        sid = msg["sid"]
+        master_ticket = msg["master_ticket"]
+        slave_ticket = msg["slave_ticket"]
+        with self._lock:
+            state_ord = self.state.setdefault("orders", {})
+            if master_ticket not in state_ord:
+                state_ord[master_ticket] = {}
+            state_ord[master_ticket][sid] = slave_ticket
+            self._state_dirty = True
+            self._increment_daily_trade(sid)
+
+    # ── Orchestrator thread: события от мастера ──────────────
+
+    def _orchestrator_loop(self):
+        last_state_save = time.time()
+        last_config_check = time.time()
+
+        while not self._stop_event.is_set():
+            # Periodic: state save + config reload
+            now = time.time()
+            if now - last_state_save >= 2.0:
+                last_state_save = now
+                if self._state_dirty:
+                    with self._lock:
+                        save_state(self.state_file, self.state)
+                        self._state_dirty = False
+            if now - last_config_check >= 5.0:
+                last_config_check = now
+                # горячий reload symbol_map / risk — без рестарта процессов
+                self._reload_config()
+
+            # События от мастера
+            try:
+                msg = self._master_event_q.get(timeout=0.05)
+            except Exception:
+                continue
+            if msg is None:
+                continue
+            t = msg.get("type")
+            try:
+                if t == "snapshot":
+                    self._handle_master_snapshot(msg)
+                elif t == "master_state":
+                    self._handle_master_state(msg)
+                elif t == "position_new":
+                    self._handle_master_position_new(msg["pos"])
+                elif t == "position_closed":
+                    self._handle_master_position_closed(msg["ticket"])
+                elif t == "position_modified":
+                    self._handle_master_position_modified(msg)
+                elif t == "order_new":
+                    self._handle_master_order_new(msg["order"])
+                elif t == "order_gone":
+                    self._handle_master_order_gone(msg)
+                elif t == "log":
+                    self._log(msg["msg"])
+            except Exception as e:
+                self._log(f"❌ orchestrator: исключение {e}")
+
+    def _handle_master_snapshot(self, msg: Dict):
+        self._start_position_tickets = set(msg.get("position_tickets", []))
+        self._start_order_tickets = set(msg.get("order_tickets", []))
+        self._snapshot_received = True
+        self._log(
+            f"📸 MASTER snapshot: {len(self._start_position_tickets)} позиций, "
+            f"{len(self._start_order_tickets)} ордеров (не копируются)"
+        )
+
+    def _handle_master_state(self, msg: Dict):
+        self._master_balance = msg.get("balance", 0.0)
+        self._master_equity = msg.get("equity", 0.0)
+        login = msg.get("login", 0)
+        trade_allowed = msg.get("trade_allowed", True)
+        if trade_allowed:
+            status = f"🟢 #{login} ${self._master_balance:.2f}"
+        else:
+            status = f"⚠️ #{login} алготрейдинг ВЫКЛ (только чтение)"
+        self._status("master", status, self._master_balance, self._master_equity)
+
+    def _master_symbol_in_any_map(self, symbol: str) -> bool:
+        """Хотя бы один включённый слейв имеет этот символ в маппинге?"""
+        for sid, cfg in self._slave_cfg_by_sid.items():
+            sm = cfg.get("symbol_map", {})
+            if self._sym_lookup(sm, symbol) is not None:
+                return True
+        return False
+
+    def _fanout(self, message: Dict, master_symbol: str):
+        """Разослать команду всем включённым слейвам, у которых символ в маппинге и которые не на паузе."""
+        for sid, cfg in self._slave_cfg_by_sid.items():
+            if not cfg.get("enabled", True):
+                continue
+            sm = cfg.get("symbol_map", {})
+            if self._sym_lookup(sm, master_symbol) is None:
+                continue
+            if self._is_paused(sid):
+                continue
+            in_q = self._slave_in_qs.get(sid)
+            if in_q is None:
+                continue
+            try:
+                in_q.put_nowait(message)
+            except Exception:
+                pass
+
+    def _fanout_by_state(self, message_factory, master_ticket: str, state_key: str):
+        """
+        Разослать команду только тем слейвам, которые открыли копию этого master_ticket.
+        state_key: 'positions' или 'orders'.
+        message_factory(slave_ticket) -> dict
+        """
+        with self._lock:
+            mapping = dict(self.state.get(state_key, {}).get(master_ticket, {}))
+        for sid, slave_ticket in mapping.items():
+            in_q = self._slave_in_qs.get(sid)
+            if in_q is None:
+                continue
+            try:
+                in_q.put_nowait(message_factory(slave_ticket))
+            except Exception:
+                pass
+
+    def _handle_master_position_new(self, pos: Dict):
+        ticket = pos["ticket"]
+        # запоминаем объём для partial close detection
+        self._master_volumes[ticket] = pos["volume"]
+
+        # Не копировать стартовые позиции
+        if ticket in self._start_position_tickets:
+            return
+
+        # Может быть это ордер, который сработал — проверим state.orders
+        with self._lock:
+            order_state = self.state.get("orders", {}).get(ticket)
+        if order_state:
+            # Ордер сработал → позиция уже открыта на слейвах от ордера.
+            # Переносим в positions и удаляем из orders.
+            with self._lock:
+                state_pos = self.state.setdefault("positions", {})
+                state_pos[ticket] = dict(order_state)
+                self.state.get("orders", {}).pop(ticket, None)
+                self._state_dirty = True
+            self._log(f"✅ Ордер #{ticket} сработал → позиция")
+            return
+
+        # Уже скопирован?
+        with self._lock:
+            already = ticket in self.state.get("positions", {})
+        if already:
+            return
+
+        # Fanout: open_position для каждого подходящего слейва
+        self._fanout({"type": "open_position", "master_pos": pos}, pos["symbol"])
+
+    def _handle_master_position_closed(self, ticket: str):
+        self._master_volumes.pop(ticket, None)
+        if ticket in self._start_position_tickets:
+            self._start_position_tickets.discard(ticket)
+            return
+        # Fanout close по всем слейвам, у которых эта позиция открыта
+        self._fanout_by_state(
+            lambda st, mt=ticket: {"type": "close_position", "master_ticket": mt, "slave_ticket": st},
+            ticket, "positions",
+        )
+
+    def _handle_master_position_modified(self, msg: Dict):
+        ticket = msg["ticket"]
+        new_volume = msg["volume"]
+        old_volume = msg.get("old_volume", new_volume)
+
+        # Partial close detection
+        if old_volume > 0 and new_volume < old_volume - 1e-9:
+            ratio = new_volume / old_volume
+            self._fanout_by_state(
+                lambda st, mt=ticket, r=ratio: {
+                    "type": "partial_close", "master_ticket": mt,
+                    "slave_ticket": st, "ratio": r,
+                },
+                ticket, "positions",
+            )
+            self._master_volumes[ticket] = new_volume
+            return
+
+        # SL/TP modification
+        master_data = {
+            "sl": msg["sl"],
+            "tp": msg["tp"],
+            "price_open": msg["price_open"],
+            "type": msg["ptype"],
+            "symbol": msg["symbol"],
+        }
+        self._fanout_by_state(
+            lambda st, mt=ticket, md=master_data: {
+                "type": "modify_position", "master_ticket": mt,
+                "slave_ticket": st, "master": md,
+            },
+            ticket, "positions",
+        )
+        self._master_volumes[ticket] = new_volume
+
+    def _handle_master_order_new(self, order: Dict):
+        ticket = order["ticket"]
+        # отложенный?
+        pending_types = get_pending_types()
+        if pending_types and order["type"] not in pending_types:
+            return
+        if ticket in self._start_order_tickets:
+            return
+        with self._lock:
+            already = ticket in self.state.get("orders", {})
+        if already:
+            return
+        self._fanout({"type": "place_order", "master_order": order}, order["symbol"])
+
+    def _handle_master_order_gone(self, msg: Dict):
+        ticket = msg["ticket"]
+        became_position = msg.get("became_position", False)
+        if ticket in self._start_order_tickets:
+            self._start_order_tickets.discard(ticket)
+            return
+        if became_position:
+            # Ордер сработал — будет обработан в _handle_master_position_new
+            return
+        # Ордер отменён — отменяем у слейвов
+        self._fanout_by_state(
+            lambda st, mt=ticket: {"type": "cancel_order", "master_ticket": mt, "slave_ticket": st},
+            ticket, "orders",
+        )
+        # Удалить запись из orders
+        with self._lock:
+            self.state.get("orders", {}).pop(ticket, None)
+            self._state_dirty = True
+
+    # ── Синхронные операции (test_trade, close_all_positions) ──
 
     def test_trade(self, slave_cfg: Dict, full_config: Dict):
         """Тест копирования: пробует ВСЕ символы из маппинга, открывает BUY мин.лотом и сразу закрывает."""
@@ -614,857 +1231,3 @@ class CopyTrader:
         finally:
             mt5.shutdown()
 
-    # ── Логирование ──────────────────────────────────────────
-
-    def _log(self, msg: str):
-        ts = datetime.now().strftime("%H:%M:%S")
-        self.log_cb(f"[{ts}] {msg}")
-
-    def _status(self, terminal_id: str, status: str,
-                 balance: float = 0, equity: float = 0,
-                 daily_loss: float = 0, daily_loss_limit: float = 0):
-        self.status_cb(terminal_id, status, balance, equity, daily_loss, daily_loss_limit)
-
-    def _trade_event(self, info: Dict):
-        if self.trade_cb:
-            self.trade_cb(info)
-
-    def _reload_config(self):
-        if not self.config_file:
-            return
-        try:
-            mtime = os.path.getmtime(self.config_file)
-            if mtime == self._config_mtime:
-                return
-            self._config_mtime = mtime
-            with open(self.config_file, "r", encoding="utf-8") as f:
-                cfg = json.load(f)
-            if "profiles" in cfg:
-                idx = cfg.get("active_profile", 0)
-                profiles = cfg.get("profiles", [])
-                if idx < len(profiles):
-                    p = profiles[idx]
-                    cfg["master"] = p.get("master", {})
-                    cfg["slaves"] = p.get("slaves", [])
-            with self._lock:
-                old_master = self.config.get("master", {}).get("path", "")
-                self.config = cfg
-                if not self.config.get("master"):
-                    self.config["master"] = {}
-                if not self.config.get("master", {}).get("path"):
-                    self.config["master"]["path"] = old_master
-        except Exception:
-            pass
-
-    # ── Инкремент дневного счётчика сделок ───────────────────
-
-    def _increment_daily_trade(self, sid: str):
-        today_str = date.today().isoformat()
-        daily: Dict = self.state.setdefault("daily_trades", {})
-        if daily.get("_date") != today_str:
-            daily.clear()
-            daily["_date"] = today_str
-        daily[sid] = daily.get(sid, 0) + 1
-        self._state_dirty = True
-
-    # ── Основной цикл ────────────────────────────────────────
-
-    def _run(self):
-        while not self._stop_event.is_set():
-            try:
-                self._reload_config()
-                self._cycle()
-            except Exception as e:
-                self._log(f"❌ Критическая ошибка цикла: {e}")
-            self._stop_event.wait(self.config.get("poll_interval_seconds", 0.2))
-
-    def _cycle(self):
-        if mt5 is None:
-            self._log("❌ Библиотека MetaTrader5 не установлена")
-            self._stop_event.wait(5)
-            return
-
-        master_cfg = self.config.get("master", {})
-        master_path = master_cfg.get("path", "")
-
-        # ── Подключение к мастеру ────────────────────────────
-        if not master_path:
-            self._status("master", "🔴 Путь не задан")
-            return
-
-        ok = mt5.initialize(path=master_path)
-        if not ok:
-            self._status("master", "🔴 Терминал не подключен")
-            return
-
-        try:
-            acc = mt5.account_info()
-            if acc is None:
-                self._status("master", "🔴 Нет данных аккаунта")
-                return
-            self._status("master", f"🟢 #{acc.login} ${acc.balance:.2f}",
-                         acc.balance, acc.equity)
-
-            ti = mt5.terminal_info()
-            if ti and not ti.trade_allowed:
-                self._log("⚠️ Мастер: Алготрейдинг ВЫКЛ — чтение работает, но для торговли на слейвах тоже включите")
-
-            master_positions = mt5.positions_get() or []
-            master_orders = mt5.orders_get() or []
-            if not hasattr(self, '_start_tickets'):
-                self._start_tickets = {str(p.ticket) for p in master_positions}
-        finally:
-            mt5.shutdown()
-
-        # ── Обработка каждого слейва ─────────────────────────
-        with self._lock:
-            slaves = self.config.get("slaves", [])
-            for slave in slaves:
-                sid = slave.get("name", slave.get("id", "?"))
-                if not slave.get("enabled", True):
-                    continue
-                try:
-                    self._sync_slave(slave, master_positions, master_orders)
-                except Exception as e:
-                    self._log(f"❌ [{sid}] Ошибка: {e}")
-
-            if self._state_dirty:
-                save_state(self.state_file, self.state)
-                self._state_dirty = False
-
-    # ── Обработка одного слейва (подключение + проверки) ─────
-
-    def _sync_slave(self, slave: Dict, master_positions, master_orders):
-        sid = slave.get("id", "slave")
-        sname = slave.get("name", sid)
-        slave_path = slave.get("path", "")
-        symbol_map: Dict[str, str] = slave.get("symbol_map", {})
-
-        if not slave_path:
-            self._status(sname, "🔴 Путь не задан")
-            return
-
-        ok = mt5.initialize(path=slave_path)
-        if not ok:
-            self._status(sname, "🔴 Не подключен")
-            return
-
-        try:
-            acc = mt5.account_info()
-            if acc is None:
-                self._status(sname, "🔴 Нет аккаунта")
-                return
-
-            ti = mt5.terminal_info()
-            if ti and not ti.trade_allowed:
-                self._status(sname, f"🔴 #{acc.login} Алготрейдинг ВЫКЛ")
-                self._log(f"⚠️ [{sname}] Включите Алготрейдинг (AutoTrading) в терминале!")
-                return
-
-            balance = acc.balance
-            equity = acc.equity
-            self._deposit_curr = acc.currency or ''
-
-            # ── Защита по просадке ────────────────────────────────
-            max_dd = slave.get("max_drawdown", 0)
-            dd_paused = False
-            if max_dd > 0 and balance > 0:
-                dd_pct = (balance - equity) / balance * 100
-                if dd_pct >= max_dd:
-                    dd_paused = True
-                    if not self._drawdown_paused.get(sid):
-                        self._log(
-                            f"🛑 [{sname}] Просадка {dd_pct:.1f}% >= {max_dd}% — "
-                            f"копирование приостановлено"
-                        )
-                        self._drawdown_paused[sid] = True
-                    self._status(sname, f"🔴 #{acc.login} просадка {dd_pct:.1f}%")
-                else:
-                    if self._drawdown_paused.get(sid):
-                        self._log(
-                            f"✅ [{sname}] Просадка {dd_pct:.1f}% < {max_dd}% — "
-                            f"копирование возобновлено"
-                        )
-                        self._drawdown_paused[sid] = False
-
-            # ── Лимит сделок в день ───────────────────────────────
-            max_trades = slave.get("max_trades_per_day", 0)
-            trades_paused = False
-            if max_trades > 0:
-                today_str = date.today().isoformat()
-                daily: Dict = self.state.setdefault("daily_trades", {})
-                if daily.get("_date") != today_str:
-                    daily.clear()
-                    daily["_date"] = today_str
-                today_count = daily.get(sid, 0)
-                if today_count >= max_trades:
-                    trades_paused = True
-                    if not self._trades_paused.get(sid):
-                        self._log(
-                            f"🛑 [{sname}] Лимит сделок {today_count}/{max_trades} — "
-                            f"копирование приостановлено"
-                        )
-                        self._trades_paused[sid] = True
-                else:
-                    if self._trades_paused.get(sid):
-                        self._log(
-                            f"✅ [{sname}] Лимит сделок {today_count}/{max_trades} — "
-                            f"копирование возобновлено"
-                        )
-                        self._trades_paused[sid] = False
-
-            # ── Лимит убытка в день ────────────────────────────────
-            daily_loss_limit = slave.get("daily_loss_limit", 0)
-            loss_paused = False
-            daily_loss = 0
-            if daily_loss_limit > 0 and balance > 0:
-                today_str = date.today().isoformat()
-                dl_state: Dict = self.state.setdefault("daily_loss_balance", {})
-                if dl_state.get("_date") != today_str:
-                    if dl_state.get("_date"):
-                        self._log(
-                            f"🔄 [{sname}] Новый день — сброс дневного убытка "
-                            f"(было: {dl_state.get(sid, '?')})"
-                        )
-                        if self._daily_loss_paused.get(sid):
-                            self._log(
-                                f"✅ [{sname}] Лимит убытка снят — копирование возобновлено"
-                            )
-                    dl_state.clear()
-                    dl_state["_date"] = today_str
-                    self._daily_loss_paused.pop(sid, None)
-                if sid not in dl_state:
-                    dl_state[sid] = balance
-                start_bal = dl_state.get(sid, balance)
-                daily_loss = max(0, start_bal - equity)
-                if daily_loss >= daily_loss_limit:
-                    loss_paused = True
-                    if not self._daily_loss_paused.get(sid):
-                        self._log(
-                            f"🛑 [{sname}] Дневной убыток ${daily_loss:.2f} >= "
-                            f"${daily_loss_limit:.2f} — закрываем все позиции"
-                        )
-                        self._close_positions_inline(sname)
-                        self._daily_loss_paused[sid] = True
-
-            if dd_paused or trades_paused or loss_paused:
-                if not dd_paused and not loss_paused:
-                    self._status(sname, f"🟢 #{acc.login} ${balance:.2f}",
-                                 balance, equity, daily_loss, daily_loss_limit)
-                elif loss_paused:
-                    self._status(sname, f"🔴 #{acc.login} убыток ${daily_loss:.2f}",
-                                 balance, equity, daily_loss, daily_loss_limit)
-                return
-
-            self._status(sname, f"🟢 #{acc.login} ${balance:.2f}",
-                         balance, equity, daily_loss, daily_loss_limit)
-
-            self._sync_positions(slave, sid, sname, symbol_map,
-                                 master_positions, balance)
-            self._sync_orders(slave, sid, sname, symbol_map,
-                              master_orders, master_positions, balance)
-            self._state_dirty = True
-        finally:
-            mt5.shutdown()
-
-    # ── Закрытие всех позиций (подключение уже установлено) ──
-
-    def _close_positions_inline(self, sname: str):
-        positions = mt5.positions_get()
-        if not positions:
-            return
-        closed = 0
-        for pos in positions:
-            tick = mt5.symbol_info_tick(pos.symbol)
-            if tick is None:
-                continue
-            sym_info = mt5.symbol_info(pos.symbol)
-            filling = get_filling_mode(sym_info) if sym_info else mt5.ORDER_FILLING_IOC
-            close_type = opposite_order_type(pos.type)
-            price = tick.bid if close_type == mt5.ORDER_TYPE_SELL else tick.ask
-            if sym_info:
-                price = normalize_price(price, sym_info.digits)
-            request = {
-                "action": mt5.TRADE_ACTION_DEAL,
-                "symbol": pos.symbol,
-                "volume": pos.volume,
-                "type": close_type,
-                "position": pos.ticket,
-                "price": price,
-                "comment": "CT_DAILY_LIMIT",
-                "type_time": mt5.ORDER_TIME_GTC,
-                "type_filling": filling,
-            }
-            result = try_send_order(request, self._log)
-            if result and result.retcode == mt5.TRADE_RETCODE_DONE:
-                closed += 1
-        self._log(f"🔴 [{sname}] Закрыто {closed}/{len(positions)} позиций (лимит убытка)")
-
-    # ── Синхронизация позиций ────────────────────────────────
-
-    def _sync_positions(self, slave, sid, sname, symbol_map,
-                        master_positions, balance):
-        master_pos_map = {
-            str(p.ticket): p
-            for p in master_positions
-            if self._sym_lookup(symbol_map, p.symbol) is not None
-        }
-        master_tickets = set(master_pos_map.keys())
-
-        state_pos: Dict = self.state["positions"]
-
-        all_slave_positions = mt5.positions_get() or []
-        slave_pos_by_ticket = {p.ticket: p for p in all_slave_positions}
-
-        # Новые позиции (есть у мастера, нет в state для этого слейва)
-        for ticket_str, pos in master_pos_map.items():
-            if ticket_str in getattr(self, '_start_tickets', set()):
-                continue
-            already_copied = ticket_str in state_pos and sid in state_pos[ticket_str]
-            if already_copied:
-                continue
-            # Проверяем: не был ли это отложенный ордер
-            if ticket_str in self.state["orders"]:
-                slave_symbol = self._sym_lookup(symbol_map, pos.symbol) or pos.symbol
-                slave_ticket = self._find_slave_position(
-                    sname, slave_symbol, ticket_str)
-                if slave_ticket is None:
-                    slave_ticket_old = self.state["orders"][ticket_str].get(sid)
-                    if slave_ticket_old:
-                        if slave_ticket_old in slave_pos_by_ticket:
-                            slave_ticket = slave_ticket_old
-                if slave_ticket:
-                    if ticket_str not in state_pos:
-                        state_pos[ticket_str] = {}
-                    state_pos[ticket_str][sid] = slave_ticket
-                    self._log(f"✅ [{sname}] Ордер #{ticket_str} сработал → позиция #{slave_ticket}")
-                # Удаляем из orders
-                if ticket_str in self.state["orders"]:
-                    del self.state["orders"][ticket_str]
-            else:
-                # Новая рыночная позиция
-                slave_ticket = self._open_position(slave, sid, sname,
-                                                   symbol_map, pos, balance)
-                if slave_ticket:
-                    if ticket_str not in state_pos:
-                        state_pos[ticket_str] = {}
-                    state_pos[ticket_str][sid] = slave_ticket
-                    self._increment_daily_trade(sid)
-
-        # Закрытые позиции (есть в state, нет у мастера)
-        closed = [t for t in list(state_pos.keys()) if t not in master_tickets]
-        for ticket_str in closed:
-            slave_ticket = state_pos[ticket_str].get(sid)
-            if slave_ticket:
-                self._close_position(sname, ticket_str, slave_ticket)
-            # Удаляем запись для этого слейва
-            if sid in state_pos.get(ticket_str, {}):
-                del state_pos[ticket_str][sid]
-            # Если для этого мастер-тикета больше нет слейвов — удаляем запись
-            if not state_pos.get(ticket_str):
-                state_pos.pop(ticket_str, None)
-
-        # ── SL/TP модификация на существующих позициях ─────────────
-        sym_info_cache: Dict[str, Any] = {}
-        for ticket_str, master_pos in master_pos_map.items():
-            slave_ticket = state_pos.get(ticket_str, {}).get(sid)
-            if not slave_ticket:
-                continue
-            slave_pos = slave_pos_by_ticket.get(slave_ticket)
-            if not slave_pos:
-                continue
-
-            if slave_pos.symbol not in sym_info_cache:
-                sym_info_cache[slave_pos.symbol] = mt5.symbol_info(slave_pos.symbol)
-            sym_info = sym_info_cache[slave_pos.symbol]
-            if not sym_info:
-                continue
-            digits = sym_info.digits
-
-            new_sl = 0.0
-            new_tp = 0.0
-            need_modify = False
-
-            if master_pos.sl != 0.0:
-                sl_pct = abs(master_pos.price_open - master_pos.sl) / master_pos.price_open
-                if master_pos.type == 0:  # BUY
-                    new_sl = normalize_price(slave_pos.price_open * (1 - sl_pct), digits)
-                else:
-                    new_sl = normalize_price(slave_pos.price_open * (1 + sl_pct), digits)
-                if abs(new_sl - slave_pos.sl) > sym_info.trade_tick_size:
-                    need_modify = True
-            else:
-                if slave_pos.sl != 0.0:
-                    new_sl = 0.0
-                    need_modify = True
-
-            if master_pos.tp != 0.0:
-                tp_pct = abs(master_pos.price_open - master_pos.tp) / master_pos.price_open
-                if master_pos.type == 0:  # BUY
-                    new_tp = normalize_price(slave_pos.price_open * (1 + tp_pct), digits)
-                else:
-                    new_tp = normalize_price(slave_pos.price_open * (1 - tp_pct), digits)
-                if abs(new_tp - slave_pos.tp) > sym_info.trade_tick_size:
-                    need_modify = True
-            else:
-                if slave_pos.tp != 0.0:
-                    new_tp = 0.0
-                    need_modify = True
-
-            if need_modify:
-                self._modify_position(sname, slave_pos, new_sl, new_tp, sym_info)
-
-            # ── Partial close: объём мастера уменьшился ──────────────
-            if state_pos.get(ticket_str, {}).get("_master_vol"):
-                old_vol = state_pos[ticket_str]["_master_vol"]
-                if master_pos.volume < old_vol - 0.0001:
-                    ratio = master_pos.volume / old_vol
-                    slave_vol_to_close = slave_pos.volume * (1 - ratio)
-                    vol_step = sym_info.volume_step
-                    if vol_step > 0:
-                        slave_vol_to_close = round(slave_vol_to_close / vol_step) * vol_step
-                    slave_vol_to_close = max(sym_info.volume_min, slave_vol_to_close)
-                    new_slave_vol = slave_pos.volume - slave_vol_to_close
-                    if new_slave_vol < sym_info.volume_min:
-                        slave_vol_to_close = slave_pos.volume
-                        new_slave_vol = 0.0
-                    if slave_vol_to_close >= sym_info.volume_min:
-                        self._partial_close(sname, slave_pos, slave_vol_to_close,
-                                            master_ticket_str=ticket_str)
-                        self._log(
-                            f"📝 [{sname}] Частичное закрытие #{slave_pos.ticket} "
-                            f"vol={slave_vol_to_close:.2f} (мастер {old_vol}→{master_pos.volume})"
-                        )
-            state_pos.setdefault(ticket_str, {})["_master_vol"] = master_pos.volume
-
-    # ── Синхронизация ордеров ────────────────────────────────
-
-    def _sync_orders(self, slave, sid, sname, symbol_map,
-                     master_orders, master_positions, balance):
-        pending_types = get_pending_types()
-
-        master_ord_map = {
-            str(o.ticket): o
-            for o in master_orders
-            if self._sym_lookup(symbol_map, o.symbol) is not None
-            and o.type in pending_types
-        }
-        master_ord_tickets = set(master_ord_map.keys())
-
-        master_pos_tickets = {str(p.ticket) for p in master_positions}
-
-        state_ord: Dict = self.state["orders"]
-
-        # Новые ордера
-        for ticket_str, order in master_ord_map.items():
-            already_copied = ticket_str in state_ord and sid in state_ord[ticket_str]
-            if already_copied:
-                continue
-            slave_ticket = self._place_order(slave, sid, sname,
-                                             symbol_map, order, balance)
-            if slave_ticket:
-                if ticket_str not in state_ord:
-                    state_ord[ticket_str] = {}
-                state_ord[ticket_str][sid] = slave_ticket
-                self._increment_daily_trade(sid)
-
-        # Отменённые/сработавшие ордера
-        gone = [t for t in list(state_ord.keys())
-                if t not in master_ord_tickets]
-        for ticket_str in gone:
-            slave_ticket = state_ord[ticket_str].get(sid)
-            if slave_ticket:
-                if ticket_str in master_pos_tickets:
-                    pass  # Ордер сработал — обработается в sync_positions
-                else:
-                    self._cancel_order(sname, ticket_str, slave_ticket)
-            if sid in state_ord.get(ticket_str, {}):
-                del state_ord[ticket_str][sid]
-            if not state_ord.get(ticket_str):
-                state_ord.pop(ticket_str, None)
-
-    # ── Поиск позиции слейва по комментарию ──────────────────
-
-    def _find_slave_position(self, sname: str, symbol: str,
-                             master_ticket_str: str) -> Optional[int]:
-        comment = f"CT_{master_ticket_str}"
-        positions = mt5.positions_get(symbol=symbol)
-        if positions:
-            for p in positions:
-                if p.comment == comment:
-                    return p.ticket
-        return None
-
-    # ── Открытие позиции на слейве ───────────────────────────
-
-    def _open_position(self, slave, sid, sname, symbol_map,
-                       master_pos, balance) -> Optional[int]:
-        raw_symbol = self._sym_lookup(symbol_map, master_pos.symbol)
-        if not raw_symbol:
-            self._log(f"⚠️ [{sname}] Символ мастера {master_pos.symbol} не в маппинге")
-            return None
-
-        slave_symbol = resolve_symbol(raw_symbol)
-        if slave_symbol is None:
-            self._log(f"⚠️ [{sname}] Символ {raw_symbol} не найден (проверьте регистр)")
-            return None
-
-        if slave_symbol != raw_symbol:
-            self._log(f"ℹ️ [{sname}] Символ {raw_symbol} → {slave_symbol}")
-
-        if not mt5.symbol_select(slave_symbol, True):
-            self._log(f"⚠️ [{sname}] Не удалось добавить {slave_symbol} в Market Watch")
-
-        same_symbol = (slave_symbol == master_pos.symbol)
-
-        sym_info = mt5.symbol_info(slave_symbol)
-        if sym_info is None:
-            self._log(f"⚠️ [{sname}] Символ {slave_symbol} не найден")
-            return None
-
-        if sym_info.trade_mode != mt5.SYMBOL_TRADE_MODE_FULL:
-            self._log(
-                f"⚠️ [{sname}] {slave_symbol} trade_mode={sym_info.trade_mode} — не торгуется"
-            )
-            return None
-
-        # Цена слейва
-        tick = mt5.symbol_info_tick(slave_symbol)
-        if tick is None:
-            self._log(f"⚠️ [{sname}] Нет тика для {slave_symbol}")
-            return None
-
-        if master_pos.type == mt5.ORDER_TYPE_BUY:
-            price = tick.ask
-            order_type = mt5.ORDER_TYPE_BUY
-        else:
-            price = tick.bid
-            order_type = mt5.ORDER_TYPE_SELL
-
-        digits = sym_info.digits
-        price = normalize_price(price, digits)
-
-        # Расчёт лота
-        if master_pos.sl != 0.0:
-            sl_pct = abs(master_pos.price_open - master_pos.sl) / master_pos.price_open
-            sl_distance = price * sl_pct
-            risk_type = slave.get("risk_type", "percent")
-            risk_value = slave.get("risk_value", 1.0)
-            lot = calculate_lot(sym_info, sl_distance, risk_type, risk_value, balance,
-                                getattr(self, '_deposit_curr', ''))
-            profit_curr = getattr(sym_info, 'currency_profit', '') or ''
-            raw_tv = (sym_info.trade_contract_size or 0) * (sym_info.trade_tick_size or 0)
-            self._log(
-                f"📊 [{sname}] lot={lot:.2f} risk={risk_value}{'%' if risk_type == 'percent' else '$'} "
-                f"bal={balance:.2f} SL_dist={sl_distance:.5f} "
-                f"tick_val={sym_info.trade_tick_value} "
-                f"tick_val_loss={sym_info.trade_tick_value_loss} "
-                f"tick_sz={sym_info.trade_tick_size} "
-                f"contract={sym_info.trade_contract_size} "
-                f"profit_curr={profit_curr} "
-                f"raw_tv={raw_tv} "
-                f"filling_mode_flags={sym_info.filling_mode}"
-            )
-            if lot <= 0:
-                lot = slave.get("default_lot", 0.01)
-                self._log(f"⚠️ [{sname}] Расчёт=0, default={lot}")
-        else:
-            lot = slave.get("default_lot", 0.01)
-
-        if self.config.get("min_lot_mode", False):
-            lot = sym_info.volume_min
-            self._log(f"📏 [{sname}] Мин. лот режим: lot={lot}")
-
-        # SL/TP как процент от open price
-        sl = 0.0
-        tp = 0.0
-        if master_pos.sl != 0.0:
-            sl_pct = abs(master_pos.price_open - master_pos.sl) / master_pos.price_open
-            if order_type == mt5.ORDER_TYPE_BUY:
-                sl = normalize_price(price * (1 - sl_pct), digits)
-            else:
-                sl = normalize_price(price * (1 + sl_pct), digits)
-        if master_pos.tp != 0.0:
-            tp_pct = abs(master_pos.price_open - master_pos.tp) / master_pos.price_open
-            if order_type == mt5.ORDER_TYPE_BUY:
-                tp = normalize_price(price * (1 + tp_pct), digits)
-            else:
-                tp = normalize_price(price * (1 - tp_pct), digits)
-
-        request = {
-            "action": mt5.TRADE_ACTION_DEAL,
-            "symbol": slave_symbol,
-            "volume": lot,
-            "type": order_type,
-            "price": price,
-            "sl": sl,
-            "tp": tp,
-            "comment": f"CT_{master_pos.ticket}",
-            "type_time": mt5.ORDER_TIME_GTC,
-            "type_filling": get_filling_mode(sym_info),
-        }
-
-        result = try_send_order(request, self._log)
-        if result is None or result.retcode != mt5.TRADE_RETCODE_DONE:
-            retcode = result.retcode if result else -1
-            comment = result.comment if result else ""
-            self._log(
-                f"❌ [{sname}] Ошибка открытия {slave_symbol} "
-                f"{order_type_name(order_type)} lot={lot:.2f} "
-                f"price={price:.5f} filling={request.get('type_filling')} "
-                f"retcode={retcode} {comment}"
-            )
-            self._trade_event({
-                "time": datetime.now().strftime("%H:%M:%S"),
-                "slave": sname,
-                "symbol": slave_symbol,
-                "direction": order_type_name(order_type),
-                "lot": lot,
-                "master_ticket": str(master_pos.ticket),
-                "slave_ticket": "—",
-                "success": False,
-                "status": f"❌ retcode={retcode} {comment}",
-            })
-            return None
-
-        self._log(
-            f"✅ [{sname}] {slave_symbol} {order_type_name(order_type)} "
-            f"lot={lot:.2f} → #{result.order} (мастер #{master_pos.ticket})"
-        )
-        self._trade_event({
-            "time": datetime.now().strftime("%H:%M:%S"),
-            "slave": sname,
-            "symbol": slave_symbol,
-            "direction": order_type_name(order_type),
-            "lot": lot,
-            "master_ticket": str(master_pos.ticket),
-            "slave_ticket": str(result.order),
-            "success": True,
-            "status": f"✅ Открыт #{result.order}",
-        })
-        return result.order
-
-    # ── Закрытие позиции на слейве ───────────────────────────
-
-    def _close_position(self, sname: str, master_ticket_str: str,
-                        slave_ticket: int):
-        positions = mt5.positions_get(ticket=slave_ticket)
-        if not positions:
-            return
-
-        pos = positions[0]
-        tick = mt5.symbol_info_tick(pos.symbol)
-        if tick is None:
-            return
-
-        close_type = opposite_order_type(pos.type)
-        price = tick.bid if close_type == mt5.ORDER_TYPE_SELL else tick.ask
-
-        sym_info = mt5.symbol_info(pos.symbol)
-        filling = get_filling_mode(sym_info) if sym_info else mt5.ORDER_FILLING_IOC
-        if sym_info:
-            price = normalize_price(price, sym_info.digits)
-
-        request = {
-            "action": mt5.TRADE_ACTION_DEAL,
-            "symbol": pos.symbol,
-            "volume": pos.volume,
-            "type": close_type,
-            "position": slave_ticket,
-            "price": price,
-            "comment": f"CT_close_{master_ticket_str}",
-            "type_time": mt5.ORDER_TIME_GTC,
-            "type_filling": filling,
-        }
-
-        result = try_send_order(request, self._log)
-        if result is None or result.retcode != mt5.TRADE_RETCODE_DONE:
-            retcode = result.retcode if result else -1
-            comment = result.comment if result else ""
-            self._log(
-                f"❌ [{sname}] Ошибка закрытия #{slave_ticket} "
-                f"filling={request.get('type_filling')} retcode={retcode} {comment}"
-            )
-        else:
-            self._log(
-                f"✅ [{sname}] Закрыта позиция #{slave_ticket} "
-                f"(мастер #{master_ticket_str})"
-            )
-
-    # ── Модификация SL/TP на слейве ────────────────────────────
-
-    def _modify_position(self, sname: str, slave_pos, new_sl: float,
-                         new_tp: float, sym_info):
-        request = {
-            "action": mt5.TRADE_ACTION_SLTP,
-            "symbol": slave_pos.symbol,
-            "position": slave_pos.ticket,
-            "volume": slave_pos.volume,
-            "sl": new_sl,
-            "tp": new_tp,
-            "type_time": mt5.ORDER_TIME_GTC,
-            "type_filling": get_filling_mode(sym_info),
-        }
-
-        result = try_send_order(request, self._log)
-        if result is None or result.retcode != mt5.TRADE_RETCODE_DONE:
-            retcode = result.retcode if result else -1
-            self._log(
-                f"⚠️ [{sname}] Ошибка модификации SL/TP #{slave_pos.ticket} "
-                f"retcode={retcode}"
-            )
-        else:
-            self._log(
-                f"📝 [{sname}] SL/TP обновлены #{slave_pos.ticket} "
-                f"SL={new_sl:.{sym_info.digits}f} TP={new_tp:.{sym_info.digits}f}"
-            )
-
-    # ── Частичное закрытие позиции на слейве ──────────────────
-
-    def _partial_close(self, sname: str, slave_pos, close_volume: float,
-                       master_ticket_str: str = ""):
-        tick = mt5.symbol_info_tick(slave_pos.symbol)
-        if tick is None:
-            return
-
-        sym_info = mt5.symbol_info(slave_pos.symbol)
-        close_type = opposite_order_type(slave_pos.type)
-        price = tick.bid if close_type == mt5.ORDER_TYPE_SELL else tick.ask
-        if sym_info:
-            price = normalize_price(price, sym_info.digits)
-
-        filling = get_filling_mode(sym_info) if sym_info else mt5.ORDER_FILLING_IOC
-
-        request = {
-            "action": mt5.TRADE_ACTION_DEAL,
-            "symbol": slave_pos.symbol,
-            "volume": close_volume,
-            "type": close_type,
-            "position": slave_pos.ticket,
-            "price": price,
-            "comment": f"CT_pclose_{master_ticket_str}",
-            "type_time": mt5.ORDER_TIME_GTC,
-            "type_filling": filling,
-        }
-
-        result = try_send_order(request, self._log)
-        if result is None or result.retcode != mt5.TRADE_RETCODE_DONE:
-            retcode = result.retcode if result else -1
-            self._log(f"❌ [{sname}] Ошибка частичного закрытия #{slave_pos.ticket} retcode={retcode}")
-        else:
-            self._log(f"✅ [{sname}] Частичное закрытие #{slave_pos.ticket} vol={close_volume:.2f}")
-
-    # ── Размещение отложенного ордера на слейве ──────────────
-
-    def _place_order(self, slave, sid, sname, symbol_map,
-                     master_order, balance) -> Optional[int]:
-        raw_symbol = self._sym_lookup(symbol_map, master_order.symbol)
-        if not raw_symbol:
-            self._log(f"⚠️ [{sname}] Символ мастера {master_order.symbol} не в маппинге")
-            return None
-
-        slave_symbol = resolve_symbol(raw_symbol)
-        if slave_symbol is None:
-            self._log(f"⚠️ [{sname}] Символ {raw_symbol} не найден (проверьте регистр)")
-            return None
-
-        if slave_symbol != raw_symbol:
-            self._log(f"ℹ️ [{sname}] Символ {raw_symbol} → {slave_symbol}")
-
-        if not mt5.symbol_select(slave_symbol, True):
-            self._log(f"⚠️ [{sname}] Не удалось добавить {slave_symbol} в Market Watch")
-
-        same_symbol = (slave_symbol == master_order.symbol)
-
-        sym_info = mt5.symbol_info(slave_symbol)
-        if sym_info is None:
-            self._log(f"⚠️ [{sname}] Символ {slave_symbol} не найден")
-            return None
-
-        if sym_info.trade_mode != mt5.SYMBOL_TRADE_MODE_FULL:
-            self._log(
-                f"⚠️ [{sname}] {slave_symbol} trade_mode={sym_info.trade_mode} — не торгуется"
-            )
-            return None
-
-        # Расчёт лота
-        if master_order.sl != 0.0 and same_symbol:
-            sl_pct = abs(master_order.price_open - master_order.sl) / master_order.price_open
-            sl_distance = master_order.price_open * sl_pct
-            lot = calculate_lot(
-                sym_info, sl_distance,
-                slave.get("risk_type", "percent"),
-                slave.get("risk_value", 1.0),
-                balance,
-                getattr(self, '_deposit_curr', '')
-            )
-            if lot <= 0:
-                lot = slave.get("default_lot", 0.01)
-        else:
-            lot = slave.get("default_lot", 0.01)
-
-        if self.config.get("min_lot_mode", False):
-            lot = sym_info.volume_min
-
-        digits = sym_info.digits
-        order_price = normalize_price(master_order.price_open, digits)
-        sl = master_order.sl if same_symbol else 0.0
-        tp = master_order.tp if same_symbol else 0.0
-        if sl != 0.0:
-            sl = normalize_price(sl, digits)
-        if tp != 0.0:
-            tp = normalize_price(tp, digits)
-
-        request = {
-            "action": mt5.TRADE_ACTION_PENDING,
-            "symbol": slave_symbol,
-            "volume": lot,
-            "type": master_order.type,
-            "price": order_price,
-            "sl": sl,
-            "tp": tp,
-            "comment": f"CT_{master_order.ticket}",
-            "type_time": mt5.ORDER_TIME_GTC,
-            "type_filling": get_filling_mode(sym_info),
-        }
-
-        result = try_send_order(request, self._log)
-        if result is None or result.retcode != mt5.TRADE_RETCODE_DONE:
-            retcode = result.retcode if result else -1
-            comment = result.comment if result else ""
-            self._log(
-                f"❌ [{sname}] Ошибка ордера {slave_symbol} "
-                f"{order_type_name(master_order.type)} "
-                f"filling={request.get('type_filling')} retcode={retcode} {comment}"
-            )
-            return None
-
-        self._log(
-            f"✅ [{sname}] Ордер {slave_symbol} "
-            f"{order_type_name(master_order.type)} "
-            f"lot={lot:.2f} price={master_order.price_open} "
-            f"→ #{result.order}"
-        )
-        return result.order
-
-    # ── Отмена отложенного ордера на слейве ─────────────────
-
-    def _cancel_order(self, sname: str, master_ticket_str: str,
-                      slave_ticket: int):
-        request = {
-            "action": mt5.TRADE_ACTION_REMOVE,
-            "order": slave_ticket,
-            "comment": f"CT_cancel_{master_ticket_str}",
-        }
-        result = try_send_order(request, self._log)
-        if result is None or result.retcode != mt5.TRADE_RETCODE_DONE:
-            retcode = result.retcode if result else -1
-            self._log(
-                f"❌ [{sname}] Ошибка отмены ордера #{slave_ticket} "
-                f"retcode={retcode}"
-            )
-        else:
-            self._log(
-                f"✅ [{sname}] Отменён ордер #{slave_ticket} "
-                f"(мастер #{master_ticket_str})"
-            )
