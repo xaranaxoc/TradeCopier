@@ -411,7 +411,17 @@ def slave_worker(slave_cfg: Dict[str, Any], in_q, out_q, control_q,
         return names.get(t, str(t))
 
     def get_currency_rate(from_curr: str, to_curr: str) -> float:
-        if not from_curr or not to_curr or from_curr == to_curr:
+        """Return FX rate to convert 1 unit of from_curr → to_curr.
+
+        Returns 1.0 only when currencies match.  Returns 0.0 when the
+        rate cannot be resolved — callers MUST treat 0.0 as "unknown",
+        not as a valid rate.  Returning 1.0 as a silent fallback used
+        to mask broker-suffix issues (e.g. USDJPYrfd on AMarkets) and
+        produced wildly incorrect lot sizes for JPY-quoted symbols.
+        """
+        if not from_curr or not to_curr:
+            return 0.0
+        if from_curr == to_curr:
             return 1.0
         key = f"{from_curr}_{to_curr}"
         now = time.time()
@@ -419,6 +429,7 @@ def slave_worker(slave_cfg: Dict[str, Any], in_q, out_q, control_q,
             val, ts = rate_cache[key]
             if now - ts < rate_ttl:
                 return val
+        # 1) exact pair name (no broker suffix)
         for pair in (from_curr + to_curr, to_curr + from_curr):
             info = mt5.symbol_info(pair)
             if info is None:
@@ -430,7 +441,29 @@ def slave_worker(slave_cfg: Dict[str, Any], in_q, out_q, control_q,
                 val = (1.0 / mid) if pair == to_curr + from_curr else mid
                 rate_cache[key] = (val, now)
                 return val
-        # cross via USD
+        # 2) scan all symbols for any pair carrying both currencies
+        #    (handles broker suffixes like USDJPY.r, USDJPYrfd, USDJPYm)
+        all_symbols = mt5.symbols_get() or ()
+        from_upper = from_curr.upper()
+        to_upper = to_curr.upper()
+        for s in all_symbols:
+            name_upper = s.name.upper()
+            if name_upper.startswith(from_upper) and to_upper in name_upper[len(from_upper):]:
+                mt5.symbol_select(s.name, True)
+                tick = mt5.symbol_info_tick(s.name)
+                if tick and tick.bid > 0:
+                    mid = (tick.bid + tick.ask) / 2
+                    rate_cache[key] = (mid, now)
+                    return mid
+            if name_upper.startswith(to_upper) and from_upper in name_upper[len(to_upper):]:
+                mt5.symbol_select(s.name, True)
+                tick = mt5.symbol_info_tick(s.name)
+                if tick and tick.bid > 0:
+                    mid = (tick.bid + tick.ask) / 2
+                    val = 1.0 / mid
+                    rate_cache[key] = (val, now)
+                    return val
+        # 3) cross via USD (e.g. JPY→EUR = JPY→USD × USD→EUR)
         if from_curr != "USD" and to_curr != "USD":
             r1 = get_currency_rate(from_curr, "USD")
             r2 = get_currency_rate("USD", to_curr)
@@ -438,7 +471,7 @@ def slave_worker(slave_cfg: Dict[str, Any], in_q, out_q, control_q,
                 val = r1 * r2
                 rate_cache[key] = (val, now)
                 return val
-        return 1.0
+        return 0.0
 
     def calculate_lot(sym_info, sl_distance: float, risk_type: str,
                       risk_value: float, balance: float, deposit_curr: str) -> float:
