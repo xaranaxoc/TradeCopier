@@ -4252,6 +4252,11 @@ def _activate_existing():
 
 
 if __name__ == "__main__":
+    # Required for multiprocessing under PyInstaller/Nuitka on Windows.
+    # The 'spawn' start method re-imports the entry module in child processes;
+    # without freeze_support() that would re-launch the GUI inside every worker.
+    import multiprocessing
+    multiprocessing.freeze_support()
     # Must run BEFORE any Tk window is created so Windows doesn't bitmap-scale us.
     ui_scaling.enable_dpi_awareness()
     mutex = ctypes.windll.kernel32.CreateMutexW(None, False, _MUTEX_NAME)
