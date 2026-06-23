@@ -656,22 +656,43 @@ def slave_worker(slave_cfg: Dict[str, Any], in_q, out_q, control_q,
         # расчёт лота
         m_sl = master_pos["sl"]
         m_open = master_pos["price_open"]
+        risk_type = cfg.get("risk_type", "percent")
+        risk_value = cfg.get("risk_value", 1.0)
         if m_sl != 0.0 and m_open != 0.0:
             sl_pct = abs(m_open - m_sl) / m_open
             sl_distance = price * sl_pct
-            lot = calculate_lot(
-                sym_info, sl_distance,
-                cfg.get("risk_type", "percent"),
-                cfg.get("risk_value", 1.0),
+            lot, diag = calculate_lot_with_diag(
+                sym_info, sl_distance, risk_type, risk_value,
                 balance, deposit_curr,
+            )
+            log(
+                f"🔢 [{sname}] {slave_symbol} расчёт лота: "
+                f"risk={risk_type}={risk_value} bal={balance:.2f} {deposit_curr} | "
+                f"profit_curr={sym_info.currency_profit} "
+                f"tvp={diag['tvp']} tvl={diag['tvl']} "
+                f"contract_size={sym_info.trade_contract_size} "
+                f"tick_size={diag['tick_size']} "
+                f"raw_tv={diag['raw_tick_value']:.6f} "
+                f"fx_rate={diag['fx_rate']:.6f} "
+                f"tick_value_used={diag['tick_value']:.6f} | "
+                f"sl_pct={sl_pct*100:.3f}% sl_dist={diag['sl_distance']:.5f} "
+                f"sl_ticks={diag['sl_ticks']:.2f} risk_amount={diag['risk_amount']:.2f} | "
+                f"raw_lot={diag['raw_lot']:.6f} → clamped={diag['clamped_lot']} "
+                f"(min={diag['vol_min']} step={diag['vol_step']}) "
+                f"reason={diag['reason'] or 'ok'}"
             )
             if lot <= 0:
                 lot = cfg.get("default_lot", 0.01)
                 log(f"⚠️ [{sname}] расчёт=0, default={lot}")
         else:
             lot = cfg.get("default_lot", 0.01)
+            log(
+                f"🔢 [{sname}] {slave_symbol} нет SL у мастера "
+                f"(m_sl={m_sl} m_open={m_open}) → default_lot={lot}"
+            )
 
         if cfg.get("min_lot_mode", False):
+            log(f"🔢 [{sname}] min_lot_mode=ON → lot={sym_info.volume_min}")
             lot = sym_info.volume_min
 
         sl = 0.0
