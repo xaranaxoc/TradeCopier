@@ -10,12 +10,9 @@ This module mixes CTk and tk on purpose:
   working without rewriting every call site.
 * Plain tk/ttk widgets are kept where CTk has no equivalent or where
   emulation would change behaviour: `_Tip` (overrideredirect tooltip),
-  the slave table `ttk.Treeview`, `tk.PanedWindow`, `tk.Listbox`,
-  `tk.Text` (log), `tk.Canvas` (status dot in AccountRow), `tk.Menu`,
-  and all `tk.*Var` variables.  The bottom trades/log section used to
-  rely on `ttk.Notebook`; it was replaced with a custom segmented
-  switcher (`_TAB_SPECS` + `_show_tab`) so the section chrome matches
-  the Slave Accounts card.
+  the slave table `ttk.Treeview`, the bottom `ttk.Notebook` tabs,
+  `tk.PanedWindow`, `tk.Listbox`, `tk.Text` (log), `tk.Canvas` (status
+  dot in AccountRow), `tk.Menu`, and all `tk.*Var` variables.
 * `theme.apply_theme()` is called **after** the root `ctk.CTk()` is
   created — calling it earlier raises a TclError inside CTk (this was
   one of the regressions during the previous CTk attempt; see the
@@ -597,21 +594,14 @@ class SlaveDialog(Toplevel):
         SP_SM = 8 # tight padding (was SP_SM=8 — unchanged)
         card = _widgets.Card(self, padding=0)
         card.pack(fill="both", expand=True, padx=SP, pady=SP)
-        # Scrollbar styled to match the Slave Accounts table card
-        # (BORDER track, FG_DIM on hover) so the slider is visible
-        # against the card body on both dark and light themes.
-        # Without scrollbar_button_hover_color the slider stays the
-        # same colour as BG_INPUT on hover, which on the dark NEON_CYAN
-        # theme made it essentially invisible.
         form = ctk.CTkScrollableFrame(card, fg_color="transparent",
-                                      scrollbar_button_color=p.BORDER,
-                                      scrollbar_button_hover_color=p.FG_DIM,
+                                      scrollbar_button_color=p.BG_INPUT,
                                       height=ui_scaling.scale(560))
         form.pack(side="top", fill="both", expand=True)
 
         # ── Section: АККАУНТ ─────────────────────────────
         self._section_title(form, "Аккаунт").pack(
-            anchor="w", padx=SP, pady=(SP_SM, 4),
+            anchor="w", padx=SP, pady=(SP, SP_SM),
         )
 
         frm_top = ctk.CTkFrame(form, fg_color="transparent")
@@ -633,7 +623,7 @@ class SlaveDialog(Toplevel):
         btn_browse_s.pack(side="left", padx=(SP_SM, 0))
         _bind_tip(btn_browse_s, "Выбрать путь к terminal64.exe слейва")
 
-        self._divider(form).pack(fill="x", padx=SP, pady=SP_SM)
+        self._divider(form).pack(fill="x", padx=SP, pady=SP)
 
         # ── Section: СИМВОЛЫ ─────────────────────────────
         sym_header = ctk.CTkFrame(form, fg_color="transparent")
@@ -666,7 +656,7 @@ class SlaveDialog(Toplevel):
         btn_add_sym.pack(anchor="w", padx=SP, pady=(2, 0))
         _bind_tip(btn_add_sym, "Добавить строку маппинга символов")
 
-        self._divider(form).pack(fill="x", padx=SP, pady=SP_SM)
+        self._divider(form).pack(fill="x", padx=SP, pady=SP)
 
         # ── Section: РИСК ──────────────────────────────────
         self._section_title(form, "Риск").pack(
@@ -682,72 +672,70 @@ class SlaveDialog(Toplevel):
         # Compact-numeric width for short money/percent inputs.
         NUM_W = 68
 
-        # 3-column grid: [label] [entry] [inline hint].  Putting the
-        # "0 = выкл" hints in column 2 of the same row as their entry
-        # (instead of on their own row underneath) saves three rows and
-        # ~50 px of vertical space so the whole form fits at the dialog's
-        # minimum height without scrolling.
-        def _hint(text):
-            return ctk.CTkLabel(
-                frm_risk, text=text, text_color=p.FG_DIM,
-                font=("Segoe UI", 9), anchor="w",
-            )
-
-        self._field_label(frm_risk, "Риск %").grid(row=0, column=0, sticky="w", pady=2)
+        self._field_label(frm_risk, "Риск %").grid(row=0, column=0, sticky="w", pady=3)
         self.var_risk_pct = tk.StringVar(
             value=str(risk_value) if risk_type == "percent" else "")
         ent_pct = self._soft_entry(frm_risk, self.var_risk_pct)
         ent_pct.configure(width=NUM_W)
-        ent_pct.grid(row=0, column=1, sticky="w", padx=(SP_SM, 0), pady=2)
+        ent_pct.grid(row=0, column=1, sticky="w", padx=(SP_SM, 0), pady=3)
 
-        self._field_label(frm_risk, "Риск $").grid(row=1, column=0, sticky="w", pady=2)
+        self._field_label(frm_risk, "Риск $").grid(row=1, column=0, sticky="w", pady=3)
         self.var_risk_doll = tk.StringVar(
             value=str(risk_value) if risk_type == "fixed" else "")
         ent_doll = self._soft_entry(frm_risk, self.var_risk_doll)
         ent_doll.configure(width=NUM_W)
-        ent_doll.grid(row=1, column=1, sticky="w", padx=(SP_SM, 0), pady=2)
+        ent_doll.grid(row=1, column=1, sticky="w", padx=(SP_SM, 0), pady=3)
 
         self.lbl_risk_hint = ctk.CTkLabel(
             frm_risk, text="", text_color=p.FG_DIM, font=("Segoe UI", 9),
             anchor="w",
         )
-        self.lbl_risk_hint.grid(row=2, column=0, columnspan=3, sticky="w", pady=(2, 0))
+        self.lbl_risk_hint.grid(row=2, column=0, columnspan=2, sticky="w", pady=(2, 0))
 
         self.var_risk_pct.trace_add("write", lambda *_: self._sync_risk("percent"))
         self.var_risk_doll.trace_add("write", lambda *_: self._sync_risk("fixed"))
 
-        self._field_label(frm_risk, "Лот без SL").grid(row=3, column=0, sticky="w", pady=2)
+        self._field_label(frm_risk, "Лот без SL").grid(row=3, column=0, sticky="w", pady=3)
         self.var_default_lot = tk.StringVar(value=str(data.get("default_lot", "0.01")))
         ent_lot = self._soft_entry(frm_risk, self.var_default_lot)
         ent_lot.configure(width=NUM_W)
-        ent_lot.grid(row=3, column=1, sticky="w", padx=(SP_SM, 0), pady=2)
+        ent_lot.grid(row=3, column=1, sticky="w", padx=(SP_SM, 0), pady=3)
 
-        self._field_label(frm_risk, "Макс. просадка %").grid(row=4, column=0, sticky="w", pady=2)
+        self._field_label(frm_risk, "Макс. просадка %").grid(row=4, column=0, sticky="w", pady=3)
         self.var_max_drawdown = tk.StringVar(value=str(data.get("max_drawdown", 0)))
         ent_dd = self._soft_entry(frm_risk, self.var_max_drawdown)
         ent_dd.configure(width=NUM_W)
-        ent_dd.grid(row=4, column=1, sticky="w", padx=(SP_SM, 0), pady=2)
-        _hint("0 = выкл").grid(row=4, column=2, sticky="w", padx=(SP_SM, 0), pady=2)
+        ent_dd.grid(row=4, column=1, sticky="w", padx=(SP_SM, 0), pady=3)
+        ctk.CTkLabel(
+            frm_risk, text="0 = выкл", text_color=p.FG_DIM,
+            font=("Segoe UI", 9),
+        ).grid(row=5, column=1, sticky="w", padx=(SP_SM, 0))
 
-        self._field_label(frm_risk, "Макс. сделок/день").grid(row=5, column=0, sticky="w", pady=2)
+        self._field_label(frm_risk, "Макс. сделок/день").grid(row=6, column=0, sticky="w", pady=3)
         self.var_max_trades = tk.StringVar(value=str(data.get("max_trades_per_day", 0)))
         ent_trd = self._soft_entry(frm_risk, self.var_max_trades)
         ent_trd.configure(width=NUM_W)
-        ent_trd.grid(row=5, column=1, sticky="w", padx=(SP_SM, 0), pady=2)
-        _hint("0 = выкл").grid(row=5, column=2, sticky="w", padx=(SP_SM, 0), pady=2)
+        ent_trd.grid(row=6, column=1, sticky="w", padx=(SP_SM, 0), pady=3)
+        ctk.CTkLabel(
+            frm_risk, text="0 = выкл", text_color=p.FG_DIM,
+            font=("Segoe UI", 9),
+        ).grid(row=7, column=1, sticky="w", padx=(SP_SM, 0))
 
-        self._field_label(frm_risk, "Макс. убыт/день $").grid(row=6, column=0, sticky="w", pady=2)
+        self._field_label(frm_risk, "Макс. убыт/день $").grid(row=8, column=0, sticky="w", pady=3)
         self.var_daily_loss = tk.StringVar(value=str(data.get("daily_loss_limit", 0)))
         ent_dl = self._soft_entry(frm_risk, self.var_daily_loss)
         ent_dl.configure(width=NUM_W)
-        ent_dl.grid(row=6, column=1, sticky="w", padx=(SP_SM, 0), pady=2)
-        _hint("0 = выкл").grid(row=6, column=2, sticky="w", padx=(SP_SM, 0), pady=2)
+        ent_dl.grid(row=8, column=1, sticky="w", padx=(SP_SM, 0), pady=3)
+        ctk.CTkLabel(
+            frm_risk, text="0 = выкл", text_color=p.FG_DIM,
+            font=("Segoe UI", 9),
+        ).grid(row=9, column=1, sticky="w", padx=(SP_SM, 0))
 
-        self._divider(form).pack(fill="x", padx=SP, pady=SP_SM)
+        self._divider(form).pack(fill="x", padx=SP, pady=SP)
 
         # ── Actions row ────────────────────────────────────
         btn_frame = ctk.CTkFrame(card, fg_color="transparent")
-        btn_frame.pack(side="bottom", fill="x", pady=(0, SP_SM))
+        btn_frame.pack(side="bottom", fill="x", pady=(0, SP))
         btn_save = self._primary_btn(btn_frame, "Сохранить", self._save)
         btn_save.configure(width=140)
         btn_save.pack(side="left", padx=SP_SM)
@@ -1534,7 +1522,7 @@ class AccountRow:
 
 class TradesTable(tk.Frame):
     COLS = ["time", "slave", "symbol", "dir", "lot", "master", "slave_tk", "status"]
-    HEADERS = ["ВРЕМЯ", "СЛЕЙВ", "СИМВОЛ", "\u2191\u2193", "ЛОТ", "МАСТЕР #", "СЛЕЙВ #", "СТАТУС"]
+    HEADERS = ["Время", "Слейв", "Символ", "\u2191\u2193", "Лот", "Мастер #", "Слейв #", "Статус"]
     WIDTHS = [62, 50, 64, 28, 40, 70, 70, 140]
 
     def __init__(self, parent):
@@ -1563,11 +1551,7 @@ class TradesTable(tk.Frame):
         self.tree.tag_configure("err", background=p.RED_GLOW, foreground=p.FG)
         self.tree.tag_configure("warn", background=p.TINT_ORANGE, foreground=p.FG)
         self.tree.tag_configure("even", background=p.BG_ROW, foreground=p.FG)
-        # No alternating stripe — matches the flat slave-card row idiom and
-        # stays theme-aware (the previous hardcoded #FAFBFC bled white into the
-        # dark theme). Even/odd both use BG_ROW so callers can keep tagging
-        # rows "even"/"odd" without a special case.
-        self.tree.tag_configure("odd", background=p.BG_ROW, foreground=p.FG)
+        self.tree.tag_configure("odd", background="#FAFBFC", foreground=p.FG)
         self.tree.tag_configure("hover", background=p.BG_ROW_HOVER, foreground=p.FG)
         self.tree.bind("<Motion>", self._on_motion, add="+")
         self.tree.bind("<Leave>", self._clear_hover, add="+")
@@ -1612,7 +1596,7 @@ class TradesTable(tk.Frame):
 
 class OpenPositionsTable(tk.Frame):
     COLS = ["time", "account", "symbol", "type", "lot"]
-    HEADERS = ["ВРЕМЯ", "АККАУНТ", "СИМВОЛ", "ТИП", "ЛОТ"]
+    HEADERS = ["Время", "Аккаунт", "Символ", "Тип", "Лот"]
     WIDTHS = [60, 90, 70, 40, 50]
 
     def __init__(self, parent):
@@ -1635,11 +1619,7 @@ class OpenPositionsTable(tk.Frame):
         sb.pack(side="right", fill="y")
         self.tree.pack(side="left", fill="both", expand=True)
         self.tree.tag_configure("even", background=p.BG_ROW, foreground=p.FG)
-        # No alternating stripe — matches the flat slave-card row idiom and
-        # stays theme-aware (the previous hardcoded #FAFBFC bled white into the
-        # dark theme). Even/odd both use BG_ROW so callers can keep tagging
-        # rows "even"/"odd" without a special case.
-        self.tree.tag_configure("odd", background=p.BG_ROW, foreground=p.FG)
+        self.tree.tag_configure("odd", background="#FAFBFC", foreground=p.FG)
         self.tree.tag_configure("hover", background=p.BG_ROW_HOVER, foreground=p.FG)
         self.tree.bind("<Motion>", self._on_motion, add="+")
         self.tree.bind("<Leave>", self._clear_hover, add="+")
@@ -2892,74 +2872,32 @@ class App(ctk.CTk):
 
         self._next_row = 1
 
-    # Tab keys + display labels for the bottom card's segmented switcher.
-    # Order in this list = display order of the pills, left-to-right.
-    # "open_pos" comes first because live open positions are the primary
-    # monitoring surface; the trade log + plain log live on secondary tabs.
-    _TAB_SPECS = [
-        ("open_pos", "Текущие сделки"),
-        ("trades",   "Сделки"),
-        ("log",      "Лог"),
-    ]
-
     def _build_tabs_soft(self) -> None:
-        """Build the bottom Trades / Open positions / Log section.
+        """Build the bottom Trades / Log notebook in a Card-shell.
 
-        Replaces the previous ``ttk.Notebook`` with a card-styled
-        segmented switcher so the bottom card matches the Slave Accounts
-        card chrome (rounded ``Card``, pill-style controls, no ttk band).
-
-        Layout::
-
-            [ Сделки ][ Текущие сделки ][ Лог ]   ← switcher (CTkButtons)
-            ┌─ active tab body (table / log) ──────┐
-            │                              │
-            └──────────────────────────────┘
+        The ``ttk.Notebook`` is wrapped in a ``Card`` and added as the
+        bottom child of the PanedWindow created in ``_build_slaves_soft``.
+        ttk Notebook styling is already configured by ``apply_ttk_styles``
+        in palette.py, so we only need the Card chrome and the trade /
+        log children themselves.
         """
         # tk.PanedWindow needs a tk-managed child — wrap in tk.Frame.
         nb_wrap = tk.Frame(self._paned, bg=p.BG_DEEP)
         self._paned.add(nb_wrap, minsize=ui_scaling.scale(80),
                         height=ui_scaling.scale(220))
 
-        # Card-shell — same chrome as the Slave Accounts card.
+        # Card-shell around the notebook for the rounded soft look.
         nb_card = _widgets.Card(nb_wrap, padding=0)
         nb_card.pack(fill="both", expand=True)
 
-        # ── Segmented tab switcher ───────────────────────
-        # Three pill buttons sit at the top of the card.  Padding mirrors
-        # SectionHeader (padx=SPACE_16, pady=(SPACE_16, SPACE_8)) so the
-        # visual rhythm matches the slave card above.
-        switcher = ctk.CTkFrame(nb_card, fg_color="transparent")
-        switcher.pack(fill="x", padx=SPACE_16, pady=(SPACE_16, SPACE_8))
+        self.notebook = ttk.Notebook(nb_card, style="TNotebook")
+        self.notebook.pack(fill="both", expand=True, padx=SPACE_8, pady=SPACE_8)
 
-        self._tab_buttons: Dict[str, ctk.CTkButton] = {}
-        self._tab_frames: Dict[str, tk.Frame] = {}
-        self._active_tab: str = self._TAB_SPECS[0][0]
-
-        for key, label in self._TAB_SPECS:
-            btn = ctk.CTkButton(
-                switcher, text=label,
-                command=lambda k=key: self._show_tab(k),
-                fg_color="transparent",
-                hover_color=p.BG_ROW_HOVER,
-                text_color=p.FG_LABEL,
-                corner_radius=p.RADIUS_MD,
-                height=BTN_HEIGHT,
-                width=0,
-                font=("Segoe UI", 10, "bold"),
-            )
-            btn.pack(side="left", padx=(0, SPACE_8))
-            self._tab_buttons[key] = btn
-
-        # ── Tab body container ──────────────────────────
-        body = tk.Frame(nb_card, bg=p.BG_ROW)
-        body.pack(fill="both", expand=True, padx=SPACE_16, pady=(0, SPACE_16))
-
-        # ── Trades tab body ─────────────────────────────
-        trades_tab = tk.Frame(body, bg=p.BG_ROW)
+        # ── Trades tab ─────────────────────────────────
+        trades_tab = tk.Frame(self.notebook, bg=p.BG_ROW)
+        self.notebook.add(trades_tab, text="  Сделки  ")
         self.trades_table = TradesTable(trades_tab)
         self.trades_table.pack(fill="both", expand=True, padx=0, pady=0)
-        self._tab_frames["trades"] = trades_tab
 
         for t in _load_trades():
             tag = "ok" if t.get("success") else "err"
@@ -2970,21 +2908,25 @@ class App(ctk.CTk):
                 slave_ticket=t.get("slave_ticket", ""), status=t.get("status", ""),
                 tag=tag)
 
-        # ── Open Positions tab body ─────────────────────
-        open_tab = tk.Frame(body, bg=p.BG_ROW)
+        # ── Open Positions tab ─────────────────────────
+        open_tab = tk.Frame(self.notebook, bg=p.BG_ROW)
+        self.notebook.add(open_tab, text="  Текущие сделки  ")
         self.open_positions_table = OpenPositionsTable(open_tab)
         self.open_positions_table.pack(fill="both", expand=True, padx=0, pady=0)
-        self._tab_frames["open_pos"] = open_tab
 
-        # ── Log tab body ────────────────────────────────
-        log_tab = tk.Frame(body, bg=p.BG_ROW)
+        # ── Log tab ────────────────────────────────────
+        log_tab = tk.Frame(self.notebook, bg=p.BG_ROW)
+        self.notebook.add(log_tab, text="  Лог  ")
+        log_inner = tk.Frame(log_tab, bg=p.BG_ROW)
+        log_inner.pack(fill="both", expand=True, padx=0, pady=0)
+
         self.log_text = tk.Text(
-            log_tab, bg=p.BG_ROW, fg=p.FG, font=f.MONO_SM,
+            log_inner, bg=p.BG_ROW, fg=p.FG, font=f.MONO_SM,
             relief="flat", state="disabled", wrap="word",
             highlightthickness=0, padx=SPACE_16, pady=SPACE_8,
         )
         log_sb = ttk.Scrollbar(
-            log_tab, orient="vertical", command=self.log_text.yview,
+            log_inner, orient="vertical", command=self.log_text.yview,
         )
         self.log_text.configure(yscrollcommand=log_sb.set)
         log_sb.pack(side="right", fill="y")
@@ -2994,31 +2936,6 @@ class App(ctk.CTk):
         self.log_text.tag_config("err", foreground=p.RED)
         self.log_text.tag_config("warn", foreground=p.YELLOW)
         self.log_text.tag_config("info", foreground=p.FG_DIM)
-        self._tab_frames["log"] = log_tab
-
-        # Activate the default tab.
-        self._show_tab(self._active_tab)
-
-    def _show_tab(self, key: str) -> None:
-        """Switch the bottom card to the *key* tab, hiding the others.
-
-        The selected pill gets the BG_ROW_HOVER fill + FG text so it
-        reads as the active control; the others stay transparent with
-        FG_LABEL text (same idiom as ghost IconButton variants).
-        """
-        if key not in self._tab_frames:
-            return
-        self._active_tab = key
-        for k, frame in self._tab_frames.items():
-            if k == key:
-                frame.pack(fill="both", expand=True)
-            else:
-                frame.pack_forget()
-        for k, btn in self._tab_buttons.items():
-            if k == key:
-                btn.configure(fg_color=p.BG_ROW_HOVER, text_color=p.FG)
-            else:
-                btn.configure(fg_color="transparent", text_color=p.FG_LABEL)
 
     def _build_statusbar_soft(self) -> None:
         """Minimal bottom bar — just session stats + version tag.
@@ -3768,13 +3685,7 @@ class App(ctk.CTk):
         self.lbl_stats.config(
             text=f"\u2705 {self._session_stats['copied']}  \u274C {self._session_stats['failed']}")
         _save_trade(info)
-        # Do NOT auto-switch tabs on a new trade event.  The trade log
-        # (Сделки) already inserts the new row at index 0, so it's
-        # visible as soon as the user does switch tabs.  Forcing the
-        # switch was the legacy behaviour from when "Сделки" was the
-        # default tab; with "Текущие сделки" as the primary monitoring
-        # surface, auto-jumping would constantly pull the user away
-        # from the live open-positions table.
+        self.notebook.select(0)
 
     def _update_status(self, terminal_id: str, status: str,
                        balance: float = 0, equity: float = 0,
@@ -4037,7 +3948,12 @@ class App(ctk.CTk):
             except Exception:
                 pass
 
-        saved_active_tab = getattr(self, "_active_tab", self._TAB_SPECS[0][0])
+        saved_active_tab = 0
+        if hasattr(self, "notebook"):
+            try:
+                saved_active_tab = self.notebook.index(self.notebook.select())
+            except Exception:
+                pass
 
         # 2. Persist current config so the rebuild re-creates the same
         #    profile/slaves layout out of disk.
@@ -4121,10 +4037,10 @@ class App(ctk.CTk):
             except Exception:
                 pass
 
-        # 11. Restore active tab on the bottom card.
-        if hasattr(self, "_tab_frames"):
+        # 11. Restore active notebook tab.
+        if hasattr(self, "notebook"):
             try:
-                self._show_tab(saved_active_tab)
+                self.notebook.select(saved_active_tab)
             except Exception:
                 pass
 
