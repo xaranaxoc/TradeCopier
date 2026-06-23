@@ -475,38 +475,107 @@ def slave_worker(slave_cfg: Dict[str, Any], in_q, out_q, control_q,
 
     def calculate_lot(sym_info, sl_distance: float, risk_type: str,
                       risk_value: float, balance: float, deposit_curr: str) -> float:
+        lot, _diag = calculate_lot_with_diag(
+            sym_info, sl_distance, risk_type, risk_value, balance, deposit_curr,
+        )
+        return lot
+
+    def calculate_lot_with_diag(sym_info, sl_distance: float, risk_type: str,
+                                risk_value: float, balance: float,
+                                deposit_curr: str):
+        """Same as calculate_lot but also returns a diagnostic dict for
+        logging.  Lets do_open_position explain WHY a lot ended up tiny."""
+        diag: Dict[str, Any] = {
+            "sl_distance": sl_distance,
+            "tick_size": 0.0, "tick_value": 0.0,
+            "tvp": 0.0, "tvl": 0.0,
+            "raw_tick_value": 0.0, "fx_rate": 1.0,
+            "profit_curr": "", "deposit_curr": deposit_curr,
+            "sl_ticks": 0.0, "risk_amount": 0.0,
+            "raw_lot": 0.0, "clamped_lot": 0.0,
+            "vol_min": 0.0, "vol_max": 0.0, "vol_step": 0.0,
+            "reason": "",
+        }
         if sl_distance <= 0:
-            return 0.0
+            diag["reason"] = "sl_distance<=0"
+            return 0.0, diag
         tick_size = sym_info.trade_tick_size
+        diag["tick_size"] = tick_size
+        diag["vol_min"] = sym_info.volume_min
+        diag["vol_max"] = sym_info.volume_max
+        diag["vol_step"] = sym_info.volume_step
+        tvp = abs(sym_info.trade_tick_value or 0.0)
+        tvl = abs(sym_info.trade_tick_value_loss or 0.0)
+        diag["tvp"], diag["tvl"] = tvp, tvl
         contract_size = sym_info.trade_contract_size or 0.0
-        tick_value = 0.0
         profit_curr = getattr(sym_info, 'currency_profit', '') or ''
-        if contract_size > 0 and tick_size > 0:
-            raw_tick_value = contract_size * tick_size
+        diag["profit_curr"] = profit_curr
+        # Compute tick_value in deposit currency.
+        #
+        # contract_size × tick_size is the per-tick P/L of 1 lot,
+        # expressed in the symbol's PROFIT currency — this identity
+        # holds on every MT5 broker we have seen (forex, indices, CFDs).
+        # MT5's trade_tick_value field, in theory, should already be in
+        # the deposit currency, but on several brokers (e.g. AMarkets
+        # JP225Cash, JPY-quoted) it is silently returned in profit
+        # currency.  Relying on it caused Nikkei225 lots to clamp to
+        # vol_min because risk was computed against JPY-sized ticks
+        # while the balance was in USD (~150x too small lot).
+        #
+        # The safe approach used by the original copier: always derive
+        # raw_tick_value ourselves, then convert profit→deposit via FX.
+        # Works for any exotic profit currency (JPY, HKD, MXN, ZAR, …)
+        # as long as the broker quotes a pair containing both legs.
+        raw_tick_value = contract_size * tick_size if (contract_size > 0 and tick_size > 0) else 0.0
+        diag["raw_tick_value"] = raw_tick_value
+        tick_value = 0.0
+        if raw_tick_value > 0:
             if profit_curr and deposit_curr and profit_curr != deposit_curr:
                 rate = get_currency_rate(profit_curr, deposit_curr)
-                tick_value = raw_tick_value * rate
+                diag["fx_rate"] = rate
+                if rate > 0:
+                    tick_value = raw_tick_value * rate
+                else:
+                    # Refuse to guess: returning 0 forces the caller to
+                    # fall back to default_lot or skip, instead of
+                    # silently using profit-currency value (which gave
+                    # the 150x undersized Nikkei225 lots).
+                    diag["reason"] = (
+                        f"fx_rate {profit_curr}->{deposit_curr} not found; "
+                        f"add the pair to Market Watch"
+                    )
+                    return 0.0, diag
             else:
                 tick_value = raw_tick_value
+        # Last-resort fallback: if we could not derive raw_tick_value
+        # (some odd instrument without contract_size), fall back to
+        # MT5's reported tick value.  Same-currency case only — for
+        # cross-currency we already returned above.
         if tick_value <= 0:
-            tvp = abs(sym_info.trade_tick_value or 0.0)
-            tvl = abs(sym_info.trade_tick_value_loss or 0.0)
             tick_value = max(tvp, tvl)
+        diag["tick_value"] = tick_value
         if tick_size <= 0 or tick_value <= 0:
-            return 0.0
+            diag["reason"] = f"tick_size={tick_size} tick_value={tick_value}"
+            return 0.0, diag
         sl_ticks = sl_distance / tick_size
+        diag["sl_ticks"] = sl_ticks
         if risk_type == "percent":
             risk_amount = balance * risk_value / 100.0
         else:
             risk_amount = risk_value
+        diag["risk_amount"] = risk_amount
         if sl_ticks <= 0:
-            return 0.0
-        lot = risk_amount / (sl_ticks * tick_value)
+            diag["reason"] = "sl_ticks<=0"
+            return 0.0, diag
+        raw_lot = risk_amount / (sl_ticks * tick_value)
+        diag["raw_lot"] = raw_lot
         vol_step = sym_info.volume_step
+        lot = raw_lot
         if vol_step > 0:
             lot = round(lot / vol_step) * vol_step
         lot = max(sym_info.volume_min, min(sym_info.volume_max, lot))
-        return round(lot, 8)
+        diag["clamped_lot"] = lot
+        return round(lot, 8), diag
 
     def try_send(request: Dict) -> Any:
         symbol = request.get("symbol", "")
