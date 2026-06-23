@@ -803,6 +803,37 @@ def slave_worker(slave_cfg: Dict[str, Any], in_q, out_q, control_q,
         out_q.put({"type": "order_placed", "sid": sid,
                    "master_ticket": master_order["ticket"], "slave_ticket": ticket, "ok": True})
 
+    def do_close_all() -> None:
+        positions = mt5.positions_get() or []
+        if not positions:
+            return
+        closed = 0
+        for pos in positions:
+            tick = mt5.symbol_info_tick(pos.symbol)
+            if tick is None:
+                continue
+            sym_info = get_sym_info(pos.symbol)
+            filling = get_filling_mode(sym_info)
+            close_type = opposite_order_type(pos.type)
+            price = tick.bid if close_type == mt5.ORDER_TYPE_SELL else tick.ask
+            if sym_info:
+                price = normalize_price(price, sym_info.digits)
+            req = {
+                "action": mt5.TRADE_ACTION_DEAL,
+                "symbol": pos.symbol,
+                "volume": pos.volume,
+                "type": close_type,
+                "position": pos.ticket,
+                "price": price,
+                "comment": "CT_DAILY_LIMIT",
+                "type_time": mt5.ORDER_TIME_GTC,
+                "type_filling": filling,
+            }
+            result = try_send(req)
+            if result and result.retcode == mt5.TRADE_RETCODE_DONE:
+                closed += 1
+        log(f"🔴 [{sname}] закрыто {closed}/{len(positions)} позиций (лимит убытка)")
+
     def do_cancel_order(master_ticket: str, slave_ticket: int) -> None:
         req = {
             "action": mt5.TRADE_ACTION_REMOVE,
@@ -885,6 +916,8 @@ def slave_worker(slave_cfg: Dict[str, Any], in_q, out_q, control_q,
                         do_place_order(msg["master_order"])
                     elif t == "cancel_order":
                         do_cancel_order(msg["master_ticket"], msg["slave_ticket"])
+                    elif t == "close_all":
+                        do_close_all()
                     elif t == "config_update":
                         cfg.clear()
                         cfg.update(msg["slave"])
