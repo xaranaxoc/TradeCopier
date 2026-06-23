@@ -1386,9 +1386,11 @@ class AccountRow:
             self._set_status_dot(status)
 
     def update_status_only(self, status: str, balance: float = 0,
-                           equity: float = 0):
+                           equity: float = 0, login: int = 0):
         self._set_status_dot(status)
         bg = p.BG_ROW
+        if login:
+            self.lbl_login.config(text=f"#{login}", bg=bg)
         if balance > 0:
             self.lbl_balance.config(text=f"${balance:,.2f}", bg=bg)
         if equity > 0:
@@ -3796,13 +3798,45 @@ class App(ctk.CTk):
                 pnl_color = p.GREEN if pnl >= 0 else p.RED
                 pnl_sign = "+" if pnl >= 0 else ""
                 self.lbl_master_pnl.config(text=f"{pnl_sign}${pnl:,.2f}", fg=pnl_color)
+            # Reflect master state in the right-side status pill.  While
+            # the trader is running, _schedule_check skips
+            # _update_master_info_silent (which is what normally drives
+            # the pill), so without this the pill stayed frozen on
+            # whatever it showed before Start was pressed (typically
+            # "Не запущен").  Emoji prefix → pill state, mirroring
+            # AccountRow._set_status_dot for consistency.
+            if "\U0001F7E2" in status:        # 🟢
+                pill_state = "success"
+                pill_text = "Running" if login else "Подключено"
+            elif "\U0001F534" in status:      # 🔴
+                pill_state = "danger"
+                pill_text = "Ошибка"
+            elif "\U0001F7E1" in status or "\u26A0" in status:  # 🟡 / ⚠️
+                pill_state = "warn"
+                pill_text = "AutoTrading OFF" if login else "Подключение…"
+            else:
+                pill_state = "neutral"
+                pill_text = status[:32]
+            self._set_master_pill(pill_text, pill_state)
             return
+        # Extract "#12345" account login from the status string — the
+        # worker formats it as "🟢 #12345 $..." (see slave_worker.push_state
+        # in copier_worker.py).  Without this the slave row's lbl_login
+        # stays empty while the copier is running, because
+        # _update_row_info_silent (which used to populate it) is skipped
+        # by _schedule_check in that mode.
+        login = 0
+        if "#" in status:
+            try:
+                login = int(status.split("#")[1].split()[0].split("$")[0])
+            except (ValueError, IndexError):
+                pass
         for row, slave in zip(self._rows, self._slaves):
             if slave.get("name") == terminal_id or slave.get("id") == terminal_id:
                 if balance > 0 and equity > 0:
-                    row.update_status_only(status, balance, equity)
+                    row.update_status_only(status, balance, equity, login)
                 else:
-                    row.update_status_only(status)
+                    row.update_status_only(status, login=login)
                 if daily_loss_limit > 0:
                     row.update_daily_loss(daily_loss, daily_loss_limit)
                 break
