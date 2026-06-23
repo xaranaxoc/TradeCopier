@@ -532,6 +532,10 @@ class CopyTrader:
         self._slave_procs = {}
         self._slave_cfg_by_sid = {}
 
+        # Сразу показать промежуточный статус мастера, чтобы UI не висел на
+        # старом "не запущено" пока процесс стартует и mt5.initialize() работает.
+        self._status("master", "🟡 запуск…")
+
         # ── Master process ──
         from copier_worker import master_worker, slave_worker
         self._master_proc = self._mp_ctx.Process(
@@ -559,6 +563,9 @@ class CopyTrader:
             self._slave_procs[sid] = proc
             self._slave_cfg_by_sid[sid] = s
             proc.start()
+            # Промежуточный статус — UI не будет висеть на старом значении
+            # пока процесс стартует и mt5.initialize() работает.
+            self._status(s.get("name", sid), "🟡 запуск…")
 
         # ── Orchestrator + reader threads ──
         self._orchestrator_thread = threading.Thread(
@@ -647,6 +654,10 @@ class CopyTrader:
                     self._log(msg["msg"])
                 elif t == "slave_state":
                     self._handle_slave_state(msg)
+                elif t == "slave_status_text":
+                    sid = msg.get("sid", "")
+                    sname = self._slave_cfg_by_sid.get(sid, {}).get("name", sid)
+                    self._status(sname, msg.get("status", ""))
                 elif t == "trade_event":
                     self._trade_event(msg["info"])
                 elif t == "position_opened":
@@ -823,6 +834,9 @@ class CopyTrader:
                     self._handle_master_snapshot(msg)
                 elif t == "master_state":
                     self._handle_master_state(msg)
+                elif t == "master_status_text":
+                    # промежуточные статусы от master_worker (запуск/ретраи/ошибки)
+                    self._status("master", msg.get("status", ""))
                 elif t == "position_new":
                     self._handle_master_position_new(msg["pos"])
                 elif t == "position_closed":

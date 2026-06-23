@@ -107,12 +107,32 @@ def master_worker(master_path: str, out_q, control_q, poll_interval: float = 0.0
 
     if not master_path:
         out_q.put({"type": "log", "msg": "❌ MASTER: путь не задан"})
+        out_q.put({"type": "master_status_text", "status": "🔴 путь не задан"})
         return
 
-    # Постоянное подключение
-    if not mt5.initialize(path=master_path):
-        out_q.put({"type": "log", "msg": "❌ MASTER: не удалось подключиться"})
-        return
+    # Постоянное подключение с ретраями — терминал может только что
+    # запуститься (см. _spawn_terminals_minimized в GUI) и быть ещё не готов.
+    out_q.put({"type": "master_status_text", "status": "🟡 подключение…"})
+    connected = False
+    attempts = 0
+    while not connected:
+        # Проверяем команду stop между попытками
+        try:
+            cmd = control_q.get_nowait()
+            if cmd and cmd.get("type") == "stop":
+                return
+        except Exception:
+            pass
+        if mt5.initialize(path=master_path):
+            connected = True
+            break
+        attempts += 1
+        if attempts == 1 or attempts % 10 == 0:
+            out_q.put({"type": "log",
+                       "msg": f"⏳ MASTER: терминал не готов (попытка {attempts})"})
+            out_q.put({"type": "master_status_text",
+                       "status": f"🟡 ожидание терминала… ({attempts})"})
+        time.sleep(0.5)
 
     out_q.put({"type": "log", "msg": "🟢 MASTER: подключение установлено"})
 
@@ -278,11 +298,31 @@ def slave_worker(slave_cfg: Dict[str, Any], in_q, out_q, control_q,
 
     if not slave_path:
         out_q.put({"type": "log", "sid": sid, "msg": f"❌ [{sname}] путь не задан"})
+        out_q.put({"type": "slave_status_text", "sid": sid, "status": "🔴 путь не задан"})
         return
 
-    if not mt5.initialize(path=slave_path):
-        out_q.put({"type": "log", "sid": sid, "msg": f"❌ [{sname}] не удалось подключиться"})
-        return
+    # Подключение с ретраями: терминал мог только что запуститься
+    # (см. _spawn_terminals_minimized в GUI) и быть ещё не готов.
+    out_q.put({"type": "slave_status_text", "sid": sid, "status": "🟡 подключение…"})
+    connected = False
+    attempts = 0
+    while not connected:
+        try:
+            cmd = control_q.get_nowait()
+            if cmd and cmd.get("type") == "stop":
+                return
+        except Exception:
+            pass
+        if mt5.initialize(path=slave_path):
+            connected = True
+            break
+        attempts += 1
+        if attempts == 1 or attempts % 10 == 0:
+            out_q.put({"type": "log", "sid": sid,
+                       "msg": f"⏳ [{sname}] терминал не готов (попытка {attempts})"})
+            out_q.put({"type": "slave_status_text", "sid": sid,
+                       "status": f"🟡 ожидание терминала… ({attempts})"})
+        time.sleep(0.5)
 
     out_q.put({"type": "log", "sid": sid, "msg": f"🟢 [{sname}] подключение установлено"})
 
