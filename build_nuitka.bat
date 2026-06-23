@@ -61,6 +61,7 @@ echo.
     --include-package-data=customtkinter ^
     --enable-plugin=tk-inter ^
     --include-module=copier ^
+    --include-module=copier_worker ^
     --include-module=license ^
     --include-module=updater ^
     --include-module=ctk_compat ^
