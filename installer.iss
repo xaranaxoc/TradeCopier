@@ -19,6 +19,7 @@ WizardStyle=modern
 ArchitecturesInstallIn64BitMode=x64compatible
 ArchitecturesAllowed=x64compatible
 PrivilegesRequired=lowest
+CloseApplications=force
 UninstallDisplayIcon={app}\{#MyAppExeName}
 UninstallDisplayName={#MyAppName}
 SetupIconFile=img\convertico-fth.ico
@@ -40,3 +41,24 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: de
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#MyAppName}}"; Flags: nowait postinstall skipifsilent
+
+[Code]
+function InitializeSetup(): Boolean;
+var
+  ResultCode: Integer;
+begin
+  Exec(ExpandConstant('{cmd}'), '/C taskkill /F /IM {#MyAppExeName}',
+       '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Sleep(1000);
+  Result := True;
+end;
+
+function InitializeUninstall(): Boolean;
+var
+  ResultCode: Integer;
+begin
+  Exec(ExpandConstant('{cmd}'), '/C taskkill /F /IM {#MyAppExeName}',
+       '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Sleep(1000);
+  Result := True;
+end;
