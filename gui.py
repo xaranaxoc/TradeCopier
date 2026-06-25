@@ -3424,9 +3424,7 @@ class App(ctk.CTk):
             self._refresh_dashboard()
             self._refresh_open_positions_async()
         else:
-            self._update_master_info_silent()
-            for row, slave in zip(self._rows, self._slaves):
-                self._update_row_info_silent(row, slave)
+            self._refresh_terminal_info_async()
             self._refresh_dashboard()
             self._refresh_open_positions_async()
         self._check_timer = self.after(3000, self._schedule_check)
@@ -3566,6 +3564,131 @@ class App(ctk.CTk):
                 mt5.shutdown()
         else:
             row.update_info(0, 0, status="\U0001F534 ошибка")
+
+    def _refresh_terminal_info_async(self):
+        if getattr(self, '_info_thread', None) and self._info_thread.is_alive():
+            return
+        self._info_thread = threading.Thread(
+            target=self._refresh_terminal_info, daemon=True)
+        self._info_thread.start()
+
+    def _refresh_terminal_info(self):
+        if not _MT5_OK:
+            return
+        results: Dict[str, Any] = {'master': None, 'slaves': []}
+
+        master_path = self.var_master_path.get().strip()
+        if not master_path:
+            results['master'] = {'error': 'no_path'}
+        elif not is_terminal_running(master_path):
+            results['master'] = {'error': 'not_running'}
+        elif mt5.initialize(path=master_path):
+            try:
+                acc = mt5.account_info()
+                if acc:
+                    ti = mt5.terminal_info()
+                    results['master'] = {
+                        'login': acc.login,
+                        'balance': acc.balance,
+                        'equity': acc.equity,
+                        'pnl': acc.equity - acc.balance,
+                        'at_off': bool(ti and not ti.trade_allowed),
+                    }
+                else:
+                    results['master'] = {'error': 'no_account'}
+            finally:
+                mt5.shutdown()
+        else:
+            results['master'] = {'error': 'init_failed'}
+
+        for slave in getattr(self, '_slaves', []):
+            sid = slave.get('id', slave.get('name', '?'))
+            s_path = slave.get('path', '')
+            if not s_path:
+                results['slaves'].append({'sid': sid, 'error': 'no_path'})
+                continue
+            if not is_terminal_running(s_path):
+                results['slaves'].append({'sid': sid, 'error': 'not_running'})
+                continue
+            if mt5.initialize(path=s_path):
+                try:
+                    acc = mt5.account_info()
+                    if acc:
+                        ti = mt5.terminal_info()
+                        results['slaves'].append({
+                            'sid': sid,
+                            'login': acc.login,
+                            'balance': acc.balance,
+                            'equity': acc.equity,
+                            'at_off': bool(ti and not ti.trade_allowed),
+                        })
+                    else:
+                        results['slaves'].append({'sid': sid, 'error': 'no_account'})
+                finally:
+                    mt5.shutdown()
+            else:
+                results['slaves'].append({'sid': sid, 'error': 'init_failed'})
+
+        self.after(0, lambda: self._apply_terminal_info(results))
+
+    def _apply_terminal_info(self, results: Dict[str, Any]):
+        m = results.get('master')
+        if m:
+            err = m.get('error')
+            if err == 'no_path':
+                self.lbl_master_bal.config(text="\u2014", fg=p.FG_DIM)
+                self.lbl_master_login.config(text="нет пути", fg=p.RED)
+                self._set_master_pill("Нет пути", "danger")
+            elif err == 'not_running':
+                self.lbl_master_login.config(text="не запущен", fg=p.RED)
+                self._set_master_pill("Не запущен", "danger")
+            elif err == 'no_account':
+                self.lbl_master_login.config(text="нет аккаунта", fg=p.RED)
+                self._set_master_pill("Нет аккаунта", "danger")
+            elif err == 'init_failed':
+                self.lbl_master_login.config(text="ошибка", fg=p.RED)
+                self._set_master_pill("Ошибка", "danger")
+            else:
+                pnl = m['pnl']
+                pnl_color = p.GREEN if pnl >= 0 else p.RED
+                pnl_sign = "+" if pnl >= 0 else ""
+                at_off = m['at_off']
+                self.lbl_master_login.config(
+                    text=f"#{m['login']}" + (" \u26A0AT" if at_off else ""),
+                    fg=p.RED if at_off else p.FG_DIM)
+                self.lbl_master_bal.config(text=f"${m['balance']:,.2f}")
+                self.lbl_master_eq.config(text=f"${m['equity']:,.2f}")
+                self.lbl_master_pnl.config(text=f"{pnl_sign}${pnl:,.2f}", fg=pnl_color)
+                if at_off:
+                    self._set_master_pill("AutoTrading OFF", "warn")
+                else:
+                    self._set_master_pill("Running", "success")
+
+        for sinfo in results.get('slaves', []):
+            sid = sinfo.get('sid')
+            for row, slave in zip(self._rows, self._slaves):
+                if slave.get('id', slave.get('name', '?')) != sid:
+                    continue
+                err = sinfo.get('error')
+                if err == 'no_path':
+                    row.update_info(0, 0, status="\U0001F534 нет пути")
+                elif err == 'not_running':
+                    row.update_info(0, 0, status="\U0001F534 не запущен")
+                elif err == 'no_account':
+                    row.update_info(0, 0, status="\U0001F534 нет аккаунта")
+                elif err == 'init_failed':
+                    row.update_info(0, 0, status="\U0001F534 ошибка")
+                else:
+                    slider_off = not row.var_enabled.get()
+                    at_off = sinfo['at_off']
+                    if slider_off:
+                        status = f"\U0001F7E1 неактивен #{sinfo['login']}"
+                    elif at_off:
+                        status = f"\U0001F7E1 алготрейдинг отключен #{sinfo['login']}"
+                    else:
+                        status = f"\U0001F7E2 активен #{sinfo['login']}"
+                    row.update_info(sinfo['balance'], sinfo['equity'], sinfo['login'], status)
+                break
 
     def _refresh_dashboard(self):
         # Master balance from the master strip (string we just rendered).
