@@ -8,7 +8,7 @@ Subclass strategy is intentional:
     caller passes them. CTk's internal `configure(require_redraw=True, ...)`
     calls keep working untouched.
   * `corner_radius=0` and `border_width=0` are the defaults — we preserve
-    the existing flat / square FTH look (no pill buttons, no cards).
+    the existing flat / square look (no pill buttons, no cards).
   * `tk.Button`/`tk.Entry` accept `width=N` in *characters*; CTk uses
     pixels. We treat any `width` ≤ 24 as characters and convert to pixels
     via an 8 px/char heuristic. Anything larger is passed through as pixels.
@@ -165,7 +165,7 @@ class Button(ctk.CTkButton):
 
     Converts ``width=N`` (chars) → pixels, drops ``padx``/``pady``/``relief``.
     Uses ``corner_radius=0``/``border_width=0`` so the visual matches the
-    flat tk.Button look in the existing FTH UI.
+    flat tk.Button look in the existing UI.
     """
 
     def __init__(self, master, **kwargs):
@@ -293,7 +293,7 @@ class Frame(ctk.CTkFrame):
         kwargs.setdefault("width", 0)
         kwargs.setdefault("height", 0)
         # tk.Frame(highlightthickness=1, highlightbackground=BORDER) is the
-        # idiom used for the bordered cards in the FTH UI. Translate to
+        # idiom used for the bordered cards in the UI. Translate to
         # CTk's border_width / border_color so we keep the same look.
         if "highlightthickness" in kwargs:
             kwargs["border_width"] = kwargs.pop("highlightthickness")

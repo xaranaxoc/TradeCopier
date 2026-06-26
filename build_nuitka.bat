@@ -1,7 +1,7 @@
 @echo off
 chcp 65001 >nul
 echo ============================================
-echo   FTH Trade Copier — Nuitka Build (standalone/portable)
+echo   Trade Copier — Nuitka Build (standalone/portable)
 echo ============================================
 echo.
 
@@ -50,8 +50,8 @@ echo.
 "%PYTHON%" -m nuitka ^
     --standalone ^
     --windows-console-mode=disable ^
-    --windows-icon-from-ico=img/convertico-fth.ico ^
-    --output-filename=FTHTradeCopier.exe ^
+    --windows-icon-from-ico=img/trade-copier.ico ^
+    --output-filename=TradeCopier.exe ^
     --include-data-dir=img=img ^
     --include-data-dir=assets=assets ^
     --include-data-dir="%NUMPY_DIR%=numpy" ^
@@ -92,19 +92,19 @@ copy /Y "%MT5_DIR%\__init__.py" "dist\gui.dist\MetaTrader5\__init__.py" >nul
 
 echo.
 echo [4/4] Переименование папки...
-if exist "dist\FTHTradeCopier" rmdir /s /q "dist\FTHTradeCopier"
-rename "dist\gui.dist" "FTHTradeCopier"
+if exist "dist\TradeCopier" rmdir /s /q "dist\TradeCopier"
+rename "dist\gui.dist" "TradeCopier"
 if %errorlevel% neq 0 (
-    echo ВНИМАНИЕ: не удалось переименовать gui.dist ^> FTHTradeCopier
+    echo ВНИМАНИЕ: не удалось переименовать gui.dist ^> TradeCopier
     echo Папка сборки: dist\gui.dist
 ) else (
-    echo Папка: dist\FTHTradeCopier
+    echo Папка: dist\TradeCopier
 )
 
 echo.
 echo ============================================
-echo   Готово! Portable: dist\FTHTradeCopier\
-echo   EXE: dist\FTHTradeCopier\FTHTradeCopier.exe
+echo   Готово! Portable: dist\TradeCopier\
+echo   EXE: dist\TradeCopier\TradeCopier.exe
 echo ============================================
 echo.
 pause

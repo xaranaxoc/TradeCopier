@@ -1,7 +1,7 @@
 @echo off
 chcp 65001 >nul
 echo ============================================
-echo   FTH Trade Copier — Сборка EXE
+echo   Trade Copier — Сборка EXE
 echo ============================================
 echo.
 
@@ -17,7 +17,7 @@ if %errorlevel% neq 0 (
 
 echo.
 echo [2/3] Сборка EXE (может занять 1-2 минуты)...
-%PYTHON% -m PyInstaller --onefile --windowed --name FTHTradeCopier --icon=img/convertico-fth.ico --add-data "img;img" --collect-all MetaTrader5 --collect-all numpy --collect-data customtkinter --hidden-import copier --hidden-import copier_worker --hidden-import license --hidden-import updater --hidden-import psutil --hidden-import tkinter --hidden-import tkinter.ttk --hidden-import tkinter.filedialog --hidden-import tkinter.messagebox --hidden-import customtkinter --hidden-import pystray --hidden-import pystray._win32 --hidden-import six gui.py
+%PYTHON% -m PyInstaller --onefile --windowed --name TradeCopier --icon=img/trade-copier.ico --add-data "img;img" --collect-all MetaTrader5 --collect-all numpy --collect-data customtkinter --hidden-import copier --hidden-import copier_worker --hidden-import license --hidden-import updater --hidden-import psutil --hidden-import tkinter --hidden-import tkinter.ttk --hidden-import tkinter.filedialog --hidden-import tkinter.messagebox --hidden-import customtkinter --hidden-import pystray --hidden-import pystray._win32 --hidden-import six gui.py
 
 if %errorlevel% neq 0 (
     echo ОШИБКА: сборка не удалась
@@ -28,7 +28,7 @@ if %errorlevel% neq 0 (
 echo.
 echo [3/3] Готово!
 echo ============================================
-echo   Файл: dist\FTHTradeCopier.exe
+echo   Файл: dist\TradeCopier.exe
 echo   Скопируйте его куда угодно и запускайте
 echo ============================================
 echo.

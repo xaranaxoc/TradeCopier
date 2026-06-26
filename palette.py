@@ -1,5 +1,5 @@
 """
-palette — centralised colour & font definitions for FTH Trade Copier themes.
+palette — centralised colour & font definitions for Trade Copier themes.
 
 Every UI colour and font tuple used by the application is defined here as
 a field on a frozen dataclass.  The rest of the code reads the *current*

@@ -6,7 +6,7 @@ import subprocess
 import requests
 from datetime import datetime, timedelta
 
-APP_DATA_DIR = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "MT5CopyTrader")
+APP_DATA_DIR = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "TradeCopier")
 LICENSE_FILE = os.path.join(APP_DATA_DIR, "license.json")
 
 API_URL = "http://2.26.142.85:8000"

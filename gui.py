@@ -6,7 +6,7 @@ This module mixes CTk and tk on purpose:
 * Top-level windows and most container/control widgets use customtkinter
   via the wrappers in `ctk_compat` (Frame/Label/Button/Entry/Toplevel).
   Those wrappers translate tk-style kwargs (``bg=``/``fg=``/``width=N``-chars)
-  to CTk-style kwargs, so the existing FTH palette and idioms keep
+  to CTk-style kwargs, so the existing palette and idioms keep
   working without rewriting every call site.
 * Plain tk/ttk widgets are kept where CTk has no equivalent or where
   emulation would change behaviour: `_Tip` (overrideredirect tooltip),
@@ -60,7 +60,7 @@ from theme import apply_theme, init_scaling as _init_ctk_scaling
 import widgets as _widgets
 import lucide as _lucide
 
-APP_DATA_DIR = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "MT5CopyTrader")
+APP_DATA_DIR = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "TradeCopier")
 CONFIG_FILE = os.path.join(APP_DATA_DIR, "config.json")
 STATE_FILE = os.path.join(APP_DATA_DIR, "state.json")
 LOGS_DIR = os.path.join(APP_DATA_DIR, "logs")
@@ -128,8 +128,8 @@ else:
 TRADES_KEEP_DAYS = 7
 
 IMG_DIR = os.path.join(_BUNDLE_DIR, "img")
-ICON_DEFAULT = os.path.join(IMG_DIR, "convertico-fth.ico")
-ICON_CYAN = os.path.join(IMG_DIR, "convertico-fth-cyan.ico")
+ICON_DEFAULT = os.path.join(IMG_DIR, "trade-copier.ico")
+ICON_CYAN = os.path.join(IMG_DIR, "trade-copier-blue.ico")
 
 import palette as _palette_mod
 from palette import (
@@ -1687,7 +1687,7 @@ class ActivationWindow(Toplevel):
 
     def __init__(self, parent):
         super().__init__(parent)
-        self.title("FTH Trade Copier — Активация")
+        self.title("Trade Copier — Активация")
         self.configure(fg_color=p.BG_DEEP)
         self.resizable(False, False)
         if os.path.exists(ICON_DEFAULT):
@@ -1782,7 +1782,7 @@ class ActivationWindow(Toplevel):
         body.pack(fill="both", expand=True, padx=SPACE_16, pady=SPACE_16)
 
         # Logo
-        logo_path = os.path.join(IMG_DIR, "convertico-fth_48x48.png")
+        logo_path = os.path.join(IMG_DIR, "trade-copier_48x48.png")
         if os.path.exists(logo_path):
             try:
                 img = tk.PhotoImage(file=logo_path)
@@ -2225,7 +2225,7 @@ class App(ctk.CTk):
         # enabled in __main__ before this Tk root is created.
         ui_scaling.init_root_scaling(self)
         _apply_dpi_layout()
-        self.title(f"FTH Trade Copier v{upd_mod.VERSION}" if _UPD_OK else "FTH Trade Copier")
+        self.title(f"Trade Copier v{upd_mod.VERSION}" if _UPD_OK else "Trade Copier")
         self.configure(fg_color=p.BG_DEEP)
         self.resizable(True, True)
         _wa = ui_scaling.get_cursor_work_area(self)
@@ -2411,7 +2411,7 @@ class App(ctk.CTk):
     def _set_logo_cyan(self, cyan: bool):
         if not hasattr(self, '_logo_label'):
             return
-        name = "convertico-fth-cyan_48x48" if cyan else "convertico-fth_48x48"
+        name = "trade-copier-blue_48x48" if cyan else "trade-copier_48x48"
         path = os.path.join(IMG_DIR, f"{name}.png")
         if os.path.exists(path):
             try:
@@ -2424,7 +2424,7 @@ class App(ctk.CTk):
     def _start_tray(self):
         if not _PYSTRAY_OK:
             return
-        png_path = os.path.join(IMG_DIR, "convertico-fth_256x256.png")
+        png_path = os.path.join(IMG_DIR, "trade-copier_256x256.png")
         if not os.path.exists(png_path):
             return
         try:
@@ -2433,7 +2433,7 @@ class App(ctk.CTk):
                 pystray.MenuItem("Показать", self._tray_show, default=True),
                 pystray.MenuItem("Стоп + Выход", self._tray_exit),
             )
-            self._tray_icon = pystray.Icon("FTHTradeCopier", pil_img, "FTH Trade Copier", menu)
+            self._tray_icon = pystray.Icon("TradeCopier", pil_img, "Trade Copier", menu)
             self._tray_thread = threading.Thread(target=self._tray_icon.run, daemon=True)
             self._tray_thread.start()
         except Exception:
@@ -2458,13 +2458,13 @@ class App(ctk.CTk):
     def _update_tray_icon(self, cyan: bool):
         if not self._tray_icon or not _PYSTRAY_OK:
             return
-        name = "convertico-fth-cyan_256x256" if cyan else "convertico-fth_256x256"
+        name = "trade-copier-blue_256x256" if cyan else "trade-copier_256x256"
         png_path = os.path.join(IMG_DIR, f"{name}.png")
         if os.path.exists(png_path):
             try:
                 pil_img = PILImage.open(png_path)
                 self._tray_icon.icon = pil_img
-                tip = "FTH Trade Copier — работает" if cyan else "FTH Trade Copier"
+                tip = "Trade Copier — работает" if cyan else "Trade Copier"
                 self._tray_icon.title = tip
             except Exception:
                 pass
@@ -2520,7 +2520,7 @@ class App(ctk.CTk):
 
         Layout (left → right):
 
-            [logo] FTH Trade Copier [MT5]   …
+            [logo] Trade Copier [MT5]   …
                 КОПИТРЕЙДЕР [▶ Старт][■ Стоп] · \
 ТЕРМИНАЛЫ [🚀 Запустить][⏻ Закрыть] · [⚙][ⓘ]
 
@@ -2535,7 +2535,7 @@ class App(ctk.CTk):
         left = ctk.CTkFrame(outer, fg_color="transparent")
         left.pack(side="left")
 
-        logo_path = os.path.join(IMG_DIR, "convertico-fth_48x48.png")
+        logo_path = os.path.join(IMG_DIR, "trade-copier_48x48.png")
         if os.path.exists(logo_path):
             try:
                 # tk.PhotoImage stays — _set_logo_cyan already targets
@@ -4395,12 +4395,12 @@ class App(ctk.CTk):
         self.destroy()
 
 
-_MUTEX_NAME = "FTHTradeCopier_SingleInstance"
+_MUTEX_NAME = "TradeCopier_SingleInstance"
 
 
 def _activate_existing():
     user32 = ctypes.windll.user32
-    hwnd = user32.FindWindowW(None, "FTH Trade Copier")
+    hwnd = user32.FindWindowW(None, "Trade Copier")
     if hwnd:
         user32.ShowWindow(hwnd, 9)
         user32.SetForegroundWindow(hwnd)

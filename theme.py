@@ -1,5 +1,5 @@
 """
-theme — global CustomTkinter appearance setup for the FTH Trade Copier.
+theme — global CustomTkinter appearance setup for Trade Copier.
 
 Includes a runtime patch of customtkinter's `_apply_font_scaling` so that
 positive font sizes in tuples (e.g. `("Segoe UI", 9)`) keep their tk
@@ -102,7 +102,7 @@ def init_scaling() -> None:
 
 
 def apply_theme() -> None:
-    """Install the FTH theme.
+    """Install the theme.
 
     Reads ``get_theme_appearance()`` from ``palette`` so the CTk
     appearance mode follows the active theme — switching to LIGHT_PRO

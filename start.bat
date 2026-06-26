@@ -1,6 +1,6 @@
 @echo off
 rem ============================================================
-rem  FTH Trade Copier — запуск без консоли (через pythonw.exe).
+rem  Trade Copier — запуск без консоли (через pythonw.exe).
 rem  Если запускать gui.py напрямую через py.exe или python.exe,
 rem  Windows открывает чёрное окно консоли с предупреждениями
 rem  CustomTkinter. pythonw.exe — это тот же интерпретатор, но
