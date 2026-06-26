@@ -46,9 +46,32 @@ warnings.filterwarnings(
 
 import tkinter as tk
 import customtkinter as ctk
+from customtkinter.windows.widgets.core_rendering.draw_engine import DrawEngine
 from datetime import datetime, timedelta
 from tkinter import ttk, filedialog, messagebox
 from typing import Dict, List, Optional, Tuple
+
+
+def _clean_dropdown_arrow(self, x_position, y_position, size):
+    x_position = round(x_position)
+    y_position = round(y_position)
+    size = round(size)
+    requires_recoloring = False
+    if not self._canvas.find_withtag("dropdown_arrow"):
+        self._canvas.create_polygon(0, 0, 0, 0, 0, 0, tags="dropdown_arrow")
+        self._canvas.tag_raise("dropdown_arrow")
+        requires_recoloring = True
+    self._canvas.coords("dropdown_arrow",
+                        x_position - size / 2,
+                        y_position - size / 5,
+                        x_position,
+                        y_position + size / 5,
+                        x_position + size / 2,
+                        y_position - size / 5)
+    return requires_recoloring
+
+
+DrawEngine.draw_dropdown_arrow = _clean_dropdown_arrow
 
 from ctk_compat import Label, Button, Entry, Frame, Toplevel
 from theme import apply_theme, init_scaling as _init_ctk_scaling

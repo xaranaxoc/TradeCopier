@@ -326,7 +326,7 @@ THEMES: Dict[str, Theme] = {
 
 # Human-readable names for the theme picker UI.
 THEME_LABELS: Dict[str, str] = {
-    "neon_cyan": "Neon Cyan (тёмная)",
+    "neon_cyan": "Dark Blue (тёмная)",
     "light_pro": "Light Pro (MetaTrader 5)",
     "light_soft": "Light Soft (светлая)",
 }
