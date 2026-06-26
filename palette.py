@@ -141,7 +141,7 @@ class Fonts:
 NEON_CYAN = Palette(
     # Dark counterpart of the soft card-based design.  Same card / radii
     # rhythm as LIGHT_SOFT but inverted for night use: deep slate page,
-    # near-black cards with a soft border, cyan accent, saturated semantic
+    # near-black cards with a soft border, blue accent, saturated semantic
     # colours.  Icon-circle tints are dark-theme variants — saturated hue
     # at ~10% lightness so the icon sits on top of a low-contrast disc
     # that reads as "tinted" without blowing out the dark surface.
@@ -160,12 +160,12 @@ NEON_CYAN = Palette(
     FG_LABEL="#9090A8",      # secondary text / labels (slate-400)
     FG_MUTED="#4A4A60",      # muted / disabled
 
-    # Cyan accent stays the brand colour.
-    ACCENT="#00B4D8",
-    ACCENT_H="#00D0F0",
-    ACCENT_DIM="#006E88",
+    # Blue accent (matches light theme).
+    ACCENT="#3B82F6",
+    ACCENT_H="#2563EB",
+    ACCENT_DIM="#1E40AF",
     ACCENT_FG="#FFFFFF",
-    CYAN_GLOW="#002933",
+    CYAN_GLOW="#172554",
 
     # Saturated semantic colours (unchanged — they're already night-ready).
     GREEN="#00E676",
@@ -186,13 +186,13 @@ NEON_CYAN = Palette(
     # Dark, saturated hues so the 28 px KPI disc reads as a coloured
     # token against the near-black card.  FG pair is the bright semantic
     # colour so the icon glyph (or its tinted Lucide PNG) pops on top.
-    TINT_BLUE="#0B2A3A",       # deep teal-blue, pairs with cyan accent
+    TINT_BLUE="#0B1A3A",       # deep blue, pairs with blue accent
     TINT_PURPLE="#1F1530",     # deep purple
     TINT_GREEN="#0E2A1F",      # deep green
     TINT_ORANGE="#2E1F0A",     # deep amber
     TINT_RED="#2E0E14",        # deep red
 
-    TINT_BLUE_FG="#00B4D8",    # ACCENT cyan
+    TINT_BLUE_FG="#3B82F6",    # ACCENT blue
     TINT_PURPLE_FG="#A78BFA",  # violet-400
     TINT_GREEN_FG="#00E676",   # GREEN
     TINT_ORANGE_FG="#FFB020",  # YELLOW

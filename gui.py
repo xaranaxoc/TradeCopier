@@ -654,7 +654,7 @@ class SlaveDialog(Toplevel):
         )
         self.lbl_sym_status.pack(anchor="w", padx=SP)
 
-        self.sym_frame = ctk.CTkFrame(form, fg_color="transparent")
+        self.sym_frame = ctk.CTkFrame(form, fg_color="transparent", height=1)
         self.sym_frame.pack(fill="x", padx=SP, pady=4)
 
         symbol_map = data.get("symbol_map", {})
@@ -1934,9 +1934,10 @@ class SettingsDialog(Toplevel):
         self.resizable(False, False)
         self.transient(parent)
         self.grab_set()
-        if os.path.exists(ICON_DEFAULT):
+        icon = ICON_CYAN if parent._trader and parent._trader.is_running() else ICON_DEFAULT
+        if os.path.exists(icon):
             try:
-                self.after(250, lambda: self.iconbitmap(ICON_DEFAULT))
+                self.after(250, lambda: self.iconbitmap(icon))
             except Exception:
                 pass
         self._app = parent
@@ -2032,8 +2033,8 @@ class SettingsDialog(Toplevel):
 
         om = ctk.CTkOptionMenu(
             row_theme, variable=self._var_theme, values=labels,
-            fg_color=p.BG_ROW, button_color=p.ACCENT,
-            button_hover_color=p.ACCENT_H,
+            fg_color=p.BG_ROW, button_color=p.BG_INPUT,
+            button_hover_color=p.BG_ROW_HOVER,
             dropdown_fg_color=p.BG_ROW, dropdown_hover_color=p.BG_ROW_HOVER,
             dropdown_text_color=p.FG,
             text_color=p.FG, corner_radius=p.RADIUS_MD,
@@ -4391,6 +4392,8 @@ class App(ctk.CTk):
         if self._tray_icon:
             self._tray_icon.stop()
             self._tray_icon = None
+            if hasattr(self, '_tray_thread') and self._tray_thread:
+                self._tray_thread.join(timeout=2)
         self._save_config()
         self.destroy()
 
