@@ -49,7 +49,7 @@ import customtkinter as ctk
 from customtkinter.windows.widgets.core_rendering.draw_engine import DrawEngine
 from datetime import datetime, timedelta
 from tkinter import ttk, filedialog, messagebox
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 
 def _clean_dropdown_arrow(self, x_position, y_position, size):
