@@ -55,19 +55,18 @@ from typing import Dict, List, Optional, Tuple
 def _clean_dropdown_arrow(self, x_position, y_position, size):
     x_position = round(x_position)
     y_position = round(y_position)
-    size = round(size)
+    size = max(round(size), 8)
     requires_recoloring = False
     if not self._canvas.find_withtag("dropdown_arrow"):
-        self._canvas.create_polygon(0, 0, 0, 0, 0, 0, tags="dropdown_arrow")
+        self._canvas.create_text(
+            0, 0, text="\u25BC",
+            font=("Segoe UI", -size),
+            tags="dropdown_arrow", anchor=tk.CENTER,
+        )
         self._canvas.tag_raise("dropdown_arrow")
         requires_recoloring = True
-    self._canvas.coords("dropdown_arrow",
-                        x_position - size / 2,
-                        y_position - size / 5,
-                        x_position,
-                        y_position + size / 5,
-                        x_position + size / 2,
-                        y_position - size / 5)
+    self._canvas.itemconfigure("dropdown_arrow", font=("Segoe UI", -size))
+    self._canvas.coords("dropdown_arrow", x_position, y_position)
     return requires_recoloring
 
 
