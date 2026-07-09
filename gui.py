@@ -128,17 +128,6 @@ except ImportError:
 
 import ui_scaling
 
-try:
-    import license as lic_mod
-    _LIC_OK = True
-except ImportError:
-    _LIC_OK = False
-
-try:
-    import updater as upd_mod
-    _UPD_OK = True
-except ImportError:
-    _UPD_OK = False
 
 if getattr(sys, 'frozen', False):
     BASE_DIR = os.path.dirname(sys.executable)
@@ -1697,244 +1686,6 @@ class OpenPositionsTable(tk.Frame):
             self.tree.insert("", "end", values=row, tags=(row_tag,))
 
 
-# ── ActivationWindow ──────────────────────────────────────────
-
-class ActivationWindow(Toplevel):
-    """Light-Soft styled license activation window.
-
-    Visual chrome rewritten 2026-06 to match the main window's card-based
-    look. Behaviour (Telegram code request, code verify, status messages,
-    forced quit on close-without-activation) is unchanged.
-    """
-
-    def __init__(self, parent):
-        super().__init__(parent)
-        self.title("Trade Copier — Активация")
-        self.configure(fg_color=p.BG_DEEP)
-        self.resizable(False, False)
-        if os.path.exists(ICON_DEFAULT):
-            try:
-                self.after(250, lambda: self.iconbitmap(ICON_DEFAULT))
-            except Exception:
-                pass
-        self._activated = False
-        self.protocol("WM_DELETE_WINDOW", self._on_close)
-        self.grab_set()
-        self._build()
-        self._center_on_screen()
-
-    def _on_close(self):
-        if self._activated:
-            self.destroy()
-            return
-        app = self.master
-        self.destroy()
-        try:
-            app._real_quit()
-        except Exception:
-            pass
-        os._exit(0)
-
-    def _center_on_screen(self):
-        self.update_idletasks()
-        w = max(self.winfo_reqwidth(), self.winfo_width())
-        h = max(self.winfo_reqheight(), self.winfo_height())
-        wa = ui_scaling.get_work_area_for_window(self.master or self)
-        wl, wt, wr, wb = wa
-        x = wl + ((wr - wl) - w) // 2
-        y = wt + ((wb - wt) - h) // 2
-        x, y, w, h = ui_scaling.clamp_to_work_area(x, y, w, h, wa)
-        # Lock minimum window size to the laid-out requested size so the
-        # user can't shrink it below what fits the form, and the status
-        # label always has enough horizontal space for the longest line.
-        try:
-            self.minsize(max(w, ui_scaling.scale(360)), h)
-        except Exception:
-            pass
-        self.geometry(f"{w}x{h}+{x}+{y}")
-
-    def _set_status(self, text, fg=None):
-        self.lbl_status.configure(text=text, text_color=fg or p.FG_DIM)
-
-    def _paste(self, event=None):
-        try:
-            clip = self.clipboard_get()
-            if clip:
-                widget = self.focus_get()
-                # CTkEntry exposes the underlying tk.Entry via _entry; both
-                # have insert() with the same signature, so we accept either.
-                try:
-                    widget.insert(tk.INSERT, clip)
-                except Exception:
-                    pass
-        except Exception:
-            pass
-        return "break"
-
-    def _on_ctrl_key(self, event=None):
-        if event is not None and event.keycode == 86:
-            return self._paste(event)
-
-    def _soft_entry(self, parent, var=None, width=240):
-        ent = ctk.CTkEntry(
-            parent, textvariable=var, width=width,
-            fg_color=p.BG_ROW, border_color=p.BORDER, border_width=1,
-            text_color=p.FG, placeholder_text_color=p.FG_DIM,
-            corner_radius=p.RADIUS_MD, height=BTN_HEIGHT,
-            font=("Segoe UI", 10),
-        )
-        ent.bind("<Control-v>", self._paste)
-        ent.bind("<Control-V>", self._paste)
-        ent.bind("<Control-KeyPress>", self._on_ctrl_key)
-        return ent
-
-    def _build(self):
-        # Single Card host on the page bg.  Earlier version wrapped the card
-        # in an outer transparent frame with another 24 px padx/pady, which
-        # combined with the card's own 24 px inner padding ate 96 px of
-        # horizontal real estate at 320 px window width — the status label
-        # ended up with ~220 px usable, not enough for "Код отправлен
-        # в Telegram. Проверьте личные сообщения." which
-        # wrapped/clipped instead of fitting.  Drop the outer wrap and let
-        # the card sit directly on BG_DEEP with its own padding.
-        card = _widgets.Card(self, padding=0)
-        card.pack(fill="both", expand=True, padx=SPACE_16, pady=SPACE_16)
-
-        body = ctk.CTkFrame(card, fg_color="transparent")
-        body.pack(fill="both", expand=True, padx=SPACE_16, pady=SPACE_16)
-
-        # Logo
-        logo_path = os.path.join(IMG_DIR, "trade-copier_48x48.png")
-        if os.path.exists(logo_path):
-            try:
-                img = tk.PhotoImage(file=logo_path)
-                lbl_logo = ctk.CTkLabel(
-                    body, image=img, text="", fg_color="transparent",
-                )
-                lbl_logo.image = img
-                lbl_logo.pack(pady=(0, SPACE_8))
-            except Exception:
-                pass
-
-        ctk.CTkLabel(
-            body, text="Активация",
-            text_color=p.FG, font=("Segoe UI", 16, "bold"),
-        ).pack(pady=(0, SPACE_16))
-
-        # Section: Telegram ID
-        ctk.CTkLabel(
-            body, text="Telegram ID", text_color=p.FG_LABEL,
-            font=("Segoe UI", 9), anchor="w",
-        ).pack(anchor="w", pady=(0, 4))
-        self.var_tg_id = tk.StringVar()
-        self._soft_entry(body, self.var_tg_id).pack(fill="x", pady=(0, SPACE_8))
-
-        btn_code = ctk.CTkButton(
-            body, text="Получить код",
-            command=self._request_code,
-            fg_color=p.ACCENT, hover_color=p.ACCENT_H,
-            text_color=p.ACCENT_FG, corner_radius=p.RADIUS_MD,
-            height=BTN_HEIGHT, font=("Segoe UI", 10, "bold"),
-        )
-        btn_code.pack(fill="x", pady=(0, SPACE_16))
-
-        # Section: Code
-        ctk.CTkLabel(
-            body, text="Код из Telegram", text_color=p.FG_LABEL,
-            font=("Segoe UI", 9), anchor="w",
-        ).pack(anchor="w", pady=(0, 4))
-        self.var_code = tk.StringVar()
-        self._soft_entry(body, self.var_code).pack(fill="x", pady=(0, SPACE_8))
-
-        btn_verify = ctk.CTkButton(
-            body, text="Подтвердить",
-            command=self._verify,
-            fg_color=p.GREEN, hover_color=p.GREEN_DIM,
-            text_color=p.ACCENT_FG, corner_radius=p.RADIUS_MD,
-            height=BTN_HEIGHT, font=("Segoe UI", 10, "bold"),
-        )
-        btn_verify.pack(fill="x", pady=(0, SPACE_16))
-
-        # Status area.  Fixed-height frame so the window never resizes
-        # when multi-line status text appears; <Configure> binding updates
-        # the label's wraplength to the current frame width so messages
-        # wrap inside the visible area (the previous one-shot reading
-        # happened before the first geometry settle and left wraplength
-        # at 0, clipping long messages on the right).
-        self._status_card = ctk.CTkFrame(body, fg_color="transparent")
-        self._status_card.pack(fill="x")
-        self.lbl_status = ctk.CTkLabel(
-            self._status_card, text="", text_color=p.FG_DIM,
-            font=("Segoe UI", 9), anchor="w", justify="left",
-            wraplength=ui_scaling.scale(200),  # safe fallback before the first <Configure>
-        )
-        self.lbl_status.pack(anchor="w", fill="x")
-        # Reserve 3 lines of height so the window never resizes when
-        # status text appears.
-        import tkinter.font as tkfont
-        _sm_h = tkfont.Font(family="Segoe UI", size=9).metrics("linespace")
-        self._status_card.configure(height=_sm_h * 3 + 8)
-        self._status_card.pack_propagate(False)
-
-        def _sync_wraplength(event):
-            if event.width > 20:
-                self.lbl_status.configure(wraplength=event.width - 4)
-        self._status_card.bind("<Configure>", _sync_wraplength)
-
-    def _request_code(self):
-        tg = self.var_tg_id.get().strip()
-        if not tg:
-            self._set_status("Введите Telegram ID", fg=p.RED)
-            return
-        try:
-            tg_id = int(tg)
-        except ValueError:
-            self._set_status("Telegram ID — только цифры", fg=p.RED)
-            return
-        if not _LIC_OK:
-            self._set_status("Модуль лицензии не найден", fg=p.RED)
-            return
-        self._set_status("Отправка кода…", fg=p.FG_DIM)
-        self.update()
-        ok, msg = lic_mod.request_code(tg_id)
-        if ok:
-            self._set_status(
-                "Код отправлен в Telegram. Проверьте личные сообщения.",
-                fg=p.GREEN_DIM,
-            )
-        else:
-            self._set_status(f"Ошибка: {msg}", fg=p.RED)
-
-    def _verify(self):
-        tg = self.var_tg_id.get().strip()
-        code = self.var_code.get().strip()
-        if not tg or not code:
-            self._set_status("Заполните оба поля", fg=p.RED)
-            return
-        try:
-            tg_id = int(tg)
-        except ValueError:
-            self._set_status("Telegram ID — только цифры", fg=p.RED)
-            return
-        if not _LIC_OK:
-            self._set_status("Модуль лицензии не найден", fg=p.RED)
-            return
-        self._set_status("Проверка…", fg=p.FG_DIM)
-        self.update()
-        ok, result = lic_mod.verify_code(tg_id, code)
-        if ok:
-            self._set_status("Активация успешна!", fg=p.GREEN_DIM)
-            self._activated = True
-            self.after(500, self.destroy)
-        elif result and result.startswith("device_limit"):
-            max_d = result.split(":")[-1]
-            self._set_status(
-                f"Лимит устройств ({max_d}) превышён.\nИспользуйте /reset в боте для сброса.",
-                fg=p.RED,
-            )
-        else:
-            self._set_status(f"Ошибка: {result}", fg=p.RED)
-
 
 # ── SettingsDialog ───────────────────────────────────────────
 
@@ -2145,10 +1896,6 @@ class SettingsDialog(Toplevel):
         btn_open_cfg.pack(side="left", padx=(SPACE_8, 0))
         _bind_tip(btn_open_cfg, f"Открыть папку с config.json в проводнике\n({APP_DATA_DIR})")
 
-        def check_updates():
-            self.destroy()
-            parent._check_update(force=True)
-
         btn_close = ctk.CTkButton(
             btn_row, text="Закрыть", command=self.destroy,
             fg_color="transparent", hover_color=p.BG_ROW_HOVER,
@@ -2157,16 +1904,6 @@ class SettingsDialog(Toplevel):
             font=("Segoe UI", 10), width=100,
         )
         btn_close.pack(side="left", padx=(SPACE_8, 0))
-
-        btn_update = ctk.CTkButton(
-            btn_row, text="\U0001F504 Обновления",
-            command=check_updates,
-            fg_color="transparent", hover_color=p.BG_ROW_HOVER,
-            text_color=p.FG, border_color=p.BORDER, border_width=1,
-            corner_radius=p.RADIUS_MD, height=BTN_HEIGHT,
-            font=("Segoe UI", 10), width=140,
-        )
-        btn_update.pack(side="left", padx=(SPACE_8, 0))
         _bind_tip(btn_update, "Проверить наличие новой версии")
 
         self.update_idletasks()
@@ -2248,7 +1985,7 @@ class App(ctk.CTk):
         # enabled in __main__ before this Tk root is created.
         ui_scaling.init_root_scaling(self)
         _apply_dpi_layout()
-        self.title(f"Trade Copier v{upd_mod.VERSION}" if _UPD_OK else "Trade Copier")
+        self.title("Trade Copier")
         self.configure(fg_color=p.BG_DEEP)
         self.resizable(True, True)
         _wa = ui_scaling.get_cursor_work_area(self)
@@ -2359,16 +2096,12 @@ class App(ctk.CTk):
         # CTk's titlebar dance has finished. See _first_show for the
         # full Win32 ShowWindow + alpha=1 sequence.
         self.after(0, self._first_show)
-        # Defer all blocking start-up tasks (MT5 polling, license check,
-        # update check, tray init) until *after* mainloop has started.
-        # Running these synchronously inside __init__ would block the Tk
-        # event loop before the window was even mapped — that was rollback
-        # pitfall #1 during the previous CTk attempt (sync MT5/license in
-        # __init__ blocks mainloop and prevents the window from appearing).
+        # Defer all blocking start-up tasks (MT5 polling, tray init) until
+        # *after* mainloop has started. Running these synchronously inside
+        # __init__ would block the Tk event loop before the window was even
+        # mapped.
         self.after(100, self._start_tray)
-        self.after(300, self._schedule_license_check)
         self.after(500, self._schedule_check)
-        self.after(800, self._check_update)
         self.after(2000, self._check_dpi_change)
 
     def _first_show(self) -> None:
@@ -3076,11 +2809,6 @@ class App(ctk.CTk):
         # push the version label off the right edge of the bar
         # (tk's pack allocates space in declaration order — last in
         # gets only whatever's left over).
-        if _UPD_OK:
-            Label(
-                bar, text=f"v{upd_mod.VERSION}",
-                bg=p.BG_DEEP, fg=p.FG_DIM, font=f.SM,
-            ).pack(side="right", padx=(0, SPACE_8), pady=4)
 
         # Running session stats (▶/⏹ counters).  Subtle on left.
         self.lbl_stats = Label(
@@ -3451,48 +3179,6 @@ class App(ctk.CTk):
             self._refresh_dashboard()
             self._refresh_open_positions_async()
         self._check_timer = self.after(3000, self._schedule_check)
-
-    def _check_update(self, force=False):
-        if not _UPD_OK:
-            if force:
-                messagebox.showinfo("Обновления", "Модуль обновлений недоступен")
-            return
-        upd_mod.check_update(callback=self._on_update_available, no_update=lambda: self._on_no_update() if force else None)
-
-    def _on_no_update(self):
-        messagebox.showinfo("Обновления", f"У вас последняя версия (v{upd_mod.VERSION})")
-
-    def _on_update_available(self, version, changelog):
-        text = f"Доступна новая версия: v{version}"
-        if changelog:
-            text += f"\n{changelog}"
-        text += "\n\nСкачайте в Telegram: @fth_copier_bot → /download"
-        messagebox.showinfo("Обновление", text)
-
-    def _schedule_license_check(self):
-        if not _LIC_OK:
-            return
-        lic = lic_mod.load_license()
-        if not lic or not lic.get("token"):
-            self._show_activation()
-            return
-        valid, reason, _ = lic_mod.check_token(lic["token"])
-        if not valid and reason != "connection_error":
-            self._show_activation()
-            return
-        self._lic_timer = self.after(600000, self._schedule_license_check)
-
-    def _show_activation(self):
-        if not _LIC_OK:
-            return
-        dlg = ActivationWindow(self)
-        self.wait_window(dlg)
-        if _LIC_OK:
-            lic = lic_mod.load_license()
-            if not lic or not lic.get("token"):
-                self.destroy()
-                return
-        self._lic_timer = self.after(600000, self._schedule_license_check)
 
     def _set_master_pill(self, text: str, state: str) -> None:
         """Reflect master terminal state in the right-side status pill.
