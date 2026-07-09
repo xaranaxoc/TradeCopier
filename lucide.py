@@ -43,10 +43,14 @@ except ImportError:  # pragma: no cover - PIL is already a runtime dep via CTk
 from palette import palette_proxy as p
 
 
-# Resolve the assets directory relative to this file so PyInstaller /
-# Nuitka one-folder builds also find the icons after _MEIPASS extraction.
-_ASSETS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                           "assets", "lucide")
+# Resolve the assets directory.  When frozen by PyInstaller, __file__
+# doesn't point to a real path; use sys._MEIPASS instead.
+import sys as _sys
+if getattr(_sys, 'frozen', False):
+    _BASE = getattr(_sys, '_MEIPASS', os.path.dirname(_sys.executable))
+else:
+    _BASE = os.path.dirname(os.path.abspath(__file__))
+_ASSETS_DIR = os.path.join(_BASE, "assets", "lucide")
 
 # Cache: (name, size, color_hex) → CTkImage
 _cache: Dict[Tuple[str, int, str], "ctk.CTkImage"] = {}
